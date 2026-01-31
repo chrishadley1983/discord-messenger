@@ -35,8 +35,9 @@ env/
 *.swp
 *.swo
 
-# Claude Code local settings
-.claude/
+# Claude Code local settings (keep commands)
+.claude/*
+!.claude/commands/
 .mcp.json
 
 # Logs
