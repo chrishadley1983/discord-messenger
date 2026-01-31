@@ -1,0 +1,49 @@
+{
+  "agent": "define-done",
+  "lastRun": "2026-01-29T12:00:00Z",
+  "lastCommit": null,
+  "status": "success",
+  "featuresDefinedCount": 1,
+  "averageCriteriaPerFeature": 63,
+  "recentFeatures": [
+    {
+      "name": "discord-message-assistant",
+      "criteriaCount": 63,
+      "autoVerifyCount": 63,
+      "humanVerifyCount": 0,
+      "definedAt": "2026-01-29T12:00:00Z",
+      "note": "Multi-domain Discord bot with Claude API: 3 domains (Nutrition, News, API Usage), 3 scheduled jobs (Morning Briefing, Balance Monitor, School Run), Garmin/Withings/Twilio/xAI integrations"
+    }
+  ],
+  "criteriaPatterns": {
+    "functional": [
+      "Bot connects to Discord (log verification)",
+      "Domain registry routes by channel ID",
+      "Claude client handles tool-use loop",
+      "Scheduler runs cron tasks within tolerance",
+      "Tool inserts record to database",
+      "Tool fetches data from external API",
+      "Scheduled job posts to correct channel",
+      "Message contains required sections/fields"
+    ],
+    "error": [
+      "Service unavailable returns user-friendly message",
+      "API failure returns partial data with error field",
+      "Token refresh triggers on expired response",
+      "Unknown tool returns error in tool_result",
+      "External API failure shows fallback message"
+    ],
+    "performance": [
+      "Response time under threshold (15s)",
+      "Startup time under threshold (30s)",
+      "Scheduled task tolerance (2 min)"
+    ],
+    "integration": [
+      "Happy path message flow test",
+      "Multi-turn tool call test",
+      "Error scenario coverage tests",
+      "Scheduled task firing test",
+      "Token refresh flow test"
+    ]
+  }
+}

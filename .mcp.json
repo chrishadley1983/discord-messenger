@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "claude-mem": {
+      "command": "wsl",
+      "args": ["-e", "bash", "-ic", "node /home/chris_hadley/peterbot-mem/plugin/scripts/mcp-server.cjs"],
+      "description": "Claude memory - captures observations and injects context from previous sessions"
+    },
+    "supabase": {
+      "command": "wsl",
+      "args": [
+        "-e", "bash", "-ic",
+        "npx -y @supabase/mcp-server-supabase@latest --supabase-url https://modjoikyuhqzouxvieua.supabase.co --supabase-service-role-key eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1vZGpvaWt5dWhxem91eHZpZXVhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NjE0MTcyOSwiZXhwIjoyMDgxNzE3NzI5fQ.5qFwF4eEnJxn_mg-KHe9hBRr6TIrLZyJtSWfXj0PSmk"
+      ],
+      "description": "Supabase MCP server for database operations"
+    }
+  }
+}
