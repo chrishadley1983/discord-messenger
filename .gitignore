@@ -37,6 +37,7 @@ env/
 
 # Claude Code local settings
 .claude/
+.mcp.json
 
 # Logs
 logs/
