@@ -4,10 +4,13 @@ Uses saved session cookies to scrape usage data from the Anthropic console.
 """
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 # Try playwright
 try:
@@ -127,7 +130,7 @@ def get_anthropic_usage() -> Optional[AnthropicUsage]:
             )
 
     except Exception as e:
-        print(f"Error scraping Anthropic usage: {e}")
+        logger.error(f"Error scraping Anthropic usage: {e}")
         return None
 
 
