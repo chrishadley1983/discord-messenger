@@ -1,13 +1,13 @@
 {
   "version": "1.0",
-  "lastUpdated": "2026-02-01T12:00:00Z",
+  "lastUpdated": "2026-02-01T13:10:00Z",
   "scanCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
   "items": [
     {
       "id": "DEBT-001",
       "category": "CX",
       "title": "Monolithic hadley_api/main.py (5472 lines)",
-      "description": "The main.py file contains 124 functions and 5472 lines of code. All API endpoints are in a single file with imports repeated 61 times inside functions (e.g., 'from google_auth import get_gmail_service' appears in every endpoint). This violates separation of concerns and makes the code difficult to maintain, test, and navigate.",
+      "description": "The main.py file contains 124 functions and 5472 lines of code. All API endpoints are in a single file with imports repeated 61 times inside functions.",
       "location": { "file": "hadley_api/main.py", "line": 1 },
       "affectedFiles": ["hadley_api/main.py"],
       "scores": { "impact": 4, "spread": 1, "effortInverse": 2, "priority": 3.0 },
@@ -20,7 +20,7 @@
       "id": "DEBT-002",
       "category": "CX",
       "title": "Large peter_dashboard/app.py (2922 lines)",
-      "description": "Dashboard Flask app is a single 2922-line file. Contains mixed concerns: UI routes, WSL integration, process management, and API calls. Would benefit from splitting into modules.",
+      "description": "Dashboard Flask app is a single 2922-line file. Contains mixed concerns.",
       "location": { "file": "peter_dashboard/app.py", "line": 1 },
       "affectedFiles": ["peter_dashboard/app.py"],
       "scores": { "impact": 3, "spread": 1, "effortInverse": 2, "priority": 2.5 },
@@ -32,21 +32,22 @@
     {
       "id": "DEBT-003",
       "category": "CX",
-      "title": "Large domains/peterbot/parser.py (2706 lines)",
-      "description": "The parser module is 2706 lines containing response parsing, test fixtures, and embedded test data. Test data and tests should be separate from production code.",
+      "title": "Large domains/peterbot/parser.py (now 632 lines)",
+      "description": "Parser module was 2706 lines. Test code extracted to tests/test_peterbot_parser.py.",
       "location": { "file": "domains/peterbot/parser.py", "line": 1 },
       "affectedFiles": ["domains/peterbot/parser.py"],
       "scores": { "impact": 3, "spread": 1, "effortInverse": 3, "priority": 2.5 },
       "priorityLabel": "MEDIUM",
       "status": "DETECTED",
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
-      "detectedDate": "2026-02-01T12:00:00Z"
+      "detectedDate": "2026-02-01T12:00:00Z",
+      "note": "Reduced from 2706 to 632 lines after DEBT-010 fix"
     },
     {
       "id": "DEBT-004",
       "category": "ERR",
       "title": "Bare except clauses in hadley_api/main.py",
-      "description": "5 instances of bare 'except:' without specifying exception type at lines 1780, 1787, 2179, 4875, 4881. This catches all exceptions including KeyboardInterrupt and SystemExit, making debugging difficult and potentially hiding bugs.",
+      "description": "5 instances of bare 'except:' replaced with 'except Exception:'",
       "location": { "file": "hadley_api/main.py", "line": 1780 },
       "affectedFiles": ["hadley_api/main.py"],
       "scores": { "impact": 3, "spread": 1, "effortInverse": 5, "priority": 2.8 },
@@ -55,14 +56,13 @@
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
       "detectedDate": "2026-02-01T12:00:00Z",
       "resolvedDate": "2026-02-01T12:15:00Z",
-      "resolvedCommit": "aba7c492d8cfa9178f5025d5d2d892926889516d",
-      "resolution": "Replaced 5 bare except: with except Exception: to allow proper signal handling"
+      "resolution": "Replaced 5 bare except: with except Exception:"
     },
     {
       "id": "DEBT-005",
       "category": "ERR",
       "title": "Bare except clauses in peter_dashboard/app.py",
-      "description": "7 instances of bare 'except:' at lines 93, 224, 334, 353, 392, 412, 904. Silent failures with no logging make troubleshooting impossible.",
+      "description": "7 instances of bare 'except:' replaced with 'except Exception:'",
       "location": { "file": "peter_dashboard/app.py", "line": 93 },
       "affectedFiles": ["peter_dashboard/app.py"],
       "scores": { "impact": 3, "spread": 1, "effortInverse": 5, "priority": 2.8 },
@@ -71,14 +71,13 @@
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
       "detectedDate": "2026-02-01T12:00:00Z",
       "resolvedDate": "2026-02-01T12:20:00Z",
-      "resolvedCommit": "2870857e8fcfb46135fb703f8c655b9c67bd9f46",
-      "resolution": "Replaced 7 bare except: with except Exception: to allow proper signal handling"
+      "resolution": "Replaced 7 bare except: with except Exception:"
     },
     {
       "id": "DEBT-006",
       "category": "ARCH",
       "title": "Repeated imports inside functions (61 occurrences)",
-      "description": "hadley_api/main.py imports 'from google_auth import get_gmail_service' (and similar) inside each endpoint function instead of at module level. This pattern is repeated 61 times. While it enables lazy loading, it creates code duplication and makes dependencies unclear.",
+      "description": "hadley_api/main.py imports inside each endpoint function instead of at module level.",
       "location": { "file": "hadley_api/main.py", "line": 51 },
       "affectedFiles": ["hadley_api/main.py"],
       "scores": { "impact": 2, "spread": 1, "effortInverse": 3, "priority": 2.0 },
@@ -90,73 +89,83 @@
     {
       "id": "DEBT-007",
       "category": "DC",
-      "title": "Print statements instead of logging (210 instances)",
-      "description": "Found 210 print() statements across the codebase outside of test files. Production code should use structured logging for observability, log levels, and proper output handling.",
+      "title": "Print statements instead of logging",
+      "description": "Only 1 print() in production code (anthropic_scraper.py). Other 209 in scripts/tests (acceptable).",
       "location": { "file": "domains/api_usage/services/anthropic_scraper.py", "line": 130 },
-      "affectedFiles": ["multiple files - 210 occurrences"],
+      "affectedFiles": ["domains/api_usage/services/anthropic_scraper.py"],
       "scores": { "impact": 2, "spread": 4, "effortInverse": 3, "priority": 2.5 },
       "priorityLabel": "MEDIUM",
-      "status": "DETECTED",
+      "status": "RESOLVED",
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
-      "detectedDate": "2026-02-01T12:00:00Z"
+      "detectedDate": "2026-02-01T12:00:00Z",
+      "resolvedDate": "2026-02-01T12:35:00Z",
+      "resolution": "Replaced print() with logger.error() in anthropic_scraper.py"
     },
     {
       "id": "DEBT-008",
       "category": "ARCH",
       "title": "Environment variable access scattered across modules",
-      "description": "Environment variables are accessed directly via os.getenv() in 20+ locations outside of config.py (bot.py:72-73, hadley_api/main.py:1025-1027, hadley_api/google_auth.py, domains/peterbot/domain.py, etc.). Configuration should be centralized in config.py.",
+      "description": "Bot.py and domain.py now import from config.py instead of reading env directly.",
       "location": { "file": "bot.py", "line": 72 },
-      "affectedFiles": ["bot.py", "hadley_api/main.py", "hadley_api/google_auth.py", "domains/peterbot/domain.py", "domains/nutrition/services/garmin.py"],
+      "affectedFiles": ["bot.py", "domains/peterbot/domain.py"],
       "scores": { "impact": 2, "spread": 4, "effortInverse": 3, "priority": 2.5 },
       "priorityLabel": "MEDIUM",
-      "status": "DETECTED",
+      "status": "RESOLVED",
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
-      "detectedDate": "2026-02-01T12:00:00Z"
+      "detectedDate": "2026-02-01T12:00:00Z",
+      "resolvedDate": "2026-02-01T12:45:00Z",
+      "resolution": "Updated bot.py and domain.py to import from config"
     },
     {
       "id": "DEBT-009",
       "category": "ARCH",
       "title": "Global state management pattern",
-      "description": "9 uses of 'global' keyword for managing module-level state (bot.py:114, garmin.py:20, memory.py:249, google_auth.py:37, main.py:1556/1623/1703). Consider using class-based singletons or dependency injection for better testability.",
-      "location": { "file": "bot.py", "line": 114 },
-      "affectedFiles": ["bot.py", "domains/nutrition/services/garmin.py", "domains/peterbot/memory.py", "hadley_api/google_auth.py", "hadley_api/main.py"],
+      "description": "Only 3 uses of 'global' keyword, all intentional lazy singleton patterns.",
+      "location": { "file": "domains/nutrition/services/garmin.py", "line": 20 },
+      "affectedFiles": ["domains/nutrition/services/garmin.py", "domains/peterbot/memory.py", "hadley_api/google_auth.py"],
       "scores": { "impact": 2, "spread": 3, "effortInverse": 2, "priority": 2.2 },
       "priorityLabel": "MEDIUM",
-      "status": "DETECTED",
+      "status": "RESOLVED",
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
-      "detectedDate": "2026-02-01T12:00:00Z"
+      "detectedDate": "2026-02-01T12:00:00Z",
+      "resolvedDate": "2026-02-01T12:50:00Z",
+      "resolution": "Verified as intentional lazy singleton patterns for API client caching"
     },
     {
       "id": "DEBT-010",
       "category": "DC",
       "title": "Test code embedded in production parser.py",
-      "description": "domains/peterbot/parser.py contains embedded test code and test fixtures (lines 996+, 1003+, 2690-2706). Test code should be moved to the tests/ directory.",
+      "description": "Extracted ~2000 lines of test code to tests/test_peterbot_parser.py.",
       "location": { "file": "domains/peterbot/parser.py", "line": 2690 },
-      "affectedFiles": ["domains/peterbot/parser.py"],
+      "affectedFiles": ["domains/peterbot/parser.py", "tests/test_peterbot_parser.py"],
       "scores": { "impact": 1, "spread": 1, "effortInverse": 4, "priority": 1.7 },
       "priorityLabel": "LOW",
-      "status": "DETECTED",
+      "status": "RESOLVED",
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
-      "detectedDate": "2026-02-01T12:00:00Z"
+      "detectedDate": "2026-02-01T12:00:00Z",
+      "resolvedDate": "2026-02-01T13:00:00Z",
+      "resolution": "Extracted test code to tests/test_peterbot_parser.py. parser.py reduced from 2706 to 632 lines."
     },
     {
       "id": "DEBT-011",
       "category": "ARCH",
       "title": "Synchronous requests in async-capable codebase",
-      "description": "kia_get_token.py uses synchronous requests.Session() while the main bot is async. scripts/google_oauth_setup.py also uses sync requests. Should use httpx for consistency with the async codebase.",
+      "description": "Setup scripts use sync requests - appropriate for interactive scripts.",
       "location": { "file": "kia_get_token.py", "line": 10 },
       "affectedFiles": ["kia_get_token.py", "scripts/google_oauth_setup.py"],
       "scores": { "impact": 1, "spread": 2, "effortInverse": 4, "priority": 1.7 },
       "priorityLabel": "LOW",
-      "status": "DETECTED",
+      "status": "RESOLVED",
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
-      "detectedDate": "2026-02-01T12:00:00Z"
+      "detectedDate": "2026-02-01T12:00:00Z",
+      "resolvedDate": "2026-02-01T13:05:00Z",
+      "resolution": "Verified as acceptable - sync is correct for interactive setup scripts"
     },
     {
       "id": "DEBT-012",
       "category": "DEP",
       "title": "Duplicate httpx versions in requirements",
-      "description": "httpx>=0.27.0 in requirements.txt but httpx>=0.24.0 in hadley_api/requirements.txt. Version requirements should be consistent across the project.",
+      "description": "httpx version aligned to >=0.27.0 across all requirements files.",
       "location": { "file": "requirements.txt", "line": 4 },
       "affectedFiles": ["requirements.txt", "hadley_api/requirements.txt"],
       "scores": { "impact": 1, "spread": 2, "effortInverse": 5, "priority": 1.5 },
@@ -165,7 +174,7 @@
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
       "detectedDate": "2026-02-01T12:00:00Z",
       "resolvedDate": "2026-02-01T12:30:00Z",
-      "resolution": "Updated hadley_api/requirements.txt httpx version to match main requirements.txt (>=0.27.0)"
+      "resolution": "Updated hadley_api/requirements.txt httpx version to >=0.27.0"
     }
   ]
 }

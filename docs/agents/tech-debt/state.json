@@ -4,21 +4,21 @@
   "lastScanCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
   "lastScanDate": "2026-02-01T12:00:00Z",
   "lastScanDuration": "45s",
-  "lastFixCommit": "2870857e8fcfb46135fb703f8c655b9c67bd9f46",
-  "lastFixDate": "2026-02-01T12:20:00Z",
+  "lastFixCommit": "58c94d8",
+  "lastFixDate": "2026-02-01T13:10:00Z",
   "registryStats": {
     "total": 12,
     "critical": 0,
     "high": 1,
-    "medium": 6,
-    "low": 2,
-    "resolved": 3,
+    "medium": 3,
+    "low": 0,
+    "resolved": 8,
     "needsRescan": 0
   },
   "trends": {
     "scansRun": 1,
-    "itemsResolved": 3,
+    "itemsResolved": 8,
     "itemsIntroduced": 12,
-    "netChange": 9
+    "netChange": 4
   }
 }
