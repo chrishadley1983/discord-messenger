@@ -151,14 +151,16 @@
       "id": "DEBT-011",
       "category": "ARCH",
       "title": "Synchronous requests in async-capable codebase",
-      "description": "kia_get_token.py uses synchronous requests.Session() while the main bot is async. scripts/google_oauth_setup.py also uses sync requests. Should use httpx for consistency with the async codebase.",
+      "description": "kia_get_token.py and scripts/google_oauth_setup.py use sync requests. After review: these are one-time interactive setup scripts where sync is appropriate.",
       "location": { "file": "kia_get_token.py", "line": 10 },
       "affectedFiles": ["kia_get_token.py", "scripts/google_oauth_setup.py"],
       "scores": { "impact": 1, "spread": 2, "effortInverse": 4, "priority": 1.7 },
       "priorityLabel": "LOW",
-      "status": "DETECTED",
+      "status": "RESOLVED",
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
-      "detectedDate": "2026-02-01T12:00:00Z"
+      "detectedDate": "2026-02-01T12:00:00Z",
+      "resolvedDate": "2026-02-01T13:05:00Z",
+      "resolution": "Verified as acceptable. These are one-time interactive setup scripts - sync requests appropriate for scripts that wait for user input."
     },
     {
       "id": "DEBT-012",

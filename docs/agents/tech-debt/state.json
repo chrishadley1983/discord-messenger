@@ -11,14 +11,14 @@
     "critical": 0,
     "high": 1,
     "medium": 3,
-    "low": 1,
-    "resolved": 7,
+    "low": 0,
+    "resolved": 8,
     "needsRescan": 0
   },
   "trends": {
     "scansRun": 1,
-    "itemsResolved": 7,
+    "itemsResolved": 8,
     "itemsIntroduced": 12,
-    "netChange": 5
+    "netChange": 4
   }
 }
