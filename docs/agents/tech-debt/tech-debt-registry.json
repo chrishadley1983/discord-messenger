@@ -67,9 +67,12 @@
       "affectedFiles": ["peter_dashboard/app.py"],
       "scores": { "impact": 3, "spread": 1, "effortInverse": 5, "priority": 2.8 },
       "priorityLabel": "MEDIUM",
-      "status": "DETECTED",
+      "status": "RESOLVED",
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
-      "detectedDate": "2026-02-01T12:00:00Z"
+      "detectedDate": "2026-02-01T12:00:00Z",
+      "resolvedDate": "2026-02-01T12:20:00Z",
+      "resolvedCommit": "2870857e8fcfb46135fb703f8c655b9c67bd9f46",
+      "resolution": "Replaced 7 bare except: with except Exception: to allow proper signal handling"
     },
     {
       "id": "DEBT-006",
