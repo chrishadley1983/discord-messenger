@@ -4,18 +4,19 @@ A modular Discord bot with AI coaching/assistance via Claude API.
 Routes messages to domain handlers based on channel.
 """
 
-import os
 import discord
+from discord import app_commands
 from discord.ext import commands
-from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from claude_client import ClaudeClient
 from registry import registry
 from logger import logger
+from config import DISCORD_TOKEN, ANTHROPIC_API_KEY, CLAUDE_MODEL
 
 # Import domains
-from domains.nutrition import NutritionDomain
+# NutritionDomain disabled - #food-log now routes through Peterbot with Hadley API
+# from domains.nutrition import NutritionDomain
 from domains.news import NewsDomain
 from domains.api_usage import ApiUsageDomain
 
@@ -32,8 +33,20 @@ from domains.peterbot import (
     on_startup as peterbot_startup,
     CHANNEL_ID as PETERBOT_CHANNEL
 )
+from domains.peterbot.config import PETERBOT_CHANNEL_IDS
 
-# Import standalone jobs
+# Import Peterbot scheduler (Phase 7)
+from domains.peterbot.scheduler import PeterbotScheduler
+from domains.peterbot.data_fetchers import SKILL_DATA_FETCHERS
+
+# Import reminders handler (one-off reminders)
+from domains.peterbot.reminders.handler import (
+    reload_reminders_on_startup,
+    handle_reminder_intent,
+    start_reminder_polling
+)
+
+# Import standalone jobs (legacy - kept for manual triggers during migration)
 from jobs import (
     register_morning_briefing,
     register_balance_monitor,
@@ -45,30 +58,29 @@ from jobs import (
     register_withings_sync,
     register_youtube_feed
 )
-from jobs.balance_monitor import balance_monitor
-from jobs.hydration_checkin import hydration_checkin
-from jobs.morning_briefing import ai_morning_briefing
-from jobs.nutrition_morning import nutrition_morning_message
-from jobs.school_run import school_run_report, school_pickup_report
-from jobs.weekly_health import weekly_health_summary
-from jobs.monthly_health import monthly_health_summary
-from jobs.youtube_feed import youtube_feed
-
-load_dotenv()
 
 # Initialize bot
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="/", intents=intents)
 
-# Initialize Claude client - using renamed var to prevent Claude Code pickup
+# Initialize Claude client - using config vars
 claude = ClaudeClient(
-    api_key=os.getenv("DISCORD_BOT_CLAUDE_KEY"),
-    model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
+    api_key=ANTHROPIC_API_KEY,
+    model=CLAUDE_MODEL
 )
 
 # Initialize scheduler
 scheduler = AsyncIOScheduler()
+
+# Message deduplication: track recently processed message IDs
+_processed_messages: dict[int, float] = {}  # message_id -> timestamp
+MESSAGE_DEDUP_SECONDS = 5
+
+# Peterbot scheduler (Phase 7 - skill-based jobs)
+# Set to True to use new SCHEDULE.md-based scheduler, False for legacy jobs
+USE_PETERBOT_SCHEDULER = True  # Phase 7b complete - skills created
+peterbot_scheduler = None  # Initialized in on_ready
 
 
 @bot.event
@@ -76,8 +88,16 @@ async def on_ready():
     """Called when bot is connected and ready."""
     logger.info(f"Logged in as {bot.user}")
 
+    # Sync slash commands with Discord
+    try:
+        synced = await bot.tree.sync()
+        logger.info(f"Synced {len(synced)} slash commands")
+    except Exception as e:
+        logger.error(f"Failed to sync slash commands: {e}")
+
     # Register domains
-    registry.register(NutritionDomain())
+    # NutritionDomain disabled - #food-log now uses Peterbot routing with Hadley API
+    # registry.register(NutritionDomain())
     registry.register(NewsDomain())
     registry.register(ApiUsageDomain())
     # Note: PeterbotDomain no longer registered - uses special routing like claude-code
@@ -87,16 +107,27 @@ async def on_ready():
         domain.register_schedules(scheduler, bot)
         logger.info(f"Registered domain: {domain.name} (channel: {domain.channel_id})")
 
-    # Register standalone jobs
-    register_morning_briefing(scheduler, bot)
-    register_balance_monitor(scheduler, bot)
-    register_school_run(scheduler, bot)
-    register_withings_sync(scheduler)  # Sync weight data before morning message
-    register_nutrition_morning(scheduler, bot)
-    register_hydration_checkin(scheduler, bot)
-    register_weekly_health(scheduler, bot)
-    register_monthly_health(scheduler, bot)
-    register_youtube_feed(scheduler, bot)
+    # Phase 7: Initialize Peterbot scheduler
+    global peterbot_scheduler
+    peterbot_scheduler = PeterbotScheduler(bot, scheduler, PETERBOT_CHANNEL)
+    peterbot_scheduler.set_data_fetchers(SKILL_DATA_FETCHERS)
+
+    if USE_PETERBOT_SCHEDULER:
+        # Phase 7: Use SCHEDULE.md-based jobs via Claude Code
+        job_count = peterbot_scheduler.load_schedule()
+        logger.info(f"Peterbot scheduler loaded {job_count} jobs from SCHEDULE.md")
+    else:
+        # Legacy: Register standalone jobs (remove after Phase 7b migration)
+        register_morning_briefing(scheduler, bot)
+        register_balance_monitor(scheduler, bot)
+        register_school_run(scheduler, bot)
+        register_withings_sync(scheduler)  # Sync weight data before morning message
+        register_nutrition_morning(scheduler, bot)
+        register_hydration_checkin(scheduler, bot)
+        register_weekly_health(scheduler, bot)
+        register_monthly_health(scheduler, bot)
+        register_youtube_feed(scheduler, bot)
+        logger.info("Using legacy job registration (Phase 7 scheduler disabled)")
 
     # Start scheduler
     scheduler.start()
@@ -112,6 +143,16 @@ async def on_ready():
 
     # Peterbot domain startup - start memory retry task
     peterbot_startup()
+
+    # Reload pending reminders from Supabase
+    try:
+        reminder_count = await reload_reminders_on_startup(scheduler, bot)
+        if reminder_count > 0:
+            logger.info(f"Reloaded {reminder_count} pending reminders")
+        # Start polling for reminders added by Peter/external systems
+        start_reminder_polling(scheduler, bot)
+    except Exception as e:
+        logger.error(f"Failed to reload reminders: {e}")
 
 
 async def fetch_conversation_history(channel, limit: int = 15) -> list[dict]:
@@ -175,6 +216,22 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    # Message deduplication - prevent processing same message twice
+    import time
+    now = time.time()
+    if message.id in _processed_messages:
+        logger.debug(f"Skipping duplicate message {message.id}")
+        return
+    _processed_messages[message.id] = now
+    # Clean up old entries
+    cutoff = now - MESSAGE_DEDUP_SECONDS * 2
+    keys_to_delete = [k for k, v in _processed_messages.items() if v < cutoff]
+    for k in keys_to_delete:
+        del _processed_messages[k]
+
+    # Note: Slash commands (/skill, /status, /reload-schedule) are handled
+    # automatically by Discord - no need for prefix processing here
+
     # Claude Code domain - direct routing, no LLM
     if message.channel.id == CLAUDE_CODE_CHANNEL:
         response = handle_claude_code(message.content)
@@ -182,23 +239,29 @@ async def on_message(message):
         return
 
     # Peterbot domain - Claude Code routing WITH memory context
-    if message.channel.id == PETERBOT_CHANNEL:
+    # Works in multiple channels (peterbot, ai-briefings, etc.)
+    if message.channel.id in PETERBOT_CHANNEL_IDS:
         async with message.channel.typing():
-            response = await handle_peterbot(message.content, message.author.id)
+            # Check for reminder intents first (handled locally, not via Claude Code)
+            reminder_response = await handle_reminder_intent(
+                message.content,
+                message.author.id,
+                message.channel.id,
+                scheduler,
+                bot
+            )
+            if reminder_response:
+                await message.channel.send(reminder_response)
+                return
+
+            # Normal peterbot routing to Claude Code
+            response = await handle_peterbot(message.content, message.author.id, message.channel.id)
             # Split long messages (Discord 2000 char limit)
             if len(response) > 2000:
                 for i in range(0, len(response), 2000):
                     await message.channel.send(response[i:i+2000])
             else:
                 await message.channel.send(response)
-        return
-
-    # Process commands first (e.g., !balance)
-    # This must be called for @bot.command decorators to work
-    await bot.process_commands(message)
-
-    # If message is a command, don't also send to AI
-    if message.content.startswith("!"):
         return
 
     # Find domain for this channel
@@ -240,76 +303,236 @@ async def on_message(message):
             await message.channel.send("AI unavailable, try again shortly.")
 
 
-@bot.command(name="balance")
-async def cmd_balance(ctx):
-    """Manually trigger the balance monitor job."""
-    logger.info(f"Manual balance check triggered by {ctx.author}")
-    await ctx.send("🔄 Checking API balances...")
-    await balance_monitor(bot)
 
 
-@bot.command(name="hydration")
-async def cmd_hydration(ctx):
-    """Manually trigger the hydration check-in job."""
-    logger.info(f"Manual hydration check triggered by {ctx.author}")
-    await ctx.send("🔄 Checking hydration & steps...")
-    await hydration_checkin(bot)
 
 
-@bot.command(name="briefing")
-async def cmd_briefing(ctx):
-    """Manually trigger the AI morning briefing job."""
-    logger.info(f"Manual AI briefing triggered by {ctx.author}")
-    await ctx.send("🔄 Generating AI morning briefing...")
-    await ai_morning_briefing(bot)
+@bot.tree.command(name="skill", description="Manually trigger a skill")
+@app_commands.describe(skill_name="The skill to run (e.g., hydration, balance-monitor, news)")
+async def cmd_skill(interaction: discord.Interaction, skill_name: str = None):
+    """Manually trigger a skill via the Phase 7 scheduler."""
+    if not USE_PETERBOT_SCHEDULER:
+        await interaction.response.send_message("⚠️ Peterbot scheduler not enabled.")
+        return
+
+    if not skill_name:
+        # List available skills
+        skills = [
+            "balance-monitor", "hydration", "morning-briefing", "health-digest",
+            "school-run", "school-pickup", "weekly-health", "monthly-health",
+            "nutrition-summary", "youtube-digest", "api-usage", "news", "heartbeat"
+        ]
+        await interaction.response.send_message(f"**Available skills:**\n`{'`, `'.join(skills)}`\n\nUsage: `/skill <name>`")
+        return
+
+    logger.info(f"Manual skill trigger: {skill_name} by {interaction.user}")
+    await interaction.response.send_message(f"🔄 Running skill: {skill_name}...")
+
+    try:
+        # Create a minimal job config for manual execution
+        from domains.peterbot.scheduler import JobConfig
+        job = JobConfig(
+            name=f"Manual: {skill_name}",
+            skill=skill_name,
+            schedule="manual",
+            channel=f"#{interaction.channel.name}",
+            enabled=True,
+            job_type="manual",
+            whatsapp=False
+        )
+
+        # Execute via scheduler (bypasses quiet hours for manual triggers)
+        await peterbot_scheduler._execute_job_manual(job, interaction.channel.id)
+
+    except Exception as e:
+        logger.error(f"Skill execution failed: {e}")
+        await interaction.followup.send(f"❌ Skill failed: {e}")
 
 
-@bot.command(name="morning")
-async def cmd_morning(ctx):
-    """Manually trigger the morning health digest job."""
-    logger.info(f"Manual morning digest triggered by {ctx.author}")
-    await ctx.send("🔄 Generating morning health digest...")
-    await nutrition_morning_message(bot)
+@bot.tree.command(name="reload-schedule", description="Reload SCHEDULE.md and re-register jobs")
+async def cmd_reload_schedule(interaction: discord.Interaction):
+    """Reload SCHEDULE.md and re-register jobs (Phase 7)."""
+    if not USE_PETERBOT_SCHEDULER:
+        await interaction.response.send_message("⚠️ Peterbot scheduler not enabled. Set USE_PETERBOT_SCHEDULER=True in bot.py")
+        return
+
+    logger.info(f"Schedule reload triggered by {interaction.user}")
+    await interaction.response.send_message("🔄 Reloading SCHEDULE.md...")
+
+    try:
+        job_count = peterbot_scheduler.reload_schedule()
+        await interaction.followup.send(f"✅ Loaded {job_count} jobs from SCHEDULE.md")
+    except Exception as e:
+        logger.error(f"Schedule reload failed: {e}")
+        await interaction.followup.send(f"❌ Reload failed: {e}")
 
 
-@bot.command(name="schoolrun")
-async def cmd_schoolrun(ctx):
-    """Manually trigger the school run report job."""
-    logger.info(f"Manual school run report triggered by {ctx.author}")
-    await ctx.send("🔄 Generating school run report...")
-    await school_run_report(bot)
+@bot.tree.command(name="remind", description="Set a one-off reminder")
+@app_commands.describe(
+    time="When to remind (e.g., '9am tomorrow', 'Monday 8:30am')",
+    task="What to remind you about"
+)
+async def cmd_remind(interaction: discord.Interaction, time: str, task: str):
+    """Set a one-off reminder."""
+    from domains.peterbot.reminders.parser import parse_reminder
+    from domains.peterbot.reminders.scheduler import add_reminder
+    from domains.peterbot.reminders.executor import execute_reminder
+    import uuid
+
+    # Combine time and task for parsing
+    full_text = f"at {time} to {task}"
+    parsed = parse_reminder(full_text)
+
+    if not parsed:
+        await interaction.response.send_message(
+            f"Couldn't parse time '{time}'. Try formats like '9am tomorrow', 'Monday 8:30am', '2pm today'.",
+            ephemeral=True
+        )
+        return
+
+    reminder_id = f"remind_{uuid.uuid4().hex[:8]}"
+
+    async def executor_wrapper(t, uid, cid, rid):
+        await execute_reminder(t, uid, cid, rid, bot)
+
+    try:
+        await add_reminder(
+            scheduler=scheduler,
+            reminder_id=reminder_id,
+            run_at=parsed.run_at,
+            task=task,  # Use original task, not parsed
+            user_id=interaction.user.id,
+            channel_id=interaction.channel.id,
+            executor_func=executor_wrapper
+        )
+
+        await interaction.response.send_message(
+            f"**Reminder set for {parsed.raw_time}**\n\n> {task}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to set reminder: {e}")
+        await interaction.response.send_message(f"Failed to set reminder: {e}", ephemeral=True)
 
 
-@bot.command(name="schoolpickup")
-async def cmd_schoolpickup(ctx):
-    """Manually trigger the school pickup report job."""
-    logger.info(f"Manual school pickup report triggered by {ctx.author}")
-    await ctx.send("🔄 Generating school pickup report...")
-    await school_pickup_report(bot)
+@bot.tree.command(name="reminders", description="List your pending reminders")
+async def cmd_reminders(interaction: discord.Interaction):
+    """List pending reminders."""
+    from domains.peterbot.reminders.store import get_user_reminders
+    from dateutil.parser import parse as parse_dt
+    from zoneinfo import ZoneInfo
+
+    UK_TZ = ZoneInfo("Europe/London")
+    reminders = await get_user_reminders(interaction.user.id)
+
+    if not reminders:
+        await interaction.response.send_message("No active reminders.", ephemeral=True)
+        return
+
+    lines = ["**Your reminders:**\n"]
+    for r in reminders:
+        run_at = parse_dt(r['run_at'])
+        if run_at.tzinfo is None:
+            run_at = run_at.replace(tzinfo=UK_TZ)
+        else:
+            run_at = run_at.astimezone(UK_TZ)
+
+        lines.append(f"- {run_at.strftime('%a %d %b %H:%M')} - {r['task']}")
+        lines.append(f"  `/cancel-reminder {r['id'][:8]}`")
+
+    await interaction.response.send_message("\n".join(lines))
 
 
-@bot.command(name="weeklyhealth")
-async def cmd_weeklyhealth(ctx):
-    """Manually trigger the weekly health summary job."""
-    logger.info(f"Manual weekly health summary triggered by {ctx.author}")
-    await ctx.send("🔄 Generating weekly health summary with graphs...")
-    await weekly_health_summary(bot)
+@bot.tree.command(name="cancel-reminder", description="Cancel a pending reminder")
+@app_commands.describe(reminder_id="The reminder ID (first 8 characters)")
+async def cmd_cancel_reminder(interaction: discord.Interaction, reminder_id: str):
+    """Cancel a pending reminder."""
+    from domains.peterbot.reminders.store import get_user_reminders
+    from domains.peterbot.reminders.scheduler import cancel_reminder
+
+    reminders = await get_user_reminders(interaction.user.id)
+
+    for r in reminders:
+        if r['id'].startswith(reminder_id) or r['id'].endswith(reminder_id):
+            if await cancel_reminder(scheduler, r['id']):
+                await interaction.response.send_message(f"Cancelled reminder: {r['task']}")
+                return
+            else:
+                await interaction.response.send_message("Failed to cancel reminder.", ephemeral=True)
+                return
+
+    await interaction.response.send_message(
+        "Reminder not found. Use `/reminders` to see your reminders.",
+        ephemeral=True
+    )
 
 
-@bot.command(name="monthlyhealth")
-async def cmd_monthlyhealth(ctx):
-    """Manually trigger the monthly health summary job."""
-    logger.info(f"Manual monthly health summary triggered by {ctx.author}")
-    await ctx.send("🔄 Generating monthly health summary with graphs...")
-    await monthly_health_summary(bot)
+@bot.tree.command(name="status", description="Show Peterbot system status")
+async def cmd_status(interaction: discord.Interaction):
+    """Show Peterbot system status."""
+    import aiohttp
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
 
+    UK_TZ = ZoneInfo("Europe/London")
 
-@bot.command(name="youtube")
-async def cmd_youtube(ctx):
-    """Manually trigger the YouTube daily digest job."""
-    logger.info(f"Manual YouTube digest triggered by {ctx.author}")
-    await ctx.send("🔄 Generating YouTube daily digest...")
-    await youtube_feed(bot)
+    if not USE_PETERBOT_SCHEDULER:
+        await interaction.response.send_message("⚠️ Peterbot scheduler not enabled.")
+        return
+
+    lines = ["📊 **Peterbot Status**", ""]
+
+    # Scheduler info
+    job_count = len(peterbot_scheduler._job_ids)
+    lines.append(f"**Scheduler:** {job_count} jobs loaded from SCHEDULE.md")
+
+    # Skills info
+    try:
+        manifest_path = peterbot_scheduler.skills_path / "manifest.json"
+        if manifest_path.exists():
+            import json
+            manifest = json.loads(manifest_path.read_text())
+            total = len(manifest)
+            conversational = sum(1 for s in manifest.values() if s.get("conversational", True))
+            scheduled_only = total - conversational
+            lines.append(f"**Skills:** {total} available ({conversational} conversational, {scheduled_only} scheduled-only)")
+        else:
+            lines.append("**Skills:** manifest.json not found (run /reload-schedule)")
+    except Exception as e:
+        lines.append(f"**Skills:** Error reading manifest: {e}")
+
+    # Memory endpoint health
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "http://localhost:37777/health",
+                timeout=aiohttp.ClientTimeout(total=3)
+            ) as resp:
+                if resp.status == 200:
+                    lines.append("**Memory endpoint:** healthy ✅")
+                else:
+                    lines.append(f"**Memory endpoint:** unhealthy ({resp.status}) ⚠️")
+    except Exception:
+        lines.append("**Memory endpoint:** not responding ❌")
+
+    # Recent job status
+    job_status = peterbot_scheduler.get_job_status()
+    if job_status:
+        lines.append("")
+        lines.append("**Recent job status:**")
+        for skill, success in list(job_status.items())[-5:]:  # Last 5
+            icon = "✅" if success else "❌"
+            lines.append(f"{icon} {skill}")
+    else:
+        lines.append("")
+        lines.append("**Recent jobs:** No jobs have run yet")
+
+    # Quiet hours check
+    now = datetime.now(UK_TZ)
+    if now.hour >= 23 or now.hour < 6:
+        lines.append("")
+        lines.append("⏸️ **Quiet hours active** (23:00-06:00 UK)")
+
+    await interaction.response.send_message("\n".join(lines))
 
 
 @bot.event
@@ -320,13 +543,12 @@ async def on_error(event, *args, **kwargs):
 
 def main():
     """Entry point."""
-    token = os.getenv("DISCORD_TOKEN")
-    if not token:
+    if not DISCORD_TOKEN:
         logger.error("DISCORD_TOKEN not set")
         return
 
     logger.info("Starting Discord Assistant...")
-    bot.run(token)
+    bot.run(DISCORD_TOKEN)
 
 
 if __name__ == "__main__":

@@ -4,14 +4,10 @@ This domain handles non-technical conversations and integrates with
 peterbot-mem for memory extraction and recall.
 """
 
-import os
 import aiohttp
 from domains.base import Domain, ToolDefinition
+from domains.peterbot.config import CHANNEL_ID
 from logger import logger
-
-
-# Channel ID from environment
-CHANNEL_ID = int(os.environ.get("PETERBOT_CHANNEL_ID", 0))
 
 # Peterbot-mem worker endpoint
 WORKER_PORT = 37777
