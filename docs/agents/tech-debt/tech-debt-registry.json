@@ -136,14 +136,16 @@
       "id": "DEBT-010",
       "category": "DC",
       "title": "Test code embedded in production parser.py",
-      "description": "domains/peterbot/parser.py contains embedded test code and test fixtures (lines 996+, 1003+, 2690-2706). Test code should be moved to the tests/ directory.",
+      "description": "domains/peterbot/parser.py contained ~2000 lines of embedded test code and fixtures. Extracted to tests/test_peterbot_parser.py.",
       "location": { "file": "domains/peterbot/parser.py", "line": 2690 },
-      "affectedFiles": ["domains/peterbot/parser.py"],
+      "affectedFiles": ["domains/peterbot/parser.py", "tests/test_peterbot_parser.py"],
       "scores": { "impact": 1, "spread": 1, "effortInverse": 4, "priority": 1.7 },
       "priorityLabel": "LOW",
-      "status": "DETECTED",
+      "status": "RESOLVED",
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
-      "detectedDate": "2026-02-01T12:00:00Z"
+      "detectedDate": "2026-02-01T12:00:00Z",
+      "resolvedDate": "2026-02-01T13:00:00Z",
+      "resolution": "Extracted ~2000 lines of test code to tests/test_peterbot_parser.py. parser.py reduced from 2706 to 632 lines."
     },
     {
       "id": "DEBT-011",
