@@ -121,14 +121,16 @@
       "id": "DEBT-009",
       "category": "ARCH",
       "title": "Global state management pattern",
-      "description": "9 uses of 'global' keyword for managing module-level state (bot.py:114, garmin.py:20, memory.py:249, google_auth.py:37, main.py:1556/1623/1703). Consider using class-based singletons or dependency injection for better testability.",
-      "location": { "file": "bot.py", "line": 114 },
-      "affectedFiles": ["bot.py", "domains/nutrition/services/garmin.py", "domains/peterbot/memory.py", "hadley_api/google_auth.py", "hadley_api/main.py"],
+      "description": "After investigation: only 3 actual uses of 'global' keyword (garmin.py, memory.py, google_auth.py). All are intentional lazy singleton patterns for API clients.",
+      "location": { "file": "domains/nutrition/services/garmin.py", "line": 20 },
+      "affectedFiles": ["domains/nutrition/services/garmin.py", "domains/peterbot/memory.py", "hadley_api/google_auth.py"],
       "scores": { "impact": 2, "spread": 3, "effortInverse": 2, "priority": 2.2 },
       "priorityLabel": "MEDIUM",
-      "status": "DETECTED",
+      "status": "RESOLVED",
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
-      "detectedDate": "2026-02-01T12:00:00Z"
+      "detectedDate": "2026-02-01T12:00:00Z",
+      "resolvedDate": "2026-02-01T12:50:00Z",
+      "resolution": "Verified as intentional lazy singleton patterns. bot.py has no globals. These 3 uses are acceptable for module-level API client caching."
     },
     {
       "id": "DEBT-010",

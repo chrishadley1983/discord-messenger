@@ -10,15 +10,15 @@
     "total": 12,
     "critical": 0,
     "high": 1,
-    "medium": 4,
+    "medium": 3,
     "low": 2,
-    "resolved": 5,
+    "resolved": 6,
     "needsRescan": 0
   },
   "trends": {
     "scansRun": 1,
-    "itemsResolved": 5,
+    "itemsResolved": 6,
     "itemsIntroduced": 12,
-    "netChange": 7
+    "netChange": 6
   }
 }
