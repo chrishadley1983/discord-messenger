@@ -111,9 +111,11 @@
       "affectedFiles": ["bot.py", "hadley_api/main.py", "hadley_api/google_auth.py", "domains/peterbot/domain.py", "domains/nutrition/services/garmin.py"],
       "scores": { "impact": 2, "spread": 4, "effortInverse": 3, "priority": 2.5 },
       "priorityLabel": "MEDIUM",
-      "status": "DETECTED",
+      "status": "RESOLVED",
       "detectedCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
-      "detectedDate": "2026-02-01T12:00:00Z"
+      "detectedDate": "2026-02-01T12:00:00Z",
+      "resolvedDate": "2026-02-01T12:45:00Z",
+      "resolution": "Updated bot.py and domain.py to import from config. hadley_api/* kept separate (different deployment context)."
     },
     {
       "id": "DEBT-009",
