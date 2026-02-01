@@ -1,0 +1,24 @@
+{
+  "agent": "tech-debt",
+  "version": "1.0",
+  "lastScanCommit": "150abbe273faff57aa1a23057935608eb88ac28d",
+  "lastScanDate": "2026-02-01T12:00:00Z",
+  "lastScanDuration": "45s",
+  "lastFixCommit": "aba7c492d8cfa9178f5025d5d2d892926889516d",
+  "lastFixDate": "2026-02-01T12:15:00Z",
+  "registryStats": {
+    "total": 12,
+    "critical": 0,
+    "high": 1,
+    "medium": 7,
+    "low": 3,
+    "resolved": 1,
+    "needsRescan": 0
+  },
+  "trends": {
+    "scansRun": 1,
+    "itemsResolved": 1,
+    "itemsIntroduced": 12,
+    "netChange": 11
+  }
+}
