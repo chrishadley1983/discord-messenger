@@ -1,15 +1,15 @@
 """Seed import adapters for various sources."""
 
-from .github import GitHubStarsAdapter
+from .github import GitHubProjectsAdapter
 from .bookmarks import BookmarksAdapter
 from .garmin import GarminActivitiesAdapter
-from .calendar import CalendarPatternsAdapter
+from .calendar import CalendarEventsAdapter
 from .email import EmailThreadsAdapter
 
 __all__ = [
-    "GitHubStarsAdapter",
+    "GitHubProjectsAdapter",
     "BookmarksAdapter",
     "GarminActivitiesAdapter",
-    "CalendarPatternsAdapter",
+    "CalendarEventsAdapter",
     "EmailThreadsAdapter",
 ]
