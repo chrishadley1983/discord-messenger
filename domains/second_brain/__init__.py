@@ -72,6 +72,13 @@ from .commands import (
     handle_knowledge,
 )
 
+# Passive capture
+from .passive import (
+    should_capture_message,
+    process_passive_message,
+    detect_passive_captures,
+)
+
 __all__ = [
     # Types
     "KnowledgeItem",

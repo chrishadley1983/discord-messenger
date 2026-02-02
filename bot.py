@@ -4,6 +4,7 @@ A modular Discord bot with AI coaching/assistance via Claude API.
 Routes messages to domain handlers based on channel.
 """
 
+import asyncio
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -48,6 +49,12 @@ from domains.peterbot.reminders.handler import (
     reload_reminders_on_startup,
     handle_reminder_intent,
     start_reminder_polling
+)
+
+# Import Second Brain passive capture
+from domains.second_brain.passive import (
+    should_capture_message,
+    process_passive_message,
 )
 
 # Import standalone jobs (legacy - kept for manual triggers during migration)
@@ -252,6 +259,31 @@ async def fetch_conversation_history(channel, limit: int = 15) -> list[dict]:
     return merged
 
 
+async def _passive_capture_check(message_content: str, channel_name: str):
+    """Background task for passive Second Brain capture.
+
+    Detects URLs and ideas in messages and captures them passively.
+    Runs async to not delay responses.
+    """
+    try:
+        # Quick pre-filter
+        if not should_capture_message(message_content):
+            return
+
+        # Process for captures
+        captured_ids = await process_passive_message(
+            message_content,
+            channel_name=channel_name
+        )
+
+        if captured_ids:
+            logger.info(f"Passive captures: {len(captured_ids)} items from #{channel_name}")
+
+    except Exception as e:
+        # Non-critical - just log and continue
+        logger.debug(f"Passive capture check failed: {e}")
+
+
 @bot.event
 async def on_message(message):
     """Handle incoming messages."""
@@ -353,6 +385,14 @@ async def on_message(message):
 
             logger.debug(f"Response processed: type={processed.response_type.value}, "
                         f"chunks={len(processed.chunks)}, raw={processed.raw_length}, final={processed.final_length}")
+
+            # Passive capture: fire-and-forget async task for URL/idea detection
+            # This runs in background after response is sent
+            asyncio.create_task(_passive_capture_check(
+                message.content,
+                message.channel.name
+            ))
+
         return
 
     # Find domain for this channel
