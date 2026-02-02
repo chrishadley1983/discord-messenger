@@ -649,3 +649,143 @@ async def get_most_accessed_item_since(since: datetime) -> Optional[KnowledgeIte
     except Exception as e:
         logger.error(f"Failed to get most accessed item: {e}")
         return None
+
+
+# =============================================================================
+# PIPELINE SUPPORT FUNCTIONS
+# =============================================================================
+
+async def create_knowledge_item(item: KnowledgeItem) -> Optional[KnowledgeItem]:
+    """Create a knowledge item from a KnowledgeItem dataclass."""
+    payload = {
+        "content_type": item.content_type.value,
+        "capture_type": item.capture_type.value,
+        "title": item.title,
+        "source_url": item.source if item.source.startswith('http') else None,
+        "full_text": item.full_text,
+        "summary": item.summary,
+        "topics": item.topics or [],
+        "base_priority": item.priority,
+        "decay_score": item.decay_score,
+        "status": item.status.value,
+        "access_count": item.access_count,
+    }
+
+    # Add optional fields
+    if item.user_note:
+        payload["user_note"] = item.user_note
+    if item.site_name:
+        payload["site_name"] = item.site_name
+    if item.word_count:
+        payload["word_count"] = item.word_count
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{_get_rest_url()}/knowledge_items",
+                headers=_get_headers(),
+                json=payload,
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        logger.info(f"Created knowledge item: {item.title or 'untitled'}")
+        return KnowledgeItem.from_db_row(data[0])
+    except Exception as e:
+        logger.error(f"Failed to create knowledge item: {e}")
+        return None
+
+
+async def create_knowledge_chunks(
+    parent_id: str,
+    chunks: list[dict],
+) -> bool:
+    """Create multiple chunks for a knowledge item.
+
+    Args:
+        parent_id: UUID of parent knowledge item
+        chunks: List of dicts with: index, text, embedding, start_word, end_word
+    """
+    payloads = [
+        {
+            "parent_id": parent_id,
+            "chunk_index": chunk["index"],
+            "content": chunk["text"],
+            "embedding": chunk["embedding"],
+            "start_word": chunk.get("start_word"),
+            "end_word": chunk.get("end_word"),
+        }
+        for chunk in chunks
+    ]
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{_get_rest_url()}/knowledge_chunks",
+                headers=_get_headers(),
+                json=payloads,
+                timeout=60,
+            )
+            response.raise_for_status()
+        logger.info(f"Created {len(chunks)} chunks for item {parent_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to create chunks: {e}")
+        return False
+
+
+async def get_item_by_source(source_url: str) -> Optional[KnowledgeItem]:
+    """Get a knowledge item by its source URL."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{_get_rest_url()}/knowledge_items?source_url=eq.{source_url}",
+                headers=_get_headers(),
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        if not data:
+            return None
+        return KnowledgeItem.from_db_row(data[0])
+    except Exception as e:
+        logger.error(f"Failed to get item by source {source_url}: {e}")
+        return None
+
+
+async def get_pending_items(limit: int = 10) -> list[KnowledgeItem]:
+    """Get items with pending status that need full processing."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{_get_rest_url()}/knowledge_items?status=eq.pending&order=created_at&limit={limit}",
+                headers=_get_headers(),
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        return [KnowledgeItem.from_db_row(row) for row in data]
+    except Exception as e:
+        logger.error(f"Failed to get pending items: {e}")
+        return []
+
+
+async def update_item_status(item_id: str, status: ItemStatus) -> bool:
+    """Update the status of a knowledge item."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.patch(
+                f"{_get_rest_url()}/knowledge_items?id=eq.{item_id}",
+                headers=_get_headers(),
+                json={"status": status.value},
+                timeout=30,
+            )
+            response.raise_for_status()
+        logger.info(f"Updated item {item_id} status to {status.value}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to update item status: {e}")
+        return False
