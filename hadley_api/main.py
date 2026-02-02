@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional
 from pathlib import Path
+import asyncio
 import os
 
 app = FastAPI(
@@ -48,7 +49,7 @@ async def health():
 @app.get("/gmail/unread")
 async def gmail_unread(limit: int = Query(default=10, le=20)):
     """Get unread emails."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
 
     try:
         service = get_gmail_service()
@@ -101,7 +102,7 @@ async def gmail_search(
     limit: int = Query(default=10, le=20)
 ):
     """Search emails."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
 
     try:
         service = get_gmail_service()
@@ -150,7 +151,7 @@ async def gmail_search(
 @app.get("/gmail/get")
 async def gmail_get(id: str = Query(..., description="Email message ID")):
     """Get full email content by ID."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
     import base64
     import re
     from html import unescape
@@ -272,7 +273,7 @@ async def gmail_get(id: str = Query(..., description="Email message ID")):
 @app.get("/gmail/labels")
 async def gmail_labels():
     """Get all Gmail labels."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
 
     try:
         service = get_gmail_service()
@@ -297,7 +298,7 @@ async def gmail_labels():
 @app.get("/gmail/starred")
 async def gmail_starred(limit: int = Query(default=10, le=20)):
     """Get starred emails."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
 
     try:
         service = get_gmail_service()
@@ -345,7 +346,7 @@ async def gmail_starred(limit: int = Query(default=10, le=20)):
 @app.get("/gmail/thread")
 async def gmail_thread(id: str = Query(..., description="Thread ID")):
     """Get full email thread/conversation."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
     import base64
 
     try:
@@ -410,7 +411,7 @@ async def gmail_draft(
     body: str = Query(..., description="Email body text")
 ):
     """Create a draft email."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
     import base64
     from email.mime.text import MIMEText
 
@@ -450,7 +451,7 @@ async def gmail_send(
     body: str = Query(..., description="Email body text")
 ):
     """Send an email."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
     import base64
     from email.mime.text import MIMEText
 
@@ -490,7 +491,7 @@ async def gmail_send(
 @app.get("/calendar/today")
 async def calendar_today():
     """Get today's calendar events."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -539,7 +540,7 @@ async def calendar_today():
 @app.get("/calendar/week")
 async def calendar_week():
     """Get this week's calendar events."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -596,7 +597,7 @@ async def calendar_free(
     duration: int = Query(default=60, description="Duration in minutes")
 ):
     """Find free time slots."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -676,10 +677,11 @@ async def calendar_free(
 @app.get("/calendar/range")
 async def calendar_range(
     start_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
-    end_date: str = Query(..., description="End date (YYYY-MM-DD)")
+    end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
+    limit: int = Query(default=2500, le=5000, description="Max events to return")
 ):
-    """Get events in a date range."""
-    from google_auth import get_calendar_service
+    """Get events in a date range (paginated to fetch all)."""
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -689,27 +691,36 @@ async def calendar_range(
         start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=UK_TZ)
         end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, tzinfo=UK_TZ)
 
-        events_result = service.events().list(
-            calendarId='primary',
-            timeMin=start.isoformat(),
-            timeMax=end.isoformat(),
-            singleEvents=True,
-            orderBy='startTime',
-            maxResults=50
-        ).execute()
-
+        # Paginate through all events
         events = []
-        for event in events_result.get('items', []):
-            start_time = event.get('start', {}).get('dateTime', event.get('start', {}).get('date', ''))
-            end_time = event.get('end', {}).get('dateTime', event.get('end', {}).get('date', ''))
-            events.append({
-                "id": event['id'],
-                "summary": event.get('summary', '(No title)'),
-                "start": start_time,
-                "end": end_time,
-                "location": event.get('location', ''),
-                "description": event.get('description', '')[:200] if event.get('description') else ''
-            })
+        page_token = None
+
+        while len(events) < limit:
+            events_result = service.events().list(
+                calendarId='primary',
+                timeMin=start.isoformat(),
+                timeMax=end.isoformat(),
+                singleEvents=True,
+                orderBy='startTime',
+                maxResults=min(250, limit - len(events)),
+                pageToken=page_token
+            ).execute()
+
+            for event in events_result.get('items', []):
+                start_time = event.get('start', {}).get('dateTime', event.get('start', {}).get('date', ''))
+                end_time = event.get('end', {}).get('dateTime', event.get('end', {}).get('date', ''))
+                events.append({
+                    "id": event['id'],
+                    "summary": event.get('summary', '(No title)'),
+                    "start": start_time,
+                    "end": end_time,
+                    "location": event.get('location', ''),
+                    "description": event.get('description', '')[:200] if event.get('description') else ''
+                })
+
+            page_token = events_result.get('nextPageToken')
+            if not page_token:
+                break
 
         return {
             "start_date": start_date,
@@ -734,7 +745,7 @@ async def calendar_create(
     description: Optional[str] = Query(default=None, description="Event description")
 ):
     """Create a calendar event."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -794,7 +805,7 @@ async def calendar_create(
 @app.get("/calendar/event")
 async def calendar_event(id: str = Query(..., description="Event ID")):
     """Get a specific calendar event."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -824,7 +835,7 @@ async def calendar_event(id: str = Query(..., description="Event ID")):
 @app.delete("/calendar/event")
 async def calendar_delete(id: str = Query(..., description="Event ID")):
     """Delete a calendar event."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -855,7 +866,7 @@ async def calendar_update(
     description: Optional[str] = Query(default=None, description="New description")
 ):
     """Update a calendar event."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -920,7 +931,7 @@ async def drive_search(
     limit: int = Query(default=10, le=20)
 ):
     """Search Google Drive."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -2019,7 +2030,7 @@ async def gmail_attachments(
     attachment_id: Optional[str] = Query(default=None, description="Specific attachment ID to download")
 ):
     """List or download email attachments."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
     import base64
 
     try:
@@ -2096,7 +2107,7 @@ async def gmail_attachment_text(
     attachment_id: str = Query(..., description="Attachment ID to extract text from")
 ):
     """Extract text from PDF or text attachments."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
     import base64
     import io
 
@@ -2212,7 +2223,7 @@ async def calendar_recurring(
     location: Optional[str] = Query(default=None, description="Event location")
 ):
     """Create a recurring calendar event."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -2271,7 +2282,7 @@ async def calendar_invite(
     email: str = Query(..., description="Email address to invite")
 ):
     """Add an attendee to a calendar event."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -2320,7 +2331,7 @@ async def drive_create(
     folder_id: Optional[str] = Query(default=None, description="Parent folder ID (optional)")
 ):
     """Create a new Google Doc, Sheet, or Slides."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -2372,7 +2383,7 @@ async def drive_share(
     role: str = Query(default="writer", description="Role: reader, commenter, writer")
 ):
     """Share a Drive file with someone."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -2492,7 +2503,7 @@ async def contacts_search(
     q: str = Query(..., description="Search query (name, email, phone)")
 ):
     """Search Google Contacts."""
-    from google_auth import get_credentials
+    from .google_auth import get_credentials
     from googleapiclient.discovery import build
 
     try:
@@ -2546,7 +2557,7 @@ async def contacts_search(
 @app.post("/gmail/archive")
 async def gmail_archive(message_id: str = Query(..., description="Email message ID")):
     """Archive an email (remove from inbox)."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
 
     try:
         service = get_gmail_service()
@@ -2575,7 +2586,7 @@ async def gmail_archive(message_id: str = Query(..., description="Email message 
 @app.post("/gmail/trash")
 async def gmail_trash(message_id: str = Query(..., description="Email message ID")):
     """Move an email to trash."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
 
     try:
         service = get_gmail_service()
@@ -2602,7 +2613,7 @@ async def gmail_mark_read(
     read: bool = Query(default=True, description="True to mark as read, False for unread")
 ):
     """Mark an email as read or unread."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
 
     try:
         service = get_gmail_service()
@@ -2639,7 +2650,7 @@ async def gmail_forward(
     comment: Optional[str] = Query(default=None, description="Optional comment to add")
 ):
     """Forward an email."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
     import base64
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
@@ -2716,7 +2727,7 @@ async def gmail_forward(
 @app.get("/calendar/calendars")
 async def calendar_calendars():
     """List all calendars."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -2754,7 +2765,7 @@ async def calendar_busy(
     date: Optional[str] = Query(default=None, description="Date to check (YYYY-MM-DD, default: today)")
 ):
     """Check if someone is busy using freebusy API."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -2809,7 +2820,7 @@ async def calendar_busy(
 @app.get("/drive/recent")
 async def drive_recent(limit: int = Query(default=10, le=20)):
     """Get recently accessed files."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -2849,7 +2860,7 @@ async def drive_recent(limit: int = Query(default=10, le=20)):
 @app.post("/drive/trash")
 async def drive_trash(file_id: str = Query(..., description="File ID to trash")):
     """Move a file to trash."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -2881,7 +2892,7 @@ async def drive_folder(
     parent_id: Optional[str] = Query(default=None, description="Parent folder ID (optional)")
 ):
     """Create a new folder."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -2918,7 +2929,7 @@ async def drive_move(
     folder_id: str = Query(..., description="Destination folder ID")
 ):
     """Move a file to a folder."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -2960,7 +2971,7 @@ async def tasks_list(
     tasklist: str = Query(default="@default", description="Task list ID (default: primary)")
 ):
     """Get tasks from Google Tasks."""
-    from google_auth import get_credentials
+    from .google_auth import get_credentials
     from googleapiclient.discovery import build
 
     try:
@@ -3008,7 +3019,7 @@ async def tasks_create(
     tasklist: str = Query(default="@default", description="Task list ID")
 ):
     """Create a new task."""
-    from google_auth import get_credentials
+    from .google_auth import get_credentials
     from googleapiclient.discovery import build
 
     try:
@@ -3046,7 +3057,7 @@ async def tasks_complete(
     tasklist: str = Query(default="@default", description="Task list ID")
 ):
     """Mark a task as complete."""
-    from google_auth import get_credentials
+    from .google_auth import get_credentials
     from googleapiclient.discovery import build
 
     try:
@@ -3211,7 +3222,7 @@ async def gmail_reply(
     body: str = Query(..., description="Reply text")
 ):
     """Reply to an email."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
     import base64
     from email.mime.text import MIMEText
 
@@ -3260,7 +3271,7 @@ async def gmail_reply(
 @app.get("/gmail/vacation")
 async def gmail_vacation_get():
     """Get vacation responder settings."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
 
     try:
         service = get_gmail_service()
@@ -3291,7 +3302,7 @@ async def gmail_vacation_set(
     message: Optional[str] = Query(default=None, description="Auto-reply message")
 ):
     """Set vacation responder."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
 
     try:
         service = get_gmail_service()
@@ -3321,7 +3332,7 @@ async def gmail_vacation_set(
 @app.get("/gmail/filters")
 async def gmail_filters():
     """List email filters."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
 
     try:
         service = get_gmail_service()
@@ -3360,7 +3371,7 @@ async def gmail_filters():
 @app.get("/gmail/signature")
 async def gmail_signature():
     """Get email signature."""
-    from google_auth import get_gmail_service
+    from .google_auth import get_gmail_service
 
     try:
         service = get_gmail_service()
@@ -3400,7 +3411,7 @@ async def calendar_search(
     limit: int = Query(default=10, le=25)
 ):
     """Search calendar events."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -3446,7 +3457,7 @@ async def calendar_quickadd(
     text: str = Query(..., description="Natural language event description")
 ):
     """Create event using natural language (e.g., 'Lunch with Sarah tomorrow at noon')."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -3474,7 +3485,7 @@ async def calendar_quickadd(
 @app.get("/calendar/next")
 async def calendar_next(limit: int = Query(default=5, le=10)):
     """Get next upcoming events."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -3518,7 +3529,7 @@ async def calendar_conflicts(
     end_date: Optional[str] = Query(default=None, description="End date (YYYY-MM-DD)")
 ):
     """Find scheduling conflicts (overlapping events)."""
-    from google_auth import get_calendar_service
+    from .google_auth import get_calendar_service
 
     try:
         service = get_calendar_service()
@@ -3591,7 +3602,7 @@ async def calendar_conflicts(
 @app.get("/drive/download")
 async def drive_download(file_id: str = Query(..., description="File ID")):
     """Get download link for a file."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -3624,7 +3635,7 @@ async def drive_copy(
     name: Optional[str] = Query(default=None, description="New file name")
 ):
     """Copy a file."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -3658,7 +3669,7 @@ async def drive_rename(
     name: str = Query(..., description="New name")
 ):
     """Rename a file."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -3690,7 +3701,7 @@ async def drive_export(
     format: str = Query(default="pdf", description="Export format: pdf, docx, xlsx, pptx, txt")
 ):
     """Export a Google Doc/Sheet/Slides to downloadable format."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -3733,7 +3744,7 @@ async def drive_export(
 @app.get("/drive/permissions")
 async def drive_permissions(file_id: str = Query(..., description="File ID")):
     """List who has access to a file."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -3767,7 +3778,7 @@ async def drive_permissions(file_id: str = Query(..., description="File ID")):
 @app.get("/drive/storage")
 async def drive_storage():
     """Get Drive storage usage."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -3799,7 +3810,7 @@ async def drive_storage():
 @app.get("/drive/starred")
 async def drive_starred(limit: int = Query(default=10, le=20)):
     """Get starred files."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -3837,7 +3848,7 @@ async def drive_starred(limit: int = Query(default=10, le=20)):
 @app.get("/drive/shared")
 async def drive_shared(limit: int = Query(default=10, le=20)):
     """Get files shared with me."""
-    from google_auth import get_drive_service
+    from .google_auth import get_drive_service
 
     try:
         service = get_drive_service()
@@ -3884,7 +3895,7 @@ async def sheets_read(
     range: str = Query(default="A1:Z100", description="Range to read (e.g., 'Sheet1!A1:D10')")
 ):
     """Read data from a Google Sheet."""
-    from google_auth import get_credentials
+    from .google_auth import get_credentials
     from googleapiclient.discovery import build
 
     try:
@@ -3921,7 +3932,7 @@ async def sheets_write(
     values: str = Query(..., description="Values as JSON array, e.g., [[\"A\",\"B\"],[\"C\",\"D\"]]")
 ):
     """Write data to a Google Sheet."""
-    from google_auth import get_credentials
+    from .google_auth import get_credentials
     from googleapiclient.discovery import build
     import json
 
@@ -3961,7 +3972,7 @@ async def sheets_append(
     values: str = Query(..., description="Row values as JSON array, e.g., [\"A\",\"B\",\"C\"]")
 ):
     """Append a row to a Google Sheet."""
-    from google_auth import get_credentials
+    from .google_auth import get_credentials
     from googleapiclient.discovery import build
     import json
 
@@ -4003,7 +4014,7 @@ async def sheets_clear(
     range: str = Query(..., description="Range to clear")
 ):
     """Clear data from a range in a Google Sheet."""
-    from google_auth import get_credentials
+    from .google_auth import get_credentials
     from googleapiclient.discovery import build
 
     try:
@@ -4033,7 +4044,7 @@ async def sheets_clear(
 @app.get("/sheets/info")
 async def sheets_info(spreadsheet_id: str = Query(..., description="Spreadsheet ID")):
     """Get spreadsheet metadata."""
-    from google_auth import get_credentials
+    from .google_auth import get_credentials
     from googleapiclient.discovery import build
 
     try:
@@ -4076,7 +4087,7 @@ async def sheets_info(spreadsheet_id: str = Query(..., description="Spreadsheet 
 @app.get("/docs/read")
 async def docs_read(document_id: str = Query(..., description="Document ID")):
     """Read content from a Google Doc."""
-    from google_auth import get_credentials
+    from .google_auth import get_credentials
     from googleapiclient.discovery import build
 
     try:
@@ -4116,7 +4127,7 @@ async def docs_append(
     text: str = Query(..., description="Text to append")
 ):
     """Append text to a Google Doc."""
-    from google_auth import get_credentials
+    from .google_auth import get_credentials
     from googleapiclient.discovery import build
 
     try:
@@ -5170,12 +5181,23 @@ async def nutrition_log_meal(
     from domains.nutrition.services.goals_service import get_goals
 
     try:
+        # Get totals and goals BEFORE insert to avoid race condition
+        prev_totals, goals = await asyncio.gather(
+            get_today_totals(),
+            get_goals()
+        )
+        targets = goals.get("daily_targets", {})
+
+        # Insert the meal
         result = await insert_meal(meal_type, description, calories, protein_g, carbs_g, fat_g)
 
-        # Fetch today's totals and goals for context
-        totals = await get_today_totals()
-        goals = await get_goals()
-        targets = goals.get("daily_targets", {})
+        # Calculate new totals (previous + just logged) - avoids race condition
+        new_totals = {
+            "calories": prev_totals.get("calories", 0) + calories,
+            "protein_g": prev_totals.get("protein_g", 0) + protein_g,
+            "carbs_g": prev_totals.get("carbs_g", 0) + carbs_g,
+            "fat_g": prev_totals.get("fat_g", 0) + fat_g,
+        }
 
         return {
             **result,
@@ -5186,12 +5208,7 @@ async def nutrition_log_meal(
             "carbs_g": carbs_g,
             "fat_g": fat_g,
             "logged_at": datetime.now(UK_TZ).isoformat(),
-            "today_totals": {
-                "calories": totals.get("calories", 0),
-                "protein_g": totals.get("protein_g", 0),
-                "carbs_g": totals.get("carbs_g", 0),
-                "fat_g": totals.get("fat_g", 0),
-            },
+            "today_totals": new_totals,
             "daily_targets": {
                 "calories": targets.get("calories", 2000),
                 "protein_g": targets.get("protein_g", 150),
@@ -5199,8 +5216,8 @@ async def nutrition_log_meal(
                 "fat_g": targets.get("fat_g", 65),
             },
             "remaining": {
-                "calories": max(0, targets.get("calories", 2000) - totals.get("calories", 0)),
-                "protein_g": max(0, targets.get("protein_g", 150) - totals.get("protein_g", 0)),
+                "calories": max(0, targets.get("calories", 2000) - new_totals["calories"]),
+                "protein_g": max(0, targets.get("protein_g", 150) - new_totals["protein_g"]),
             }
         }
     except Exception as e:
@@ -5216,14 +5233,19 @@ async def nutrition_log_water(
     from domains.nutrition.services.goals_service import get_goals
 
     try:
+        # Get totals and goals BEFORE insert to avoid race condition
+        totals, goals = await asyncio.gather(
+            get_today_totals(),
+            get_goals()
+        )
+        previous_water = totals.get("water_ml", 0)
+        water_goal = goals.get("daily_targets", {}).get("water_ml", 2500)
+
+        # Insert the water
         result = await insert_water(ml)
 
-        # Fetch today's totals and goals for running total context
-        totals = await get_today_totals()
-        goals = await get_goals()
-
-        water_total = totals.get("water_ml", 0)
-        water_goal = goals.get("daily_targets", {}).get("water_ml", 2500)
+        # Calculate new total (previous + just logged) - avoids race condition
+        water_total = previous_water + ml
         remaining = max(0, water_goal - water_total)
 
         return {
