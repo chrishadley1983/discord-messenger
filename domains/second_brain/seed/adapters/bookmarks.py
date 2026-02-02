@@ -36,10 +36,20 @@ class BookmarksAdapter(SeedAdapter):
     async def fetch(self, limit: int = 100) -> list[SeedItem]:
         file_path = Path(self.file_path)
 
+        # Check if JSON by extension or by content (Chrome's Bookmarks has no extension)
         if file_path.suffix.lower() == ".json":
             return await self._parse_json(file_path, limit)
-        else:
-            return await self._parse_html(file_path, limit)
+
+        # Try to detect JSON by reading first char
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                first_char = f.read(1)
+            if first_char == "{":
+                return await self._parse_json(file_path, limit)
+        except Exception:
+            pass
+
+        return await self._parse_html(file_path, limit)
 
     async def _parse_json(self, path: Path, limit: int) -> list[SeedItem]:
         """Parse Chrome/Edge bookmark JSON export."""
@@ -89,8 +99,9 @@ class BookmarksAdapter(SeedAdapter):
                     created_at=self._parse_chrome_timestamp(node.get("date_added")),
                 ))
 
-        elif node_type == "folder":
-            current_path = f"{folder_path}/{name}" if folder_path else name
+        # Handle folders (explicit type or root nodes with children)
+        if node_type == "folder" or (node_type is None and "children" in node):
+            current_path = f"{folder_path}/{name}" if folder_path and name else (name or folder_path)
             for child in node.get("children", []):
                 self._extract_from_node(child, items, limit, current_path)
 
