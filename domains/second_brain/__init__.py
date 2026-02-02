@@ -94,6 +94,13 @@ from .surfacing import (
     format_context_for_claude,
 )
 
+# Weekly digest
+from .digest import (
+    generate_weekly_digest,
+    format_digest_for_discord,
+    get_digest_for_skill,
+)
+
 __all__ = [
     # Types
     "KnowledgeItem",
