@@ -16,8 +16,9 @@ from .config import (
     MAX_RETRIES,
 )
 
-# Recent conversation buffer (shared across messages)
-_recent_buffer: deque[dict] = deque(maxlen=RECENT_BUFFER_SIZE)
+# Per-channel recent conversation buffers
+# Each channel has its own deque to avoid context mixing
+_recent_buffers: dict[int, deque] = {}
 
 # Failure queue for retry
 _failure_queue: deque[dict] = deque(maxlen=FAILURE_QUEUE_MAX)
@@ -26,30 +27,77 @@ _failure_queue: deque[dict] = deque(maxlen=FAILURE_QUEUE_MAX)
 _retry_task: Optional[asyncio.Task] = None
 
 
-def add_to_buffer(role: str, content: str) -> None:
-    """Add a message to the recent conversation buffer.
+def _get_buffer(channel_id: int) -> deque:
+    """Get or create buffer for a channel."""
+    if channel_id not in _recent_buffers:
+        _recent_buffers[channel_id] = deque(maxlen=RECENT_BUFFER_SIZE)
+    return _recent_buffers[channel_id]
+
+
+def is_buffer_empty(channel_id: int) -> bool:
+    """Check if channel buffer is empty (needs Discord history fetch)."""
+    return channel_id not in _recent_buffers or len(_recent_buffers[channel_id]) == 0
+
+
+def populate_buffer_from_history(channel_id: int, messages: list[dict]) -> int:
+    """Populate buffer from Discord message history.
+
+    Called after restart to restore context from Discord.
+
+    Args:
+        channel_id: Discord channel ID
+        messages: List of {'role': 'user'|'assistant', 'content': str}
+                  in chronological order (oldest first)
+
+    Returns:
+        Number of messages added to buffer
+    """
+    buffer = _get_buffer(channel_id)
+
+    # Clear any existing (shouldn't be any, but just in case)
+    buffer.clear()
+
+    # Add messages in order
+    for msg in messages:
+        buffer.append({
+            "role": msg["role"],
+            "content": msg["content"]
+        })
+
+    logger.info(f"Populated buffer for channel {channel_id} with {len(messages)} messages from Discord history")
+    return len(messages)
+
+
+def add_to_buffer(role: str, content: str, channel_id: int) -> None:
+    """Add a message to the channel's recent conversation buffer.
 
     Args:
         role: 'user' or 'assistant'
         content: Message content
+        channel_id: Discord channel ID
     """
-    _recent_buffer.append({
+    buffer = _get_buffer(channel_id)
+    buffer.append({
         "role": role,
         "content": content
     })
 
 
-def get_recent_context() -> str:
+def get_recent_context(channel_id: int) -> str:
     """Format buffer as context string for prompt injection.
+
+    Args:
+        channel_id: Discord channel ID
 
     Returns:
         Formatted string of recent exchanges, or empty string if buffer is empty.
     """
-    if not _recent_buffer:
+    buffer = _get_buffer(channel_id)
+    if not buffer:
         return ""
 
     lines = ["## Recent Conversation"]
-    for msg in _recent_buffer:
+    for msg in buffer:
         prefix = "User" if msg["role"] == "user" else "Assistant"
         # Truncate long messages for context
         content = msg["content"]
@@ -98,17 +146,41 @@ async def get_memory_context(query: str) -> str:
         return ""
 
 
-def build_full_context(message: str, memory_context: str) -> str:
+def build_full_context(
+    message: str,
+    memory_context: str,
+    channel_id: int,
+    channel_name: str = "",
+    knowledge_context: str = "",
+) -> str:
     """Build full context combining memory, recent buffer, and current message.
 
     Args:
         message: The current user message
         memory_context: Retrieved memory observations
+        channel_id: Discord channel ID for per-channel buffer
+        channel_name: Discord channel name (e.g., "#food-log")
+        knowledge_context: Optional Second Brain knowledge context
 
     Returns:
         Combined context string
     """
+    from datetime import datetime
+
     parts = []
+
+    # Channel isolation header (prevents cross-channel context bleeding)
+    parts.append("# CHANNEL CONTEXT")
+    parts.append(f"**Active Channel:** {channel_name or f'Channel {channel_id}'}")
+    parts.append("You are responding to a message in THIS channel only.")
+    parts.append("Do NOT reference conversations or context from other channels.")
+    parts.append("")
+
+    # Add current date/time
+    now = datetime.now()
+    parts.append(f"## Current Time")
+    parts.append(f"{now.strftime('%A, %B %d, %Y at %H:%M')} (UK)")
+    parts.append("")
 
     # Add memory context if available
     if memory_context and memory_context.strip():
@@ -116,8 +188,13 @@ def build_full_context(message: str, memory_context: str) -> str:
         parts.append(memory_context.strip())
         parts.append("")
 
-    # Add recent conversation buffer
-    recent = get_recent_context()
+    # Add Second Brain knowledge context if available
+    if knowledge_context and knowledge_context.strip():
+        parts.append(knowledge_context.strip())
+        parts.append("")
+
+    # Add recent conversation buffer (per-channel)
+    recent = get_recent_context(channel_id)
     if recent:
         parts.append(recent)
         parts.append("")

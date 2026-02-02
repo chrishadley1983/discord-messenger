@@ -87,6 +87,13 @@ from .connections import (
     format_connection_for_discord,
 )
 
+# Contextual surfacing
+from .surfacing import (
+    get_context_for_message,
+    get_relevant_context,
+    format_context_for_claude,
+)
+
 __all__ = [
     # Types
     "KnowledgeItem",
