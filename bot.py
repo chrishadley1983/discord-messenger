@@ -34,6 +34,10 @@ from domains.peterbot import (
     CHANNEL_ID as PETERBOT_CHANNEL
 )
 from domains.peterbot.config import PETERBOT_CHANNEL_IDS
+from domains.peterbot.memory import is_buffer_empty, populate_buffer_from_history
+
+# Import Response Processing Pipeline (Stage 1-5 processing)
+from domains.peterbot.response.pipeline import process as process_response
 
 # Import Peterbot scheduler (Phase 7)
 from domains.peterbot.scheduler import PeterbotScheduler
@@ -155,6 +159,45 @@ async def on_ready():
         logger.error(f"Failed to reload reminders: {e}")
 
 
+async def fetch_peterbot_history(channel, limit: int = 10) -> list[dict]:
+    """Fetch recent messages for Peterbot buffer population.
+
+    Called when buffer is empty (e.g., after restart) to restore context.
+
+    Args:
+        channel: Discord channel object
+        limit: Max messages to fetch (default 10, excluding current)
+
+    Returns:
+        List of {'role': 'user'|'assistant', 'content': str} in chronological order
+    """
+    messages = []
+
+    try:
+        async for msg in channel.history(limit=limit + 1):  # +1 to skip current
+            # Skip empty messages
+            if not msg.content:
+                continue
+
+            role = "assistant" if msg.author.bot else "user"
+            messages.append({
+                "role": role,
+                "content": msg.content
+            })
+
+        # Reverse to chronological (oldest first) and skip the current message
+        messages.reverse()
+        if messages:
+            messages = messages[:-1]  # Remove the most recent (current message)
+
+        logger.debug(f"Fetched {len(messages)} messages from Discord history for buffer")
+        return messages
+
+    except Exception as e:
+        logger.error(f"Failed to fetch Discord history: {e}")
+        return []
+
+
 async def fetch_conversation_history(channel, limit: int = 15) -> list[dict]:
     """Fetch recent messages and format as conversation history for Claude."""
     history = []
@@ -254,14 +297,62 @@ async def on_message(message):
                 await message.channel.send(reminder_response)
                 return
 
-            # Normal peterbot routing to Claude Code
-            response = await handle_peterbot(message.content, message.author.id, message.channel.id)
-            # Split long messages (Discord 2000 char limit)
-            if len(response) > 2000:
-                for i in range(0, len(response), 2000):
-                    await message.channel.send(response[i:i+2000])
-            else:
-                await message.channel.send(response)
+            # Check if buffer needs populating from Discord history (e.g., after restart)
+            if is_buffer_empty(message.channel.id):
+                logger.info(f"Buffer empty for channel {message.channel.id}, fetching Discord history")
+                history_messages = await fetch_peterbot_history(message.channel)
+                if history_messages:
+                    populate_buffer_from_history(message.channel.id, history_messages)
+
+            # Define interim callback for "working on it" messages
+            async def post_interim(text: str):
+                """Post interim status update to channel."""
+                await message.channel.send(text)
+
+            # Define busy callback for when Peter is working on another task
+            async def post_busy(text: str):
+                """Post busy notification when Peter is handling another request."""
+                await message.channel.send(text)
+
+            # Normal peterbot routing to Claude Code (with interim updates)
+            raw_response = await handle_peterbot(
+                message.content,
+                message.author.id,
+                message.channel.id,
+                interim_callback=post_interim,
+                busy_callback=post_busy
+            )
+
+            # Process through Response Pipeline (sanitise → classify → format → chunk)
+            processed = process_response(raw_response, {'user_prompt': message.content})
+
+            # Send chunks (pipeline handles Discord 2000 char limit)
+            for i, chunk in enumerate(processed.chunks):
+                if not chunk.strip():
+                    continue  # Skip empty chunks
+
+                # First chunk can include embed
+                if i == 0 and processed.embed:
+                    embed_obj = discord.Embed.from_dict(processed.embed)
+                    await message.channel.send(chunk, embed=embed_obj)
+                else:
+                    await message.channel.send(chunk)
+
+            # Send additional embeds (e.g., image results)
+            for embed_data in processed.embeds:
+                embed_obj = discord.Embed.from_dict(embed_data)
+                await message.channel.send(embed=embed_obj)
+
+            # Add reactions if specified (for alerts)
+            if processed.reactions:
+                for reaction in processed.reactions:
+                    try:
+                        await message.add_reaction(reaction)
+                    except discord.HTTPException:
+                        pass  # Reaction failed, continue
+
+            logger.debug(f"Response processed: type={processed.response_type.value}, "
+                        f"chunks={len(processed.chunks)}, raw={processed.raw_length}, final={processed.final_length}")
         return
 
     # Find domain for this channel
@@ -533,6 +624,77 @@ async def cmd_status(interaction: discord.Interaction):
         lines.append("⏸️ **Quiet hours active** (23:00-06:00 UK)")
 
     await interaction.response.send_message("\n".join(lines))
+
+
+# =============================================================================
+# SECOND BRAIN COMMANDS
+# =============================================================================
+
+@bot.tree.command(name="save", description="Save content to your Second Brain")
+@app_commands.describe(
+    content="URL or text to save",
+    note="Optional note or annotation",
+    tags="Optional tags (comma-separated)"
+)
+async def cmd_save(
+    interaction: discord.Interaction,
+    content: str,
+    note: str = None,
+    tags: str = None
+):
+    """Save content to Second Brain."""
+    from domains.second_brain.commands import handle_save
+
+    await interaction.response.defer()  # May take a while
+
+    user_tags = [t.strip() for t in tags.split(",")] if tags else None
+
+    try:
+        response = await handle_save(content, user_note=note, user_tags=user_tags)
+        await interaction.followup.send(response)
+    except Exception as e:
+        logger.error(f"Save command failed: {e}")
+        await interaction.followup.send(f"❌ Save failed: {e}")
+
+
+@bot.tree.command(name="recall", description="Search your Second Brain")
+@app_commands.describe(
+    query="What are you looking for?",
+    limit="Max results (1-10, default 5)"
+)
+async def cmd_recall(
+    interaction: discord.Interaction,
+    query: str,
+    limit: int = 5
+):
+    """Semantic search the Second Brain."""
+    from domains.second_brain.commands import handle_recall
+
+    await interaction.response.defer()
+
+    limit = max(1, min(10, limit))  # Clamp to 1-10
+
+    try:
+        response = await handle_recall(query, limit=limit)
+        await interaction.followup.send(response)
+    except Exception as e:
+        logger.error(f"Recall command failed: {e}")
+        await interaction.followup.send(f"❌ Search failed: {e}")
+
+
+@bot.tree.command(name="knowledge", description="Show Second Brain stats")
+async def cmd_knowledge(interaction: discord.Interaction):
+    """Show Second Brain stats and recent items."""
+    from domains.second_brain.commands import handle_knowledge
+
+    await interaction.response.defer()
+
+    try:
+        response = await handle_knowledge()
+        await interaction.followup.send(response)
+    except Exception as e:
+        logger.error(f"Knowledge command failed: {e}")
+        await interaction.followup.send(f"❌ Failed to load stats: {e}")
 
 
 @bot.event

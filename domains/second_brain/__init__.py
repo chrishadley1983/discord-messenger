@@ -65,6 +65,13 @@ from .decay import (
     is_fading,
 )
 
+# Commands
+from .commands import (
+    handle_save,
+    handle_recall,
+    handle_knowledge,
+)
+
 __all__ = [
     # Types
     "KnowledgeItem",
@@ -112,4 +119,8 @@ __all__ = [
     # Decay
     "calculate_decay_score",
     "is_fading",
+    # Commands
+    "handle_save",
+    "handle_recall",
+    "handle_knowledge",
 ]
