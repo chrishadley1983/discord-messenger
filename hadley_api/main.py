@@ -99,9 +99,9 @@ async def gmail_unread(limit: int = Query(default=10, le=20)):
 @app.get("/gmail/search")
 async def gmail_search(
     q: str = Query(..., description="Search query"),
-    limit: int = Query(default=10, le=20)
+    limit: int = Query(default=10, le=500, description="Max results (up to 500 for seed imports)")
 ):
-    """Search emails."""
+    """Search emails with pagination support for large result sets."""
     from .google_auth import get_gmail_service
 
     try:
@@ -109,16 +109,29 @@ async def gmail_search(
         if not service:
             raise HTTPException(status_code=503, detail="Gmail not configured")
 
-        results = service.users().messages().list(
-            userId='me',
-            q=q,
-            maxResults=limit
-        ).execute()
+        # Paginate through results for larger limits
+        all_messages = []
+        page_token = None
 
-        messages = results.get('messages', [])
+        while len(all_messages) < limit:
+            results = service.users().messages().list(
+                userId='me',
+                q=q,
+                maxResults=min(100, limit - len(all_messages)),
+                pageToken=page_token
+            ).execute()
+
+            messages = results.get('messages', [])
+            if not messages:
+                break
+
+            all_messages.extend(messages)
+            page_token = results.get('nextPageToken')
+            if not page_token:
+                break
 
         emails = []
-        for msg in messages:
+        for msg in all_messages[:limit]:
             detail = service.users().messages().get(
                 userId='me',
                 id=msg['id'],

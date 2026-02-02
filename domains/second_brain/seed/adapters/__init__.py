@@ -4,12 +4,12 @@ from .github import GitHubProjectsAdapter
 from .bookmarks import BookmarksAdapter
 from .garmin import GarminActivitiesAdapter
 from .calendar import CalendarEventsAdapter
-from .email import EmailThreadsAdapter
+from .email import EmailImportAdapter
 
 __all__ = [
     "GitHubProjectsAdapter",
     "BookmarksAdapter",
     "GarminActivitiesAdapter",
     "CalendarEventsAdapter",
-    "EmailThreadsAdapter",
+    "EmailImportAdapter",
 ]
