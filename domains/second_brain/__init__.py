@@ -152,4 +152,21 @@ __all__ = [
     "handle_save",
     "handle_recall",
     "handle_knowledge",
+    # Passive capture
+    "should_capture_message",
+    "process_passive_message",
+    "detect_passive_captures",
+    # Connections
+    "discover_connections_for_item",
+    "batch_discover_connections",
+    "surface_new_connections",
+    "format_connection_for_discord",
+    # Surfacing
+    "get_context_for_message",
+    "get_relevant_context",
+    "format_context_for_claude",
+    # Digest
+    "generate_weekly_digest",
+    "format_digest_for_discord",
+    "get_digest_for_skill",
 ]
