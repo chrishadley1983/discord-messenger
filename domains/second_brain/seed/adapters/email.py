@@ -50,7 +50,8 @@ class EmailThreadsAdapter(SeedAdapter):
                     logger.error(f"Gmail API error: {response.status_code}")
                     return items
 
-                emails = response.json()
+                data = response.json()
+                emails = data.get("emails", [])
 
                 for email in emails[:limit]:
                     item = self._email_to_item(email)

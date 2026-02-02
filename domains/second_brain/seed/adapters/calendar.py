@@ -24,7 +24,8 @@ class CalendarPatternsAdapter(SeedAdapter):
     def __init__(self, config: dict = None):
         super().__init__(config)
         self.api_base = config.get("api_base", "http://172.19.64.1:8100") if config else "http://172.19.64.1:8100"
-        self.days_back = config.get("days_back", 90) if config else 90
+        # Default to 2 years of history for better pattern detection
+        self.days_back = config.get("days_back", 730) if config else 730
 
     async def validate(self) -> tuple[bool, str]:
         try:
@@ -58,7 +59,8 @@ class CalendarPatternsAdapter(SeedAdapter):
                     logger.error(f"Calendar API error: {response.status_code}")
                     return items
 
-                events = response.json()
+                data = response.json()
+                events = data.get("events", [])
 
                 # Find recurring patterns
                 patterns = self._find_patterns(events)
@@ -143,8 +145,12 @@ This is a recurring event in the calendar, indicating an important routine or co
                     continue
                 seen.add(original_name)
 
-                start = event.get("start", {})
-                date_str = start.get("date") or start.get("dateTime", "")[:10]
+                # Handle both string and dict formats for start
+                start = event.get("start", "")
+                if isinstance(start, str):
+                    date_str = start[:10]  # "2024-08-05" or "2024-08-05T10:00:00Z"
+                else:
+                    date_str = start.get("date") or start.get("dateTime", "")[:10]
 
                 content = f"""# {original_name}
 
