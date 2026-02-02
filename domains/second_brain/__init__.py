@@ -79,6 +79,14 @@ from .passive import (
     detect_passive_captures,
 )
 
+# Connection discovery
+from .connections import (
+    discover_connections_for_item,
+    batch_discover_connections,
+    surface_new_connections,
+    format_connection_for_discord,
+)
+
 __all__ = [
     # Types
     "KnowledgeItem",

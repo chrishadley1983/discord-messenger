@@ -163,6 +163,17 @@ async def process_capture(
         await create_knowledge_chunks(created_item.id, chunk_data)
         logger.info(f"Created {len(chunk_data)} chunks for item {created_item.id}")
 
+        # Step 8: Discover connections (async, non-blocking for explicit saves)
+        if capture_type == CaptureType.EXPLICIT:
+            try:
+                from .connections import discover_connections_for_item
+                connections = await discover_connections_for_item(created_item)
+                if connections:
+                    logger.info(f"Discovered {len(connections)} connections for {created_item.id}")
+            except Exception as e:
+                logger.warning(f"Connection discovery failed: {e}")
+                # Non-fatal - item is still saved
+
         return created_item
 
     except Exception as e:
