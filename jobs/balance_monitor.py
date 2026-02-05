@@ -14,7 +14,9 @@ from config import (
     SUPABASE_KEY,
     MOONSHOT_API_KEY,
     CLAUDE_BALANCE_LOG,
-    MOONSHOT_BALANCE_LOG
+    MOONSHOT_BALANCE_LOG,
+    GROK_MANAGEMENT_KEY,
+    GROK_TEAM_ID
 )
 from logger import logger
 from domains.api_usage.services.anthropic_scraper import get_anthropic_usage as scrape_anthropic
@@ -65,6 +67,43 @@ async def _get_claude_balance() -> dict:
     except Exception as e:
         logger.error(f"Claude balance query error: {e}")
         return {"error": str(e), "balance": None}
+
+
+async def _get_grok_balance() -> dict:
+    """Get xAI Grok balance via management API.
+
+    xAI uses a management API with team-based billing.
+    See: https://console.x.ai for manual balance checking.
+    """
+    try:
+        if not GROK_MANAGEMENT_KEY or not GROK_TEAM_ID:
+            return {"error": "Grok management credentials not configured", "balance": None}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://api.x.ai/v1/api-keys?team_id={GROK_TEAM_ID}",
+                headers={
+                    "Authorization": f"Bearer {GROK_MANAGEMENT_KEY}",
+                    "Content-Type": "application/json"
+                },
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                # xAI API returns credit balance in the response
+                # Note: May need adjustment based on actual API response structure
+                if "balance" in data:
+                    return {"balance": float(data["balance"]), "source": "api"}
+                elif "credits" in data:
+                    return {"balance": float(data["credits"]), "source": "api"}
+                else:
+                    return {"error": "Balance not in response", "balance": None, "check": "console.x.ai"}
+            else:
+                return {"error": f"HTTP {response.status_code}", "balance": None, "check": "console.x.ai"}
+    except Exception as e:
+        logger.error(f"Grok balance query error: {e}")
+        return {"error": str(e), "balance": None, "check": "console.x.ai"}
 
 
 async def _get_moonshot_balance() -> dict:

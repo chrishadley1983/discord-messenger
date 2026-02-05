@@ -133,21 +133,36 @@ def send_to_session(prompt: str) -> None:
     _tmux("send-keys", "-t", PETERBOT_SESSION, "Enter")
 
 
-def write_context_file(content: str) -> bool:
+def generate_context_filename(operation_id: str) -> str:
+    """Generate a unique context filepath for an operation.
+
+    Args:
+        operation_id: Unique identifier for this operation (e.g., uuid hex)
+
+    Returns:
+        Full WSL path for the context file
+    """
+    return f"{PETERBOT_SESSION_PATH}/context_{operation_id}.md"
+
+
+def write_context_file(content: str, filepath: str = None) -> str:
     """Write context to file in WSL for Claude Code to read.
 
     Args:
         content: Full context string to write
+        filepath: Optional custom filepath. Uses CONTEXT_FILE if not specified.
 
     Returns:
-        True if successful, False otherwise
+        The filepath written to, or empty string on failure
     """
+    target_path = filepath or CONTEXT_FILE
+
     # Write via WSL bash - escape content properly
     # Use base64 to avoid escaping issues with special characters
     import base64
     encoded = base64.b64encode(content.encode('utf-8')).decode('ascii')
 
-    cmd = f"echo '{encoded}' | base64 -d > '{CONTEXT_FILE}'"
+    cmd = f"echo '{encoded}' | base64 -d > '{target_path}'"
 
     try:
         result = subprocess.run(
@@ -159,10 +174,38 @@ def write_context_file(content: str) -> bool:
         )
         if result.returncode != 0:
             logger.error(f"Failed to write context file: {result.stderr}")
+            return ""
+        return target_path
+    except Exception as e:
+        logger.error(f"Error writing context file: {e}")
+        return ""
+
+
+def cleanup_context_file(filepath: str) -> bool:
+    """Remove a context file from WSL filesystem.
+
+    Args:
+        filepath: Full WSL path to the context file
+
+    Returns:
+        True if successful or file doesn't exist, False on error
+    """
+    cmd = f"rm -f '{filepath}'"
+
+    try:
+        result = subprocess.run(
+            ["wsl", "bash", "-c", cmd],
+            capture_output=True,
+            text=True,
+            startupinfo=STARTUPINFO,
+            creationflags=CREATE_NO_WINDOW
+        )
+        if result.returncode != 0:
+            logger.warning(f"Failed to cleanup context file: {result.stderr}")
             return False
         return True
     except Exception as e:
-        logger.error(f"Error writing context file: {e}")
+        logger.warning(f"Error cleaning up context file: {e}")
         return False
 
 
@@ -307,7 +350,10 @@ async def handle_message(
 async def wait_for_response(
     timeout: Optional[int] = None,
     poll_interval: Optional[float] = None,
-    interim_callback: Optional[Callable[[str], Awaitable[None]]] = None
+    interim_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+    stable_threshold: Optional[int] = None,
+    expect_content: bool = False,
+    context_filename: Optional[str] = None
 ) -> str:
     """Poll screen until output stabilizes AND Claude is ready for input.
 
@@ -315,12 +361,16 @@ async def wait_for_response(
         timeout: Max seconds to wait (default: RESPONSE_TIMEOUT)
         poll_interval: Seconds between polls (default: POLL_INTERVAL)
         interim_callback: Optional async function to post interim status updates
+        stable_threshold: Custom threshold for stability (default: STABLE_COUNT_THRESHOLD)
+        expect_content: If True, ensure response contains actual content (not just prompt)
+        context_filename: If provided, verify response includes reference to this file
 
     Returns:
         Final screen content when stable or on timeout
     """
     timeout = timeout or RESPONSE_TIMEOUT
     poll_interval = poll_interval or POLL_INTERVAL
+    stable_threshold = stable_threshold or STABLE_COUNT_THRESHOLD
 
     last_content = ""
     stable_count = 0
@@ -376,11 +426,24 @@ async def wait_for_response(
                 except Exception as e:
                     logger.warning(f"Failed to post interim update: {e}")
 
+        # Content validation when expect_content is True
+        has_actual_content = True
+        if expect_content and not is_thinking:
+            # Check for actual response content (beyond just prompts/spinners)
+            # Filter out lines that are just prompts or status
+            content_lines = [
+                line for line in lines
+                if line.strip() and not any(
+                    line.strip().startswith(char) for char in SPINNER_CHARS + prompt_markers
+                )
+            ]
+            has_actual_content = len(content_lines) > 5  # Minimum response content
+
         # Consider stable when: content unchanged AND not thinking
         # Prompt marker is a bonus but not required for stability
-        if current == last_content and not is_thinking:
+        if current == last_content and not is_thinking and has_actual_content:
             stable_count += 1
-            if stable_count >= STABLE_COUNT_THRESHOLD:
+            if stable_count >= stable_threshold:
                 logger.debug(f"Response stable after {elapsed:.1f}s ({interim_count} interim updates)")
                 return current
         else:
@@ -389,6 +452,61 @@ async def wait_for_response(
 
     logger.warning(f"Response timeout after {timeout}s, returning partial")
     return last_content  # Timeout, return what we have
+
+
+async def wait_for_clear(timeout: float = 8.0) -> bool:
+    """Wait for /clear command to complete.
+
+    The /clear command clears the conversation context. This function waits
+    until the screen shows a fresh prompt indicating clear completed.
+
+    Args:
+        timeout: Max seconds to wait (default: 8.0)
+
+    Returns:
+        True if clear completed, False if timed out
+    """
+    elapsed = 0.0
+    poll_interval = 0.3
+    stable_count = 0
+    last_content = ""
+
+    while elapsed < timeout:
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+        current = get_session_screen()
+
+        # Check for signs that /clear is complete:
+        # - Screen shows fresh Claude prompt
+        # - No spinner/thinking indicators
+        lines = current.split('\n')
+        last_3_lines = lines[-3:] if len(lines) >= 3 else lines
+
+        # Check if still processing (spinner visible)
+        is_thinking = False
+        for line in last_3_lines:
+            stripped = line.strip()
+            if any(stripped.startswith(char) for char in SPINNER_CHARS):
+                is_thinking = True
+                break
+
+        # Check for fresh prompt (indicates clear completed)
+        prompt_markers = ['❯', '>', '●']
+        has_prompt = any(marker in ''.join(last_3_lines) for marker in prompt_markers)
+
+        # Stable when content unchanged, has prompt, and not thinking
+        if current == last_content and has_prompt and not is_thinking:
+            stable_count += 1
+            if stable_count >= 2:  # Quick stability check for /clear
+                logger.debug(f"/clear completed after {elapsed:.1f}s")
+                return True
+        else:
+            stable_count = 0
+            last_content = current
+
+    logger.warning(f"/clear verification timeout after {timeout}s")
+    return False
 
 
 def _detect_interim_message(screen_content: str, update_count: int = 0) -> str:

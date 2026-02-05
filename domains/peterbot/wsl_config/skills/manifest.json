@@ -1,0 +1,526 @@
+{
+  "api-usage": {
+    "triggers": [
+      "api usage",
+      "api costs",
+      "how much have i spent"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Weekly API usage and cost summary",
+    "channel": null
+  },
+  "balance-monitor": {
+    "triggers": [
+      "balance",
+      "credits",
+      "api balance"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Check API credit balances and alert if low",
+    "channel": null
+  },
+  "daily-recipes": {
+    "triggers": [
+      "recipe ideas",
+      "what should I cook",
+      "recipe recommendations"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily recipe recommendations matching health targets",
+    "channel": null
+  },
+  "football-scores": {
+    "triggers": [
+      "football scores",
+      "premier league",
+      "PL scores",
+      "how did [team] do",
+      "what's the score",
+      "footy",
+      "EPL"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Get live/recent Premier League scores",
+    "channel": null
+  },
+  "hb-add-inventory": {
+    "triggers": [
+      "add inventory",
+      "add stock",
+      "add to inventory",
+      "new inventory",
+      "received",
+      "got given"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Add inventory item WITHOUT a purchase record (received items, gifts, samples)",
+    "channel": null
+  },
+  "hb-add-purchase": {
+    "triggers": [
+      "log purchase",
+      "bought",
+      "add purchase",
+      "record purchase",
+      "just bought",
+      "add this purchase"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Record a new LEGO purchase in Hadley Bricks with ASIN lookup and optimal pricing",
+    "channel": null
+  },
+  "hb-arbitrage": {
+    "triggers": [
+      "arbitrage deals",
+      "buying opportunities",
+      "arbitrage",
+      "vinted deals",
+      "what should I buy"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Profitable LEGO buying opportunities from Vinted scanner",
+    "channel": null
+  },
+  "hb-daily-activity": {
+    "triggers": [
+      "daily activity",
+      "what did I list today",
+      "today's listings",
+      "what sold today",
+      "bricks activity"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily listings and sales tracking for Hadley Bricks",
+    "channel": null
+  },
+  "hb-dashboard": {
+    "triggers": [
+      "business summary",
+      "how's the business",
+      "business health",
+      "bricks dashboard",
+      "hadley bricks"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily business health summary for Hadley Bricks",
+    "channel": null
+  },
+  "hb-email-purchases": {
+    "triggers": [
+      "import purchases from email",
+      "scan purchase emails",
+      "check for new purchases",
+      "email purchase import"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Automated import of LEGO purchases from email confirmations (Vinted, eBay)",
+    "channel": null
+  },
+  "hb-eval-purchase": {
+    "triggers": [
+      "should I buy",
+      "evaluate purchase",
+      "worth it",
+      "good deal",
+      "is this a good buy",
+      "evaluate this"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Evaluate potential LEGO purchase for resale viability",
+    "channel": null
+  },
+  "hb-full-sync-print": {
+    "triggers": [
+      "full sync",
+      "sync and print",
+      "morning workflow",
+      "print pick lists",
+      "hb sync"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Full sync, pick list generation, Discord delivery, and printing",
+    "channel": "#peterbot"
+  },
+  "hb-inventory-aging": {
+    "triggers": [
+      "slow stock",
+      "aging inventory",
+      "stale items",
+      "old stock",
+      "what's not selling",
+      "inventory aging"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Slow-moving stock alerts and aging analysis",
+    "channel": null
+  },
+  "hb-inventory-status": {
+    "triggers": [
+      "inventory status",
+      "stock value",
+      "inventory value",
+      "what's in stock",
+      "inventory breakdown"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Inventory valuation and breakdown",
+    "channel": null
+  },
+  "hb-orders": {
+    "triggers": [
+      "pending orders",
+      "orders today",
+      "unfulfilled orders",
+      "orders needing dispatch",
+      "what orders"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Unfulfilled orders summary for Hadley Bricks",
+    "channel": null
+  },
+  "hb-pick-list": {
+    "triggers": [
+      "picking list",
+      "pick list",
+      "what needs shipping",
+      "what needs picking",
+      "orders to ship"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Amazon and eBay picking lists for order fulfillment",
+    "channel": null
+  },
+  "hb-platform-performance": {
+    "triggers": [
+      "platform performance",
+      "best platform",
+      "amazon vs ebay",
+      "ebay vs amazon",
+      "which platform",
+      "platform comparison"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Platform comparison and performance metrics",
+    "channel": null
+  },
+  "hb-pnl": {
+    "triggers": [
+      "profit and loss",
+      "p&l",
+      "pnl",
+      "how much profit",
+      "profit this month",
+      "profit this week",
+      "profit today"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Profit and loss summary by platform and period",
+    "channel": null
+  },
+  "hb-purchase-analysis": {
+    "triggers": [
+      "purchase roi",
+      "best sources",
+      "where should I buy",
+      "purchase analysis",
+      "sourcing analysis",
+      "best purchases"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "ROI analysis by purchase source",
+    "channel": null
+  },
+  "hb-schedule-pickup": {
+    "triggers": [
+      "schedule pickup",
+      "book collection",
+      "arrange pickup",
+      "add pickup"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Schedule a LEGO collection pickup",
+    "channel": null
+  },
+  "hb-set-lookup": {
+    "triggers": [
+      "look up",
+      "set info",
+      "price check",
+      "what's the price of",
+      "tell me about set",
+      "set details"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Look up LEGO set information and pricing",
+    "channel": null
+  },
+  "hb-stock-check": {
+    "triggers": [
+      "how many",
+      "stock of",
+      "do I have",
+      "in stock",
+      "got any",
+      "check stock"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Check current stock for a specific LEGO set",
+    "channel": null
+  },
+  "hb-task-complete": {
+    "triggers": [
+      "complete task",
+      "done with",
+      "finished task",
+      "mark complete",
+      "task done"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Mark a Hadley Bricks workflow task as complete",
+    "channel": null
+  },
+  "hb-tasks": {
+    "triggers": [
+      "tasks today",
+      "what needs doing",
+      "bricks tasks",
+      "workflow tasks",
+      "todo list"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Today's workflow tasks for Hadley Bricks",
+    "channel": null
+  },
+  "hb-upcoming-pickups": {
+    "triggers": [
+      "upcoming pickups",
+      "collections this week",
+      "scheduled pickups",
+      "pickups",
+      "collections"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Scheduled LEGO collection pickups",
+    "channel": null
+  },
+  "health-digest": {
+    "triggers": [
+      "health digest",
+      "morning digest",
+      "how did i sleep",
+      "health summary"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Morning health digest with sleep, weight, steps, HR and comparison to yesterday",
+    "channel": null
+  },
+  "heartbeat": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Health check and to-do list processing",
+    "channel": null
+  },
+  "hydration": {
+    "triggers": [
+      "water",
+      "hydration",
+      "how much water",
+      "steps"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Post water intake and step progress with motivation",
+    "channel": null
+  },
+  "knowledge-digest": {
+    "triggers": [
+      "knowledge digest",
+      "brain digest",
+      "second brain summary"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Weekly Second Brain knowledge digest",
+    "channel": null
+  },
+  "monthly-health": {
+    "triggers": [
+      "monthly summary",
+      "monthly health",
+      "how was my month"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Monthly health summary with long-term trends",
+    "channel": null
+  },
+  "morning-briefing": {
+    "triggers": [
+      "ai news",
+      "claude news",
+      "briefing",
+      "ai briefing",
+      "morning briefing"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "AI and Claude news morning briefing",
+    "channel": null
+  },
+  "morning-quality-report": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Daily parser quality and feedback summary",
+    "channel": "#peterbot"
+  },
+  "news": {
+    "triggers": [
+      "news",
+      "headlines",
+      "what's happening",
+      "what's going on"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Fetch and summarize news based on user request and preferences from memory",
+    "channel": null
+  },
+  "nutrition-summary": {
+    "triggers": [
+      "nutrition summary",
+      "how did i eat today",
+      "macros",
+      "daily summary"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily nutrition wrap-up at 9pm",
+    "channel": null
+  },
+  "parser-improve": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Nightly parser improvement cycle",
+    "channel": "#peterbot"
+  },
+  "purchase": {
+    "triggers": [],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Help find products and provide direct purchase links",
+    "channel": "#peterbot"
+  },
+  "remind": {
+    "triggers": [
+      "remind me",
+      "set a reminder",
+      "list reminders",
+      "cancel reminder",
+      "my reminders",
+      "update reminder",
+      "delete reminder"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Set, list, update, and cancel reminders via Hadley API",
+    "channel": "#peterbot"
+  },
+  "school-pickup": {
+    "triggers": [
+      "school pickup",
+      "pickup",
+      "clubs today"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Afternoon school pickup traffic report with after-school clubs info",
+    "channel": null
+  },
+  "school-run": {
+    "triggers": [
+      "school run",
+      "traffic",
+      "school traffic"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Morning school run traffic report with weather and uniform requirements",
+    "channel": null
+  },
+  "self-reflect": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Scheduled self-improvement review - add items to HEARTBEAT.md",
+    "channel": "#alerts"
+  },
+  "spurs-match": {
+    "triggers": [
+      "spurs score",
+      "tottenham score",
+      "how are spurs doing"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Live Spurs match score updates during games",
+    "channel": null
+  },
+  "weekly-health": {
+    "triggers": [
+      "weekly summary",
+      "weekly health",
+      "how was my week"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Weekly health summary with trends, grades, and insights",
+    "channel": null
+  },
+  "whatsapp-keepalive": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Keep WhatsApp sandbox session alive",
+    "channel": null
+  },
+  "youtube-digest": {
+    "triggers": [
+      "youtube",
+      "videos",
+      "anything good on youtube"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily YouTube video recommendations in key interest areas",
+    "channel": null
+  }
+}
