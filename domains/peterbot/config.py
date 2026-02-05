@@ -32,5 +32,18 @@ RESPONSE_TIMEOUT = 60
 POLL_INTERVAL = 0.5
 STABLE_COUNT_THRESHOLD = 3
 
+# Interim updates (show progress while waiting for response)
+INTERIM_UPDATE_DELAY = 5.0  # Seconds before first interim update
+INTERIM_UPDATE_INTERVAL = 10.0  # Seconds between interim updates
+
 # Context file for large prompts (avoids tmux paste issues)
 CONTEXT_FILE = f"{PETERBOT_SESSION_PATH}/context.md"
+
+# Raw log path for debugging
+RAW_LOG_PATH = f"{PETERBOT_SESSION_PATH}/raw_output.log"
+
+# Channel ID to name mapping (populated at runtime or configured here)
+CHANNEL_ID_TO_NAME = {
+    # Add channel mappings as needed, e.g.:
+    # 123456789: "#general",
+}

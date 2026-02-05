@@ -2054,21 +2054,23 @@ const ServicesView = {
     const info = this.serviceInfo[serviceKey];
     const svc = this.services[serviceKey];
 
-    if (!info || !info.port) {
-      container.innerHTML = '<div class="text-muted">No health endpoint configured</div>';
-      return;
-    }
-
-    // Display recent health status
+    // Display recent health status from history
     const history = this.healthHistory[serviceKey] || [];
     const recentChecks = history.slice(-10).reverse();
 
+    // Show health check method
+    const checkMethod = info?.port ? 'HTTP Health Endpoint' : 'Process Monitoring';
+
     if (recentChecks.length === 0) {
-      container.innerHTML = '<div class="text-muted">No health check history available</div>';
+      container.innerHTML = `
+        <div class="text-muted mb-sm">Method: ${checkMethod}</div>
+        <div class="text-muted">No health check history available yet</div>
+      `;
       return;
     }
 
     container.innerHTML = `
+      <div class="text-muted mb-sm">Method: ${checkMethod}</div>
       <div class="health-check-list">
         ${recentChecks.map((check, idx) => {
           const time = new Date(check.timestamp).toLocaleTimeString();

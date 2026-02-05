@@ -25,7 +25,7 @@ NSSM_SERVICE_NAMES = {
 
 
 def _get_nssm_status(nssm_name: str) -> Optional[str]:
-    """Query NSSM service status. Returns 'running', 'stopped', or None if not found."""
+    """Query NSSM service status. Returns 'running', 'stopped', 'starting', or None if not found."""
     try:
         result = subprocess.run(
             ["sc", "query", nssm_name],
@@ -37,6 +37,8 @@ def _get_nssm_status(nssm_name: str) -> Optional[str]:
         output = result.stdout.lower()
         if "running" in output:
             return "running"
+        elif "start_pending" in output:
+            return "starting"
         elif "stopped" in output or "stop_pending" in output:
             return "stopped"
         return None
