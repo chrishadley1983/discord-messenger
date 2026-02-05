@@ -262,26 +262,29 @@ const WebSocketManager = {
     }
   },
 
-  handleMessage(data) {
-    const { type, payload } = data;
+  handleMessage(msg) {
+    const { type, payload, data } = msg;
+    const content = payload || data || {};  // Support both payload and data
     State.set({ lastUpdate: new Date().toISOString() });
 
     // Call registered handlers
     if (this.handlers[type]) {
-      this.handlers[type].forEach(handler => handler(payload));
+      this.handlers[type].forEach(handler => handler(content));
     }
 
     // Handle common message types
     switch (type) {
       case 'status':
-        State.set({ services: payload.services });
+        if (content.services) {
+          State.set({ services: content.services });
+        }
         break;
       case 'job_complete':
       case 'job_start':
         this.refreshJobs();
         break;
       case 'error_alert':
-        Toast.error('Error', payload.message || 'An error occurred');
+        Toast.error('Error', content.message || 'An error occurred');
         break;
     }
   },
