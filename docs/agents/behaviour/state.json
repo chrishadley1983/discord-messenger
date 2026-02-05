@@ -1,0 +1,33 @@
+{
+  "agent": "behaviour-analyser",
+  "version": "1.0",
+  "lastAnalysisDate": null,
+  "lastAnalysisBatch": null,
+  "interactionsProcessed": 0,
+  "interactionsUnprocessed": 0,
+  "batchCursor": null,
+  "aggregateMetrics": {
+    "overallQuality": null,
+    "firstResponseResolution": null,
+    "contextHitRate": null,
+    "toneConsistency": null,
+    "formattingAccuracy": null,
+    "proactivityScore": null,
+    "proactiveHitRate": null,
+    "hallucinationRate": null,
+    "escalationRate": null
+  },
+  "enhancementBacklog": {
+    "total": 0,
+    "proposed": 0,
+    "accepted": 0,
+    "implemented": 0,
+    "verified": 0
+  },
+  "personalityCalibration": {
+    "lastCalibration": null,
+    "driftAlerts": 0,
+    "dimensionsInRange": 0,
+    "dimensionsOutOfRange": 0
+  }
+}
