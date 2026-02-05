@@ -97,6 +97,36 @@ _service_down_since: dict[str, datetime] = {}
 _last_alert_time: dict[str, datetime] = {}
 _monitor_task: asyncio.Task = None
 
+# Track last restart time for each service (persisted to file)
+RESTART_TIMES_FILE = Path(__file__).parent.parent / "data" / "restart_times.json"
+_last_restart_time: dict[str, str] = {}  # { service_id: ISO timestamp }
+
+
+def _load_restart_times():
+    """Load restart times from JSON file."""
+    global _last_restart_time
+    try:
+        if RESTART_TIMES_FILE.exists():
+            with open(RESTART_TIMES_FILE, "r") as f:
+                _last_restart_time = json.load(f)
+            print(f"[RestartTimes] Loaded {len(_last_restart_time)} restart records")
+    except Exception as e:
+        print(f"[RestartTimes] Error loading: {e}")
+        _last_restart_time = {}
+
+
+def _save_restart_time(service: str):
+    """Record a service restart and save to file."""
+    global _last_restart_time
+    _last_restart_time[service] = datetime.now(UK_TZ).isoformat()
+    try:
+        RESTART_TIMES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(RESTART_TIMES_FILE, "w") as f:
+            json.dump(_last_restart_time, f, indent=2)
+    except Exception as e:
+        print(f"[RestartTimes] Error saving: {e}")
+
+
 # =============================================================================
 # HEALTH HISTORY TRACKING - Server-side uptime tracking
 # =============================================================================
@@ -314,6 +344,9 @@ async def _health_monitor_loop():
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown tasks."""
     global _monitor_task
+
+    # Load persisted restart times
+    _load_restart_times()
 
     # Startup: Start the health monitor background task
     _monitor_task = asyncio.create_task(_health_monitor_loop())
@@ -645,7 +678,11 @@ async def get_system_status():
 @app.get("/api/service-status")
 async def get_service_status():
     """Get detailed process status for all managed services."""
-    return service_manager.status_all()
+    status = service_manager.status_all()
+    # Add last restart times to each service
+    for svc_id, svc_data in status.items():
+        svc_data["last_restart"] = _last_restart_time.get(svc_id)
+    return status
 
 
 @app.get("/api/health-history")
@@ -832,6 +869,7 @@ async def restart_service_endpoint(request: Request, service: str):
         # Use service manager for Windows services (headless = no console window)
         result = service_manager.restart_service(service, headless=True)
         if result["success"]:
+            _save_restart_time(service)  # Record restart time
             return {
                 "status": "restarting",
                 "message": f"{service} restart completed",
@@ -845,6 +883,7 @@ async def restart_service_endpoint(request: Request, service: str):
         run_wsl_command("tmux kill-session -t claude-peterbot 2>/dev/null || true")
         run_wsl_command(f"tmux new-session -d -s claude-peterbot -c {CONFIG['wsl_peterbot_path']}")
         run_wsl_command("tmux send-keys -t claude-peterbot 'source ~/.profile && claude --permission-mode bypassPermissions' Enter")
+        _save_restart_time(service)  # Record restart time
         return {"status": "restarting", "message": "Peterbot session recreated"}
 
     else:
@@ -869,11 +908,14 @@ async def restart_all_services(request: Request):
             "pid": result.get("start_result", {}).get("pid"),
             "error": result.get("start_result", {}).get("error") if not result["success"] else None
         }
+        if result["success"]:
+            _save_restart_time(svc)  # Record restart time
 
     # 2. Restart Peterbot tmux session (WSL)
     run_wsl_command("tmux kill-session -t claude-peterbot 2>/dev/null || true")
     run_wsl_command(f"tmux new-session -d -s claude-peterbot -c {CONFIG['wsl_peterbot_path']}")
     run_wsl_command("tmux send-keys -t claude-peterbot 'source ~/.profile && claude --permission-mode bypassPermissions' Enter")
+    _save_restart_time("peterbot_session")  # Record restart time
     results["peterbot_session"] = {"status": "restarting"}
 
     all_success = all(

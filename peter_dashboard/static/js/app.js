@@ -121,6 +121,23 @@ const Utils = {
     html = html.replace(/\n\n/g, '</p><p>'); html = '<p>' + html + '</p>';
     return html;
   },
+
+  formatRelativeTime(isoTimestamp) {
+    if (!isoTimestamp) return 'Never';
+    const date = new Date(isoTimestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffSecs = Math.floor(diffMs / 1000);
+    const diffMins = Math.floor(diffSecs / 60);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffSecs < 60) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  },
 };
 
 
@@ -1827,6 +1844,9 @@ const ServicesView = {
           value: `<span class="latency-indicator"><span class="latency-dot latency-${latencyClass}"></span>${svc.latency_ms}ms</span>`
         });
       }
+      if (svc.last_restart) {
+        details.push({ label: 'Last Restart', value: Utils.formatRelativeTime(svc.last_restart) });
+      }
       if (info.managed) details.push({ label: 'Managed', value: info.managed });
 
       return `
@@ -1947,6 +1967,12 @@ const ServicesView = {
               <div class="detail-stat-label">Managed By</div>
               <div class="detail-stat-value">${info.managed || 'Unknown'}</div>
             </div>
+            ${svc.last_restart ? `
+              <div class="detail-stat">
+                <div class="detail-stat-label">Last Restart</div>
+                <div class="detail-stat-value">${Utils.formatRelativeTime(svc.last_restart)}</div>
+              </div>
+            ` : ''}
             ${svc.attached !== undefined ? `
               <div class="detail-stat">
                 <div class="detail-stat-label">Attached</div>
