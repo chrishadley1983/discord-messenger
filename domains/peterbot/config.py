@@ -5,6 +5,13 @@ import os
 # Channel ID from environment
 CHANNEL_ID = int(os.environ.get("PETERBOT_CHANNEL_ID", 0))
 
+# Additional channel IDs that Peterbot responds to (can be set via env or here)
+# This is a set of channel IDs where Peterbot will process messages
+_extra_channels = os.environ.get("PETERBOT_EXTRA_CHANNEL_IDS", "")
+PETERBOT_CHANNEL_IDS = {CHANNEL_ID} if CHANNEL_ID else set()
+if _extra_channels:
+    PETERBOT_CHANNEL_IDS.update(int(cid.strip()) for cid in _extra_channels.split(",") if cid.strip())
+
 # Dedicated tmux session for peterbot
 # Session name derived from path basename: peterbot -> claude-peterbot
 PETERBOT_SESSION = "claude-peterbot"
