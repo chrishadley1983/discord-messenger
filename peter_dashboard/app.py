@@ -253,10 +253,11 @@ async def _check_service_health(service_id: str, config: dict) -> bool:
             sessions = get_tmux_sessions()
             return any(s["name"] == tmux_session_name for s in sessions)
         else:
-            # HTTP health check
+            # HTTP health check - accept 2xx and 3xx as healthy
+            # (e.g., Hadley Bricks returns 307 redirect when healthy)
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(config["url"])
-                return response.status_code == 200
+                return 200 <= response.status_code < 400
     except Exception:
         return False
 
