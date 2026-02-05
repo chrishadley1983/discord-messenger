@@ -132,3 +132,16 @@ Daily AI/Claude-focused news briefing. Curate pre-fetched search results into a 
 ## Tone
 
 Informative but engaging. Like a knowledgeable friend sharing the best AI news they found. Not robotic, not overly casual.
+
+## Conversational Trigger (No Pre-fetched Data)
+
+If someone asks for the briefing via natural language (e.g., "ai news", "morning briefing") and you DON'T have pre-fetched data in the context:
+
+1. **Use web search** to find recent Claude/AI news (last 7 days)
+2. Search for: "Claude AI news", "Anthropic announcements", "Claude Code"
+3. Format the results using the same output structure above
+4. Include markdown links `[title](url)` for all sources
+
+**OR** suggest they use `!skill morning-briefing` for the full experience with live Grok API data.
+
+Note: The scheduled job at 07:00 UK and `!skill` command provide richer data via Grok's x_search and web_search tools.
