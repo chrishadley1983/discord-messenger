@@ -74,6 +74,45 @@ const State = {
 
 
 // =============================================================================
+// UTILITIES (moved before first use)
+// =============================================================================
+
+/**
+ * General utilities
+ */
+const Utils = {
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  },
+
+  debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  },
+
+  throttle(func, limit) {
+    let inThrottle;
+    return function(...args) {
+      if (!inThrottle) {
+        func.apply(this, args);
+        inThrottle = true;
+        setTimeout(() => inThrottle = false, limit);
+      }
+    };
+  },
+};
+
+
+// =============================================================================
 // 2. API CLIENT
 // =============================================================================
 
@@ -3010,41 +3049,6 @@ const Format = {
 };
 
 
-/**
- * General utilities
- */
-const Utils = {
-  escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  },
-
-  debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-      const later = () => {
-        clearTimeout(timeout);
-        func(...args);
-      };
-      clearTimeout(timeout);
-      timeout = setTimeout(later, wait);
-    };
-  },
-
-  throttle(func, limit) {
-    let inThrottle;
-    return function(...args) {
-      if (!inThrottle) {
-        func.apply(this, args);
-        inThrottle = true;
-        setTimeout(() => inThrottle = false, limit);
-      }
-    };
-  },
-};
-
-
 // =============================================================================
 // 8. INITIALIZATION
 // =============================================================================
@@ -3066,7 +3070,10 @@ const App = {
     Router.register('/logs', LogsView);
     Router.register('/files', FilesView);
     Router.register('/memory', MemoryView);
-    Router.register('/api-explorer', ApiExplorerView);
+    // ApiExplorerView is defined in api-explorer.js which may load after this
+    if (typeof ApiExplorerView !== 'undefined') {
+      Router.register('/api-explorer', ApiExplorerView);
+    }
     Router.register('/settings', SettingsView);
 
     // Initialize router

@@ -439,3 +439,8 @@ const ApiExplorerView = {
 
 // Make globally available
 window.ApiExplorerView = ApiExplorerView;
+
+// Register with Router if it exists and route not already registered
+if (typeof Router !== 'undefined' && Router.routes && !Router.routes['/api-explorer']) {
+  Router.register('/api-explorer', ApiExplorerView);
+}
