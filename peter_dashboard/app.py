@@ -9,30 +9,253 @@ Provides real-time visibility into:
 - Background task monitoring
 """
 
+# Ensure parent directory (project root) is in sys.path for imports
+import sys
+from pathlib import Path
+_project_root = str(Path(__file__).parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 import asyncio
 import subprocess
+import shlex
 import os
 import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+
+# Service manager for reliable process control
+try:
+    from . import service_manager
+except ImportError:
+    import service_manager  # When running directly with uvicorn
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.templating import Jinja2Templates
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import httpx
+from contextlib import asynccontextmanager
+from zoneinfo import ZoneInfo
 
-app = FastAPI(title="Peter Dashboard", version="1.0.0")
+# UK timezone for timestamps
+UK_TZ = ZoneInfo("Europe/London")
 
-# CORS for local development
+# =============================================================================
+# SERVICE HEALTH MONITOR - Independent background alerting
+# =============================================================================
+# This runs independently of the Discord bot to alert when services go down.
+# Uses Discord webhook (no bot token required) for true independence.
+
+# Discord webhook for alerts (set in .env as DISCORD_WEBHOOK_ALERTS)
+ALERTS_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_ALERTS")
+
+# Services to monitor and their health check endpoints
+MONITORED_SERVICES = {
+    "hadley_api": {
+        "name": "Hadley API",
+        "url": "http://localhost:8100/health",
+        "critical": True,
+    },
+    "discord_bot": {
+        "name": "Discord Bot",
+        "check_type": "process",  # Check via service_manager
+        "critical": True,
+    },
+    "peterbot_mem": {
+        "name": "Peterbot Memory Worker",
+        "url": "http://localhost:37777/health",
+        "critical": True,
+    },
+    "hadley_bricks": {
+        "name": "Hadley Bricks",
+        "url": "http://localhost:3000/api/health",
+        "critical": False,  # Not critical for Peterbot operation
+    },
+}
+
+# Alert configuration
+HEALTH_CHECK_INTERVAL = 60  # Check every 60 seconds
+ALERT_AFTER_SECONDS = 300   # Alert if down for 5 minutes (300s)
+REALERT_INTERVAL = 1800     # Re-alert every 30 minutes if still down
+
+# Track service states
+_service_down_since: dict[str, datetime] = {}
+_last_alert_time: dict[str, datetime] = {}
+_monitor_task: asyncio.Task = None
+
+
+async def _check_service_health(service_id: str, config: dict) -> bool:
+    """Check if a service is healthy. Returns True if up, False if down."""
+    try:
+        if config.get("check_type") == "process":
+            # Check via service_manager for process-based services
+            status = service_manager.get_service_status(service_id)
+            return status.get("status") == "running"
+        else:
+            # HTTP health check
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(config["url"])
+                return response.status_code == 200
+    except Exception:
+        return False
+
+
+async def _send_alert(message: str, is_recovery: bool = False):
+    """Send alert to Discord via webhook."""
+    if not ALERTS_WEBHOOK_URL:
+        print(f"[ServiceMonitor] No webhook configured, would alert: {message}")
+        return
+
+    # Format message with emoji
+    emoji = "✅" if is_recovery else "🔴"
+    timestamp = datetime.now(UK_TZ).strftime("%H:%M:%S")
+
+    payload = {
+        "content": f"{emoji} **[{timestamp}]** {message}",
+        "username": "Peter Service Monitor",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(ALERTS_WEBHOOK_URL, json=payload)
+    except Exception as e:
+        print(f"[ServiceMonitor] Failed to send alert: {e}")
+
+
+async def _health_monitor_loop():
+    """Background loop that checks service health and sends alerts."""
+    print("[ServiceMonitor] Starting health monitor loop")
+
+    while True:
+        try:
+            now = datetime.now(UK_TZ)
+
+            for service_id, config in MONITORED_SERVICES.items():
+                is_healthy = await _check_service_health(service_id, config)
+                service_name = config["name"]
+
+                if is_healthy:
+                    # Service is up - check if it was down and send recovery alert
+                    if service_id in _service_down_since:
+                        down_duration = (now - _service_down_since[service_id]).total_seconds()
+                        await _send_alert(
+                            f"**{service_name}** is back online (was down for {int(down_duration)}s)",
+                            is_recovery=True
+                        )
+                        del _service_down_since[service_id]
+                        if service_id in _last_alert_time:
+                            del _last_alert_time[service_id]
+                else:
+                    # Service is down
+                    if service_id not in _service_down_since:
+                        # First detection of downtime
+                        _service_down_since[service_id] = now
+
+                    down_duration = (now - _service_down_since[service_id]).total_seconds()
+
+                    # Check if we should alert
+                    should_alert = False
+                    if down_duration >= ALERT_AFTER_SECONDS:
+                        if service_id not in _last_alert_time:
+                            # First alert
+                            should_alert = True
+                        elif (now - _last_alert_time[service_id]).total_seconds() >= REALERT_INTERVAL:
+                            # Re-alert interval passed
+                            should_alert = True
+
+                    if should_alert:
+                        await _send_alert(
+                            f"**{service_name}** is DOWN (for {int(down_duration)}s). "
+                            f"Check dashboard: http://localhost:5000"
+                        )
+                        _last_alert_time[service_id] = now
+
+        except Exception as e:
+            print(f"[ServiceMonitor] Error in health check loop: {e}")
+
+        await asyncio.sleep(HEALTH_CHECK_INTERVAL)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup/shutdown tasks."""
+    global _monitor_task
+
+    # Startup: Start the health monitor background task
+    _monitor_task = asyncio.create_task(_health_monitor_loop())
+    print("[ServiceMonitor] Health monitor started")
+
+    yield
+
+    # Shutdown: Cancel the background task
+    if _monitor_task:
+        _monitor_task.cancel()
+        try:
+            await _monitor_task
+        except asyncio.CancelledError:
+            pass
+    print("[ServiceMonitor] Health monitor stopped")
+
+
+# Rate limiter setup
+limiter = Limiter(key_func=get_remote_address)
+
+app = FastAPI(title="Peter Dashboard", version="1.0.0", lifespan=lifespan)
+
+# Register rate limit exception handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS - restricted to localhost only for security
+# Prevents CSRF attacks from malicious websites
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        "http://localhost:5000",   # Dashboard
+        "http://127.0.0.1:5000",
+        "http://localhost:8100",   # Hadley API may call dashboard
+        "http://127.0.0.1:8100",
+    ],
+    allow_credentials=False,  # No cookies needed for local API
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
+
+# =============================================================================
+# Static Files and Templates Setup (Redesigned Dashboard v2)
+# =============================================================================
+# Determine the dashboard directory for static files and templates
+_dashboard_dir = Path(__file__).parent
+
+# Mount static files directory (CSS, JS, assets)
+_static_dir = _dashboard_dir / "static"
+if _static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+# Setup Jinja2 templates
+_templates_dir = _dashboard_dir / "templates"
+templates = Jinja2Templates(directory=str(_templates_dir)) if _templates_dir.exists() else None
+
+# =============================================================================
+# API Router Imports
+# =============================================================================
+# Import modular API routes from api/ subpackage
+try:
+    from .api import jobs as jobs_api
+    from .api import logs as logs_api
+except ImportError:
+    from api import jobs as jobs_api  # When running directly with uvicorn
+    from api import logs as logs_api
+
+# Register API routers
+app.include_router(jobs_api.router)
+app.include_router(logs_api.router, prefix="/api/logs")
 
 # Configuration
 CONFIG = {
@@ -62,14 +285,22 @@ WSL_FILES = {
     "SCHEDULE.md": "/home/chris_hadley/peterbot/SCHEDULE.md",
 }
 
+# Security: Allowed tmux session names (prevent command injection)
+ALLOWED_TMUX_SESSIONS = {"claude-peterbot", "claude-code"}
+
+# Security: Max lines for tmux capture (prevent DoS)
+MAX_TMUX_LINES = 500
+
 
 def run_wsl_command(cmd: str, timeout: int = 10) -> tuple[str, str, int]:
     """Run a command in WSL and return stdout, stderr, returncode."""
+    CREATE_NO_WINDOW = 0x08000000
     try:
         result = subprocess.run(
             ["wsl", "bash", "-c", cmd],
             capture_output=True,
-            timeout=timeout
+            timeout=timeout,
+            creationflags=CREATE_NO_WINDOW
         )
         # Decode with explicit UTF-8 and error handling
         stdout = result.stdout.decode('utf-8', errors='replace') if result.stdout else ""
@@ -83,11 +314,13 @@ def run_wsl_command(cmd: str, timeout: int = 10) -> tuple[str, str, int]:
 
 def check_process_running(process_name: str) -> bool:
     """Check if a Windows process is running."""
+    CREATE_NO_WINDOW = 0x08000000
     try:
         result = subprocess.run(
             ["tasklist", "/FI", f"IMAGENAME eq {process_name}"],
             capture_output=True,
-            text=True
+            text=True,
+            creationflags=CREATE_NO_WINDOW
         )
         return process_name.lower() in result.stdout.lower()
     except Exception:
@@ -155,19 +388,40 @@ def read_file_content(filepath: str, tail_lines: int = 100) -> dict:
         return {"exists": False, "error": str(e)}
 
 
-def read_wsl_file(wsl_path: str, tail_lines: int = 100) -> dict:
-    """Read file content from WSL."""
+def validate_wsl_path(wsl_path: str) -> bool:
+    """Validate WSL path is in the allowed list (prevents path traversal attacks)."""
+    # Only allow paths explicitly listed in WSL_FILES
+    return wsl_path in WSL_FILES.values()
+
+
+def read_wsl_file(wsl_path: str, tail_lines: int = 100, skip_validation: bool = False) -> dict:
+    """Read file content from WSL.
+
+    Security: Path must be in WSL_FILES allowlist (unless skip_validation=True for internal use).
+    Uses shlex.quote to prevent command injection.
+    """
     try:
+        # Security: Validate path against allowlist
+        if not skip_validation and not validate_wsl_path(wsl_path):
+            return {"exists": False, "error": "Access denied: path not in allowlist"}
+
+        # Security: Validate tail_lines
+        if tail_lines and not (1 <= tail_lines <= 10000):
+            return {"exists": False, "error": "Invalid tail_lines value (1-10000)"}
+
+        # Security: Use shlex.quote for all path arguments
+        safe_path = shlex.quote(wsl_path)
+
         if tail_lines:
-            cmd = f"tail -n {tail_lines} '{wsl_path}' 2>/dev/null || cat '{wsl_path}' 2>/dev/null || echo 'File not found'"
+            cmd = f"tail -n {tail_lines} {safe_path} 2>/dev/null || cat {safe_path} 2>/dev/null || echo 'File not found'"
         else:
-            cmd = f"cat '{wsl_path}' 2>/dev/null || echo 'File not found'"
+            cmd = f"cat {safe_path} 2>/dev/null || echo 'File not found'"
 
         stdout, stderr, code = run_wsl_command(cmd)
 
         if code == 0 and stdout != 'File not found\n':
             # Get file stats
-            stat_cmd = f"stat -c '%s %Y' '{wsl_path}' 2>/dev/null || echo '0 0'"
+            stat_cmd = f"stat -c '%s %Y' {safe_path} 2>/dev/null || echo '0 0'"
             stat_out, _, _ = run_wsl_command(stat_cmd)
             parts = stat_out.strip().split()
             size = int(parts[0]) if parts else 0
@@ -189,8 +443,17 @@ def read_wsl_file(wsl_path: str, tail_lines: int = 100) -> dict:
 # ============================================================================
 
 @app.get("/")
-async def dashboard():
-    """Serve the dashboard HTML."""
+async def dashboard(request: Request):
+    """Serve the dashboard HTML.
+
+    Uses the new template-based frontend if available (v2), otherwise falls back
+    to the legacy inline HTML (v1).
+    """
+    # Try to serve the new redesigned dashboard (v2)
+    if templates and (_templates_dir / "index.html").exists():
+        return templates.TemplateResponse("index.html", {"request": request})
+
+    # Fallback to legacy inline HTML
     return HTMLResponse(content=DASHBOARD_HTML)
 
 
@@ -202,34 +465,46 @@ async def health_check():
 
 @app.get("/api/status")
 async def get_system_status():
-    """Get overall system status."""
-    # Check services in parallel
+    """Get overall system status with PID tracking."""
+    # Check HTTP services in parallel
     hadley_task = check_http_service(f"{CONFIG['hadley_api_url']}/health")
     mem_task = check_http_service(f"{CONFIG['claude_mem_url']}/health")
 
-    hadley_status, mem_status = await asyncio.gather(hadley_task, mem_task)
+    hadley_http_status, mem_status = await asyncio.gather(hadley_task, mem_task)
+
+    # Get process-level status from service_manager
+    svc_status = service_manager.status_all()
 
     # Check tmux sessions
     sessions = get_tmux_sessions()
     peterbot_session = next((s for s in sessions if s["name"] == "claude-peterbot"), None)
 
-    # Check Discord bot process (Python running bot.py)
-    bot_running = False
-    try:
-        result = subprocess.run(
-            ["wmic", "process", "where", "name='python.exe'", "get", "commandline"],
-            capture_output=True, text=True, timeout=5
-        )
-        bot_running = "bot.py" in result.stdout
-    except Exception:
-        pass
+    # Check Hadley Bricks status
+    hb_http_status = await check_http_service("http://localhost:3000/", timeout=3.0)
 
     return {
         "timestamp": datetime.now().isoformat(),
         "services": {
-            "hadley_api": hadley_status,
+            "hadley_api": {
+                "status": hadley_http_status.get("status", "down"),
+                "latency_ms": hadley_http_status.get("latency_ms"),
+                "pid": svc_status.get("hadley_api", {}).get("pid"),
+                "port": 8100,
+                "process_status": svc_status.get("hadley_api", {}).get("status", "unknown")
+            },
+            "hadley_bricks": {
+                "status": hb_http_status.get("status", "down"),
+                "latency_ms": hb_http_status.get("latency_ms"),
+                "pid": svc_status.get("hadley_bricks", {}).get("pid"),
+                "port": 3000,
+                "process_status": svc_status.get("hadley_bricks", {}).get("status", "unknown")
+            },
             "claude_mem": mem_status,
-            "discord_bot": {"status": "up" if bot_running else "down"},
+            "discord_bot": {
+                "status": "up" if svc_status.get("discord_bot", {}).get("status") == "running" else "down",
+                "pid": svc_status.get("discord_bot", {}).get("pid"),
+                "process_status": svc_status.get("discord_bot", {}).get("status", "unknown")
+            },
             "peterbot_session": {
                 "status": "up" if peterbot_session else "down",
                 "attached": peterbot_session["attached"] if peterbot_session else False
@@ -237,6 +512,30 @@ async def get_system_status():
         },
         "tmux_sessions": sessions
     }
+
+
+@app.get("/api/service-status")
+async def get_service_status():
+    """Get detailed process status for all managed services."""
+    return service_manager.status_all()
+
+
+@app.post("/api/stop/{service}")
+async def stop_service_endpoint(service: str):
+    """Stop a service completely."""
+    if service in ("hadley_api", "discord_bot", "hadley_bricks"):
+        result = service_manager.stop_service(service, force_cleanup=True)
+        if result["success"]:
+            return {"status": "stopped", "details": result}
+        else:
+            raise HTTPException(500, f"Failed to stop {service}")
+
+    elif service == "peterbot_session":
+        run_wsl_command("tmux kill-session -t claude-peterbot 2>/dev/null || true")
+        return {"status": "stopped", "message": "Peterbot session killed"}
+
+    else:
+        raise HTTPException(400, f"Unknown service: {service}")
 
 
 @app.get("/api/files")
@@ -258,7 +557,9 @@ async def list_files():
 
     # WSL files
     for name, path in WSL_FILES.items():
-        stat_cmd = f"stat -c '%Y' '{path}' 2>/dev/null || echo '0'"
+        # Security: Use shlex.quote even for controlled paths (defense-in-depth)
+        safe_path = shlex.quote(path)
+        stat_cmd = f"stat -c '%Y' {safe_path} 2>/dev/null || echo '0'"
         stdout, _, code = run_wsl_command(stat_cmd)
         mtime = int(stdout.strip()) if stdout.strip() != '0' else 0
         files.append({
@@ -299,6 +600,43 @@ async def get_recent_captures():
     return read_wsl_file(WSL_FILES["raw_capture.log"], tail_lines=200)
 
 
+@app.get("/api/claude-code-health")
+async def get_claude_code_health():
+    """Get Claude Code health metrics for dashboard.
+
+    Returns job success rate, clear success rate, response quality,
+    recent job history, and alert status.
+    """
+    try:
+        # Import the health tracker
+        import sys
+        project_root = str(Path(__file__).parent.parent)
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+
+        from jobs.claude_code_health import get_health_tracker
+        tracker = get_health_tracker()
+        return tracker.get_health_stats()
+    except ImportError as e:
+        return {
+            "error": f"Health tracker not available: {e}",
+            "job_success_rate": 0,
+            "clear_success_rate": 0,
+            "garbage_rate": 0,
+            "consecutive_failures": 0,
+            "total_jobs_tracked": 0,
+            "recent_jobs": [],
+            "recent_clears": [],
+            "alerts": {
+                "consecutive_failure_alert": False,
+                "clear_rate_alert": False,
+                "recent_garbage": False,
+            }
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/api/logs/bot")
 async def get_bot_logs():
     """Get recent Discord bot logs."""
@@ -310,9 +648,23 @@ async def get_bot_logs():
 
 
 @app.get("/api/screen/{session}")
-async def get_tmux_screen(session: str, lines: int = 60):
-    """Capture current tmux screen content."""
-    cmd = f"tmux capture-pane -t {session} -p -S -{lines} 2>/dev/null || echo 'Session not found'"
+@limiter.limit("60/minute")
+async def get_tmux_screen(request: Request, session: str, lines: int = 60):
+    """Capture current tmux screen content.
+
+    Security: Session name is validated against allowlist to prevent command injection.
+    Rate limited to 60 requests/minute.
+    """
+    # Security: Validate session name against allowlist
+    if session not in ALLOWED_TMUX_SESSIONS:
+        raise HTTPException(400, f"Invalid session. Allowed: {list(ALLOWED_TMUX_SESSIONS)}")
+
+    # Security: Validate lines is reasonable integer
+    if not (1 <= lines <= MAX_TMUX_LINES):
+        raise HTTPException(400, f"Lines must be between 1 and {MAX_TMUX_LINES}")
+
+    # Use shlex.quote for defense-in-depth (even though session is from allowlist)
+    cmd = f"tmux capture-pane -t {shlex.quote(session)} -p -S -{lines} 2>/dev/null || echo 'Session not found'"
     stdout, stderr, code = run_wsl_command(cmd)
 
     if code == 0 and stdout != 'Session not found\n':
@@ -321,50 +673,28 @@ async def get_tmux_screen(session: str, lines: int = 60):
 
 
 @app.post("/api/restart/{service}")
-async def restart_service(service: str):
-    """Restart a service."""
-    if service == "hadley_api":
-        # Kill existing and restart
-        try:
-            # Find and kill existing uvicorn process
-            subprocess.run(
-                ["taskkill", "/F", "/IM", "uvicorn.exe"],
-                capture_output=True, timeout=5
-            )
-        except Exception:
-            pass
+@limiter.limit("5/minute")
+async def restart_service_endpoint(request: Request, service: str):
+    """Restart a service with proper single-instance enforcement.
 
-        # Start new instance from project root so domains module is importable
-        subprocess.Popen(
-            ["python", "-m", "uvicorn", "hadley_api.main:app", "--host", "0.0.0.0", "--port", "8100"],
-            cwd=CONFIG["windows_project_path"],
-            creationflags=subprocess.CREATE_NEW_CONSOLE
-        )
-        return {"status": "restarting", "message": "Hadley API restart initiated"}
-
-    elif service == "discord_bot":
-        # Kill existing bot
-        try:
-            result = subprocess.run(
-                ["wmic", "process", "where", "name='python.exe' and commandline like '%bot.py%'", "call", "terminate"],
-                capture_output=True, timeout=5
-            )
-        except Exception:
-            pass
-
-        # Start new instance
-        subprocess.Popen(
-            ["python", "bot.py"],
-            cwd=CONFIG["windows_project_path"],
-            creationflags=subprocess.CREATE_NEW_CONSOLE
-        )
-        return {"status": "restarting", "message": "Discord Bot restart initiated"}
+    Rate limited to 5 requests/minute to prevent abuse.
+    """
+    if service in ("hadley_api", "discord_bot", "hadley_bricks"):
+        # Use service manager for Windows services (headless = no console window)
+        result = service_manager.restart_service(service, headless=True)
+        if result["success"]:
+            return {
+                "status": "restarting",
+                "message": f"{service} restart completed",
+                "details": result
+            }
+        else:
+            raise HTTPException(500, f"Failed to restart {service}: {result.get('error', 'Unknown error')}")
 
     elif service == "peterbot_session":
-        # Kill and recreate tmux session
+        # Kill and recreate tmux session (WSL - unchanged)
         run_wsl_command("tmux kill-session -t claude-peterbot 2>/dev/null || true")
         run_wsl_command(f"tmux new-session -d -s claude-peterbot -c {CONFIG['wsl_peterbot_path']}")
-        # Source profile for proper environment, use current CLI flag
         run_wsl_command("tmux send-keys -t claude-peterbot 'source ~/.profile && claude --permission-mode bypassPermissions' Enter")
         return {"status": "restarting", "message": "Peterbot session recreated"}
 
@@ -373,72 +703,64 @@ async def restart_service(service: str):
 
 
 @app.post("/api/restart-all")
-async def restart_all_services():
-    """Restart all Peter-related services (headless - no console windows)."""
+@limiter.limit("2/minute")
+async def restart_all_services(request: Request):
+    """Restart all Peter-related services (headless - no console windows).
+
+    Uses service_manager for reliable single-instance enforcement.
+    Rate limited to 2 requests/minute to prevent abuse.
+    """
     results = {}
 
-    # Windows flags for headless execution
-    CREATE_NO_WINDOW = 0x08000000
-    DETACHED_PROCESS = 0x00000008
+    # 1. Restart Windows services via service_manager (headless)
+    for svc in ("hadley_api", "discord_bot", "hadley_bricks"):
+        result = service_manager.restart_service(svc, headless=True)
+        results[svc] = {
+            "status": "running" if result["success"] else "failed",
+            "pid": result.get("start_result", {}).get("pid"),
+            "error": result.get("start_result", {}).get("error") if not result["success"] else None
+        }
 
-    # 1. Restart Hadley API
-    try:
-        subprocess.run(
-            ["taskkill", "/F", "/IM", "uvicorn.exe"],
-            capture_output=True, timeout=5,
-            creationflags=CREATE_NO_WINDOW
-        )
-    except Exception:
-        pass
-    # Start from project root so domains module is importable
-    subprocess.Popen(
-        ["python", "-m", "uvicorn", "hadley_api.main:app", "--host", "0.0.0.0", "--port", "8100"],
-        cwd=CONFIG["windows_project_path"],
-        creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-    results["hadley_api"] = "restarting"
-
-    # 2. Restart Discord Bot
-    try:
-        subprocess.run(
-            ["wmic", "process", "where", "name='python.exe' and commandline like '%bot.py%'", "call", "terminate"],
-            capture_output=True, timeout=5,
-            creationflags=CREATE_NO_WINDOW
-        )
-    except Exception:
-        pass
-    subprocess.Popen(
-        ["python", "bot.py"],
-        cwd=CONFIG["windows_project_path"],
-        creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-    results["discord_bot"] = "restarting"
-
-    # 3. Restart Peterbot tmux session
+    # 2. Restart Peterbot tmux session (WSL)
     run_wsl_command("tmux kill-session -t claude-peterbot 2>/dev/null || true")
     run_wsl_command(f"tmux new-session -d -s claude-peterbot -c {CONFIG['wsl_peterbot_path']}")
     run_wsl_command("tmux send-keys -t claude-peterbot 'source ~/.profile && claude --permission-mode bypassPermissions' Enter")
-    results["peterbot_session"] = "restarting"
+    results["peterbot_session"] = {"status": "restarting"}
+
+    all_success = all(
+        r.get("status") in ("running", "restarting")
+        for r in results.values()
+    )
 
     return {
-        "status": "restarting",
-        "message": "All services restart initiated",
-        "services": results
+        "status": "restarting",  # Frontend expects "restarting" to show success
+        "message": "All services restart initiated" if all_success else "Some services failed to restart",
+        "services": results,
+        "all_success": all_success
     }
 
 
 @app.post("/api/send/{session}")
-async def send_to_session(session: str, text: str):
-    """Send text to a tmux session."""
-    # Escape special characters
-    escaped = text.replace("'", "'\\''")
-    cmd = f"tmux send-keys -t {session} -l '{escaped}' && tmux send-keys -t {session} Enter"
+@limiter.limit("30/minute")
+async def send_to_session(request: Request, session: str, text: str):
+    """Send text to a tmux session.
+
+    Security: Session name is validated against allowlist to prevent command injection.
+    Text is properly escaped using shlex.quote.
+    Rate limited to 30 requests/minute.
+    """
+    # Security: Validate session name against allowlist
+    if session not in ALLOWED_TMUX_SESSIONS:
+        raise HTTPException(400, f"Invalid session. Allowed: {list(ALLOWED_TMUX_SESSIONS)}")
+
+    # Security: Limit text length to prevent DoS
+    if len(text) > 10000:
+        raise HTTPException(400, "Text too long (max 10000 characters)")
+
+    # Use shlex.quote for proper escaping
+    safe_session = shlex.quote(session)
+    safe_text = shlex.quote(text)
+    cmd = f"tmux send-keys -t {safe_session} -l {safe_text} && tmux send-keys -t {safe_session} Enter"
     stdout, stderr, code = run_wsl_command(cmd)
 
     if code == 0:
@@ -879,6 +1201,566 @@ async def get_peter_quote():
         "emoji": emoji,
         "timestamp": datetime.now().isoformat()
     }
+
+
+# ============================================================================
+# Parser System API endpoints
+# ============================================================================
+
+@app.get("/api/parser/debug")
+async def get_parser_debug():
+    """Debug endpoint to check parser system setup."""
+    import sys
+    import os
+    import traceback
+
+    result = {
+        "cwd": os.getcwd(),
+        "data_dir_exists": os.path.exists("data"),
+        "db_exists": os.path.exists("data/parser_fixtures.db"),
+        "python_path_sample": sys.path[:5],
+    }
+
+    # Try imports one by one
+    try:
+        from domains.peterbot.capture_parser import get_parser_capture_store, _get_connection
+        result["import_capture_parser"] = "OK"
+    except Exception as e:
+        result["import_capture_parser"] = f"FAIL: {e}"
+        result["import_capture_parser_tb"] = traceback.format_exc()
+
+    try:
+        from domains.peterbot.feedback_processor import get_feedback_processor
+        result["import_feedback"] = "OK"
+    except Exception as e:
+        result["import_feedback"] = f"FAIL: {e}"
+
+    try:
+        from domains.peterbot.scheduled_output_scorer import get_scheduled_output_scorer
+        result["import_scorer"] = "OK"
+    except Exception as e:
+        result["import_scorer"] = f"FAIL: {e}"
+
+    # Try DB access
+    try:
+        from domains.peterbot.capture_parser import _get_connection
+        conn = _get_connection()
+        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        result["db_tables"] = [t[0] for t in tables]
+    except Exception as e:
+        result["db_access"] = f"FAIL: {e}"
+
+    return result
+
+
+@app.get("/api/parser/status")
+async def get_parser_status():
+    """Get overall parser system status for summary cards."""
+    import traceback
+    import sys
+    import os
+
+    debug_info = {
+        "cwd": os.getcwd(),
+        "python_path": sys.path[:3],
+        "step": "init"
+    }
+
+    try:
+        debug_info["step"] = "import_capture_parser"
+        from domains.peterbot.capture_parser import get_parser_capture_store, _get_connection
+
+        debug_info["step"] = "import_feedback"
+        from domains.peterbot.feedback_processor import get_feedback_processor
+
+        debug_info["step"] = "import_scorer"
+        from domains.peterbot.scheduled_output_scorer import get_scheduled_output_scorer
+
+        debug_info["step"] = "get_store"
+        store = get_parser_capture_store()
+
+        debug_info["step"] = "get_feedback"
+        feedback = get_feedback_processor()
+
+        debug_info["step"] = "get_scorer"
+        scorer = get_scheduled_output_scorer()
+
+        debug_info["step"] = "fixture_stats"
+        fixture_stats = store.get_fixture_stats()
+
+        debug_info["step"] = "capture_stats"
+        capture_stats = store.get_capture_stats(hours=24)
+
+        debug_info["step"] = "feedback_summary"
+        feedback_summary = feedback.get_pending_summary()
+
+        debug_info["step"] = "cycles_query"
+        conn = _get_connection()
+        cursor = conn.execute("""
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN committed = 1 THEN 1 ELSE 0 END) as committed,
+                   MAX(started_at) as last_cycle
+            FROM improvement_cycles
+        """)
+        row = cursor.fetchone()
+        cycles_total = row['total'] if row else 0
+        cycles_committed = row['committed'] if row else 0
+
+        debug_info["step"] = "human_reviewed_query"
+        cursor = conn.execute("""
+            SELECT COUNT(*) as since_review
+            FROM improvement_cycles
+            WHERE human_reviewed = 0
+        """)
+        row = cursor.fetchone()
+        cycles_since_review = row['since_review'] if row else 0
+
+        debug_info["step"] = "drift_alerts"
+        drift_alerts = scorer.get_drift_alerts(hours=24)
+
+        return {
+            "fixtures": {
+                "total": fixture_stats.get('total', 0),
+                "passing": fixture_stats.get('passing', 0),
+                "failing": fixture_stats.get('failing', 0),
+                "untested": fixture_stats.get('untested', 0),
+                "pass_rate": fixture_stats.get('pass_rate', 0)
+            },
+            "captures_24h": {
+                "total": capture_stats.get('total', 0),
+                "failures": capture_stats.get('failures', 0),
+                "empty": capture_stats.get('empty', 0),
+                "ansi": capture_stats.get('ansi', 0),
+                "echo": capture_stats.get('echo', 0),
+                "reacted": capture_stats.get('reacted', 0)
+            },
+            "feedback": {
+                "pending": feedback_summary.get('total', 0),
+                "high_priority": feedback_summary.get('high_priority', 0),
+                "by_category": feedback_summary.get('by_category', {})
+            },
+            "cycles": {
+                "total": cycles_total,
+                "committed": cycles_committed,
+                "since_review": cycles_since_review
+            },
+            "drift_alerts": len(drift_alerts)
+        }
+    except Exception as e:
+        error_tb = traceback.format_exc()
+        logger.error(f"Error getting parser status at step {debug_info['step']}: {e}\n{error_tb}")
+        return {
+            "error": str(e),
+            "step": debug_info["step"],
+            "debug": debug_info,
+            "traceback": error_tb
+        }
+
+
+@app.get("/api/parser/fixtures")
+async def get_parser_fixtures():
+    """Get fixture details for the Fixtures tab."""
+    try:
+        from domains.peterbot.capture_parser import get_parser_capture_store
+
+        store = get_parser_capture_store()
+        fixtures = store.get_fixtures()
+
+        # Group by category
+        by_category = {}
+        chronic_failures = []
+        recent_results = []
+
+        for f in fixtures:
+            cat = f.category
+            if cat not in by_category:
+                by_category[cat] = {"total": 0, "passed": 0}
+            by_category[cat]["total"] += 1
+            if f.last_pass:
+                by_category[cat]["passed"] += 1
+
+            # Track chronic failures
+            if f.fail_count >= 3:
+                chronic_failures.append({
+                    "id": f.id,
+                    "category": f.category,
+                    "fail_count": f.fail_count,
+                    "notes": f.notes
+                })
+
+            # Include in recent results
+            recent_results.append({
+                "id": f.id,
+                "category": f.category,
+                "passed": f.last_pass,
+                "fail_count": f.fail_count,
+                "last_run_at": f.last_run_at
+            })
+
+        return {
+            "by_category": by_category,
+            "chronic_failures": chronic_failures,
+            "recent_results": recent_results[:20]  # Most recent 20
+        }
+    except Exception as e:
+        logger.error(f"Error getting parser fixtures: {e}")
+        return {"error": str(e)}
+
+
+@app.get("/api/parser/captures")
+async def get_parser_captures(hours: int = 24):
+    """Get recent captures for the Captures tab."""
+    try:
+        from domains.peterbot.capture_parser import get_parser_capture_store, _get_connection
+
+        store = get_parser_capture_store()
+        stats = store.get_capture_stats(hours=hours)
+
+        # Get recent captures
+        conn = _get_connection()
+        cursor = conn.execute("""
+            SELECT id, captured_at, channel_name, skill_name,
+                   was_empty, had_ansi, had_echo, user_reacted,
+                   promoted, quality_score
+            FROM captures
+            WHERE captured_at >= datetime('now', ?)
+            ORDER BY captured_at DESC
+            LIMIT 100
+        """, (f'-{hours} hours',))
+
+        captures = []
+        for row in cursor:
+            captures.append({
+                "id": row['id'],
+                "captured_at": row['captured_at'],
+                "channel_name": row['channel_name'],
+                "skill_name": row['skill_name'],
+                "was_empty": bool(row['was_empty']),
+                "had_ansi": bool(row['had_ansi']),
+                "had_echo": bool(row['had_echo']),
+                "user_reacted": row['user_reacted'],
+                "promoted": bool(row['promoted']),
+                "quality_score": row['quality_score']
+            })
+
+        return {
+            "captures": captures,
+            "stats": stats
+        }
+    except Exception as e:
+        logger.error(f"Error getting parser captures: {e}")
+        return {"error": str(e)}
+
+
+@app.get("/api/parser/feedback")
+async def get_parser_feedback():
+    """Get pending feedback for the Feedback tab."""
+    try:
+        from domains.peterbot.feedback_processor import get_feedback_processor
+
+        processor = get_feedback_processor()
+        pending = processor.get_pending()
+        summary = processor.get_pending_summary()
+
+        feedback_list = []
+        for fb in pending:
+            feedback_list.append({
+                "id": fb.id,
+                "created_at": fb.created_at,
+                "input_method": fb.input_method,
+                "category": fb.category,
+                "skill_name": fb.skill_name,
+                "description": fb.description,
+                "priority": fb.priority,
+                "status": "pending"  # All items from get_pending() are pending
+            })
+
+        return {
+            "feedback": feedback_list,
+            "summary": summary
+        }
+    except Exception as e:
+        logger.error(f"Error getting parser feedback: {e}")
+        return {"error": str(e)}
+
+
+@app.get("/api/parser/cycles")
+async def get_parser_cycles():
+    """Get improvement cycle history for the Cycles tab."""
+    try:
+        from domains.peterbot.capture_parser import _get_connection
+
+        conn = _get_connection()
+
+        # Get recent cycles
+        cursor = conn.execute("""
+            SELECT id, started_at, target_stage, committed,
+                   score_before, score_after, fixtures_improved,
+                   regressions, human_reviewed
+            FROM improvement_cycles
+            ORDER BY started_at DESC
+            LIMIT 20
+        """)
+
+        cycles = []
+        for row in cursor:
+            cycles.append({
+                "id": row['id'],
+                "started_at": row['started_at'],
+                "target_stage": row['target_stage'],
+                "committed": bool(row['committed']),
+                "score_before": row['score_before'],
+                "score_after": row['score_after'],
+                "fixtures_improved": row['fixtures_improved'],
+                "regressions": row['regressions'],
+                "human_reviewed": bool(row['human_reviewed'])
+            })
+
+        # Review status
+        cursor = conn.execute("""
+            SELECT COUNT(*) as since_review
+            FROM improvement_cycles
+            WHERE human_reviewed = 0
+        """)
+        row = cursor.fetchone()
+        cycles_since_review = row['since_review'] if row else 0
+
+        return {
+            "cycles": cycles,
+            "review_status": {
+                "cycles_since_review": cycles_since_review,
+                "review_required": cycles_since_review >= 5,
+                "max_without_review": 5
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting parser cycles: {e}")
+        return {"error": str(e)}
+
+
+@app.get("/api/parser/drift")
+async def get_parser_drift():
+    """Get format drift status for the Drift tab."""
+    try:
+        from domains.peterbot.scheduled_output_scorer import get_scheduled_output_scorer
+
+        scorer = get_scheduled_output_scorer()
+        skill_health = scorer.get_skill_health()
+        drift_alerts = scorer.get_drift_alerts(hours=24)
+
+        return {
+            "skill_health": skill_health,
+            "alerts": drift_alerts
+        }
+    except Exception as e:
+        logger.error(f"Error getting parser drift: {e}")
+        return {"error": str(e)}
+
+
+@app.post("/api/parser/run-regression")
+async def run_parser_regression():
+    """Trigger a regression test run."""
+    try:
+        from domains.peterbot.parser_regression import RegressionRunner
+
+        runner = RegressionRunner()
+        report = runner.run()
+        return {
+            "success": True,
+            "result": report.to_dict()
+        }
+    except Exception as e:
+        logger.error(f"Error running parser regression: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/parser/mark-reviewed")
+async def mark_parser_reviewed():
+    """Mark human review complete."""
+    try:
+        from domains.peterbot.capture_parser import _transaction
+
+        with _transaction() as conn:
+            conn.execute("""
+                UPDATE improvement_cycles
+                SET human_reviewed = 1
+                WHERE human_reviewed = 0
+            """)
+
+        return {"success": True, "message": "All cycles marked as reviewed"}
+    except Exception as e:
+        logger.error(f"Error marking reviewed: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/parser/feedback/{feedback_id}/resolve")
+async def resolve_parser_feedback(feedback_id: str, resolution: str = "Resolved via dashboard"):
+    """Resolve a feedback item."""
+    try:
+        from domains.peterbot.feedback_processor import get_feedback_processor
+
+        processor = get_feedback_processor()
+        processor.resolve(feedback_id, resolution=resolution)
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Error resolving feedback: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# ============================================================================
+# Knowledge Search API endpoints (same methods Peter uses)
+# ============================================================================
+
+@app.get("/api/search/memory")
+async def search_peterbot_memory(query: str):
+    """Search peterbot-mem - exact same method Peter uses for memory context.
+
+    This calls the claude-mem worker's context injection endpoint.
+    """
+    import aiohttp
+    from domains.peterbot import config
+
+    try:
+        params = {
+            "project": config.PROJECT_ID,
+            "query": query
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                config.CONTEXT_ENDPOINT,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                if resp.status == 200:
+                    context = await resp.text()
+                    return {
+                        "success": True,
+                        "query": query,
+                        "project": config.PROJECT_ID,
+                        "endpoint": config.CONTEXT_ENDPOINT,
+                        "context": context,
+                        "length": len(context)
+                    }
+                else:
+                    text = await resp.text()
+                    return {
+                        "success": False,
+                        "error": f"API returned {resp.status}: {text}",
+                        "endpoint": config.CONTEXT_ENDPOINT
+                    }
+    except aiohttp.ClientError as e:
+        return {
+            "success": False,
+            "error": f"Connection error: {str(e)}",
+            "endpoint": config.CONTEXT_ENDPOINT
+        }
+    except Exception as e:
+        logger.error(f"Error searching memory: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/search/second-brain")
+async def search_second_brain(
+    query: str,
+    limit: int = 5,
+    min_similarity: float = 0.7
+):
+    """Search Second Brain - exact same method Peter uses for knowledge context.
+
+    This calls the semantic_search function from domains/second_brain.
+    """
+    try:
+        from domains.second_brain import semantic_search, format_context_for_claude
+
+        results = await semantic_search(
+            query=query,
+            min_similarity=min_similarity,
+            limit=limit
+        )
+
+        # Format results for display
+        items = []
+        for result in results:
+            item = result.item
+            items.append({
+                "id": str(item.id) if item.id else None,
+                "title": item.title,
+                "summary": item.summary,
+                "topics": item.topics or [],
+                "source": item.source,
+                "content_type": item.content_type.value if item.content_type else None,
+                "capture_type": item.capture_type.value if item.capture_type else None,
+                "similarity": result.best_similarity,
+                "decay_score": item.decay_score,
+                "excerpts": result.relevant_excerpts[:2] if result.relevant_excerpts else []
+            })
+
+        # Also get the formatted context (what Peter would see)
+        formatted_context = format_context_for_claude(results)
+
+        return {
+            "success": True,
+            "query": query,
+            "count": len(items),
+            "items": items,
+            "formatted_context": formatted_context
+        }
+    except Exception as e:
+        logger.error(f"Error searching Second Brain: {e}")
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+@app.get("/api/search/second-brain/stats")
+async def get_second_brain_stats():
+    """Get Second Brain statistics."""
+    try:
+        from domains.second_brain import (
+            get_total_active_count,
+            get_total_connection_count,
+            get_topics_with_counts,
+            get_recent_items
+        )
+
+        total_items = await get_total_active_count()
+        total_connections = await get_total_connection_count()
+        topics_raw = await get_topics_with_counts()
+        topics = [{"topic": t[0], "count": t[1]} for t in topics_raw[:20]]
+        recent = await get_recent_items(limit=10)
+
+        recent_items = []
+        for item in recent:
+            # Handle created_at which may be datetime or string
+            created = getattr(item, 'created_at', None)
+            if created and hasattr(created, 'isoformat'):
+                created = created.isoformat()
+            elif created:
+                created = str(created)
+
+            recent_items.append({
+                "id": str(item.id) if item.id else None,
+                "title": getattr(item, 'title', None) or "Untitled",
+                "content_type": str(getattr(item, 'content_type', None) or ''),
+                "capture_type": str(getattr(item, 'capture_type', None) or ''),
+                "created_at": created,
+                "topics": getattr(item, 'topics', None) or []
+            })
+
+        return {
+            "success": True,
+            "total_items": total_items,
+            "total_connections": total_connections,
+            "topics": topics,
+            "recent_items": recent_items
+        }
+    except Exception as e:
+        import traceback
+        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
 
 
 # ============================================================================
@@ -1861,6 +2743,818 @@ DASHBOARD_HTML = """
                 transform: translateY(0);
             }
         }
+
+        /* ══════════════════════════════════════════════════════════════════
+           TASK BOARD STYLES
+           ══════════════════════════════════════════════════════════════════ */
+
+        .task-board {
+            height: calc(100vh - 160px);
+            display: flex;
+            flex-direction: column;
+            background: #f7f6f3;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .task-header {
+            background: linear-gradient(135deg, #1a2744 0%, #253561 100%);
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .task-header-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+        }
+
+        .task-logo {
+            width: 34px;
+            height: 34px;
+            border-radius: 9px;
+            background: linear-gradient(135deg, #f59e0b, #ea580c);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .task-header-title {
+            font-size: 16px;
+            font-weight: 800;
+            color: #fff;
+            letter-spacing: -0.3px;
+        }
+
+        .task-header-subtitle {
+            font-size: 10px;
+            font-weight: 500;
+            color: #94a3b8;
+            letter-spacing: 0.5px;
+        }
+
+        .task-search {
+            position: relative;
+            width: 220px;
+        }
+
+        .task-search input {
+            width: 100%;
+            padding: 7px 12px 7px 32px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.15);
+            background: rgba(255,255,255,0.08);
+            color: #fff;
+            font-size: 12px;
+            outline: none;
+        }
+
+        .task-search input::placeholder {
+            color: #64748b;
+        }
+
+        .task-search-icon {
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #64748b;
+            font-size: 14px;
+        }
+
+        .task-add-btn {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: none;
+            background: linear-gradient(135deg, #f59e0b, #ea580c);
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.15s;
+            letter-spacing: 0.3px;
+        }
+
+        .task-add-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+        }
+
+        /* Task Tabs */
+        .task-tabs {
+            background: #fff;
+            border-bottom: 1px solid #e8e5df;
+            padding: 0 20px;
+            display: flex;
+            gap: 0;
+        }
+
+        .task-tab {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 12px 18px;
+            border: none;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+            position: relative;
+            background: transparent;
+            color: #64748b;
+            border-bottom: 2.5px solid transparent;
+        }
+
+        .task-tab:hover {
+            color: #1e293b;
+        }
+
+        .task-tab.active {
+            font-weight: 700;
+            border-bottom-color: currentColor;
+        }
+
+        .task-tab[data-list="personal_todo"] { --tab-accent: #2563eb; }
+        .task-tab[data-list="peter_queue"] { --tab-accent: #d97706; }
+        .task-tab[data-list="idea"] { --tab-accent: #7c3aed; }
+        .task-tab[data-list="research"] { --tab-accent: #059669; }
+
+        .task-tab.active[data-list="personal_todo"] { color: #2563eb; }
+        .task-tab.active[data-list="peter_queue"] { color: #d97706; }
+        .task-tab.active[data-list="idea"] { color: #7c3aed; }
+        .task-tab.active[data-list="research"] { color: #059669; }
+
+        .task-tab-icon {
+            font-size: 15px;
+        }
+
+        .task-tab-count {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 7px;
+            border-radius: 99px;
+            font-family: 'Consolas', monospace;
+            background: #f1f5f9;
+            color: #94a3b8;
+        }
+
+        .task-tab.active .task-tab-count {
+            background: currentColor;
+            background: color-mix(in srgb, currentColor 15%, transparent);
+            color: currentColor;
+        }
+
+        /* Kanban Board */
+        .task-kanban {
+            display: flex;
+            gap: 10px;
+            overflow-x: auto;
+            padding: 16px 20px 20px;
+            flex: 1;
+        }
+
+        .task-column {
+            min-width: 260px;
+            max-width: 280px;
+            flex: 0 0 260px;
+            display: flex;
+            flex-direction: column;
+            border-radius: 12px;
+            border: 2px solid transparent;
+            transition: all 0.25s ease;
+            overflow: hidden;
+        }
+
+        .task-column.drag-over {
+            border-style: dashed;
+        }
+
+        .task-column-header {
+            padding: 14px 14px 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .task-column-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 99px;
+            flex-shrink: 0;
+        }
+
+        .task-column-dot.pulse {
+            animation: pulse-glow 2.5s infinite;
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.35); }
+            50% { box-shadow: 0 0 10px 4px rgba(245,158,11,0); }
+        }
+
+        .task-column-label {
+            font-size: 12px;
+            font-weight: 700;
+            color: #334155;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+            flex: 1;
+        }
+
+        .task-column-count {
+            font-size: 11px;
+            font-weight: 700;
+            padding: 1px 8px;
+            border-radius: 99px;
+            font-family: 'Consolas', monospace;
+        }
+
+        .task-column-cards {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0 8px 8px;
+            min-height: 80px;
+        }
+
+        /* Task Card */
+        .task-card {
+            background: #fff;
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin-bottom: 8px;
+            cursor: grab;
+            transition: opacity 0.2s, transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+            position: relative;
+        }
+
+        .task-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            transform: translateY(-1px);
+        }
+
+        .task-card.dragging {
+            opacity: 0.35;
+            transform: rotate(1.5deg) scale(0.98);
+        }
+
+        .task-card-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1e293b;
+            line-height: 1.4;
+            margin-bottom: 8px;
+        }
+
+        .task-card-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-bottom: 8px;
+            align-items: center;
+        }
+
+        /* Priority Pills */
+        .priority-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 99px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }
+
+        .priority-pill .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 99px;
+        }
+
+        .priority-pill.critical { color: #dc2626; background: #fef2f2; }
+        .priority-pill.critical .dot { background: #dc2626; }
+
+        .priority-pill.high { color: #ea580c; background: #fff7ed; }
+        .priority-pill.high .dot { background: #ea580c; }
+
+        .priority-pill.medium { color: #d97706; background: #fffbeb; }
+        .priority-pill.medium .dot { background: #d97706; }
+
+        .priority-pill.low { color: #2563eb; background: #eff6ff; }
+        .priority-pill.low .dot { background: #2563eb; }
+
+        .priority-pill.someday { color: #9ca3af; background: #f9fafb; }
+        .priority-pill.someday .dot { background: #9ca3af; }
+
+        /* Effort Badge */
+        .effort-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            padding: 2px 7px;
+            border-radius: 99px;
+            font-size: 10px;
+            font-weight: 500;
+            color: #64748b;
+            background: #f1f5f9;
+            font-family: 'Consolas', monospace;
+        }
+
+        /* Category Badges */
+        .task-categories {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-bottom: 8px;
+        }
+
+        .category-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 1px 8px;
+            border-radius: 99px;
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 0.2px;
+            white-space: nowrap;
+        }
+
+        /* Task Card Footer */
+        .task-card-footer {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            font-size: 11px;
+            color: #94a3b8;
+            font-family: 'Consolas', monospace;
+        }
+
+        .task-card-footer .spacer {
+            flex: 1;
+        }
+
+        .task-card-footer .by-peter {
+            font-size: 10px;
+            color: #94a3b8;
+            font-style: italic;
+            font-family: inherit;
+        }
+
+        .task-date {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .task-date.overdue {
+            color: #dc2626;
+            background: #fef2f2;
+            padding: 1px 6px;
+            border-radius: 4px;
+        }
+
+        .heartbeat-date {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-weight: 600;
+            color: #d97706;
+            background: #fef9e7;
+            padding: 1px 6px;
+            border-radius: 4px;
+        }
+
+        /* Task Card Actions */
+        .task-card-actions {
+            display: flex;
+            gap: 4px;
+            margin-top: 10px;
+            border-top: 1px solid #f1f5f9;
+            padding-top: 8px;
+        }
+
+        .task-action-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+            background: #fff;
+            color: #64748b;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .task-action-btn:hover {
+            border-color: #16a34a;
+            color: #16a34a;
+        }
+
+        .task-action-btn.heartbeat {
+            border: 1.5px solid #f59e0b;
+            background: linear-gradient(135deg, #fffbeb, #fef3c7);
+            color: #b45309;
+            font-weight: 600;
+        }
+
+        .task-action-btn.heartbeat:hover {
+            background: linear-gradient(135deg, #fef3c7, #fde68a);
+            transform: scale(1.02);
+        }
+
+        /* Heartbeat Dropdown */
+        .heartbeat-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            z-index: 50;
+            width: 300px;
+            margin-top: 4px;
+            background: #fff;
+            border-radius: 12px;
+            border: 1.5px solid #fde68a;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.15), 0 0 0 1px rgba(245,158,11,0.1);
+            overflow: hidden;
+        }
+
+        .heartbeat-dropdown-header {
+            padding: 12px 16px 8px;
+            border-bottom: 1px solid #fef3c7;
+            background: linear-gradient(135deg, #fffbeb, #fef9e7);
+        }
+
+        .heartbeat-dropdown-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: #92400e;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .heartbeat-dropdown-actions {
+            padding: 8px;
+        }
+
+        .heartbeat-action {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: none;
+            background: transparent;
+            color: #475569;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            text-align: left;
+            transition: all 0.15s;
+        }
+
+        .heartbeat-action:hover {
+            background: #f8fafc;
+        }
+
+        .heartbeat-action.primary {
+            background: linear-gradient(135deg, #fef3c7, #fde68a);
+            color: #92400e;
+            font-weight: 600;
+        }
+
+        .heartbeat-action.primary:hover {
+            background: linear-gradient(135deg, #fde68a, #fbbf24);
+        }
+
+        .heartbeat-action-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 7px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+
+        .heartbeat-action.primary .heartbeat-action-icon {
+            background: #f59e0b;
+            color: #fff;
+        }
+
+        .heartbeat-action-label {
+            flex: 1;
+        }
+
+        .heartbeat-action-sublabel {
+            font-size: 10px;
+            font-weight: 400;
+            color: #94a3b8;
+            margin-top: 1px;
+        }
+
+        .heartbeat-dates-label {
+            padding: 4px 16px 6px;
+            font-size: 10px;
+            font-weight: 600;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .heartbeat-dates-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 4px;
+            padding: 0 8px 12px;
+        }
+
+        .heartbeat-date-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 6px 2px;
+            border-radius: 8px;
+            border: 1px solid #f1f5f9;
+            background: #fff;
+            cursor: pointer;
+            transition: all 0.15s;
+            gap: 2px;
+        }
+
+        .heartbeat-date-btn:hover {
+            background: #fef9e7;
+            border-color: #fde68a;
+        }
+
+        .heartbeat-date-btn .day {
+            font-size: 9px;
+            font-weight: 600;
+            color: #94a3b8;
+            text-transform: uppercase;
+        }
+
+        .heartbeat-date-btn .num {
+            font-size: 15px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+
+        .heartbeat-date-dots {
+            display: flex;
+            gap: 2px;
+            min-height: 6px;
+        }
+
+        .heartbeat-date-dot {
+            width: 5px;
+            height: 5px;
+            border-radius: 99px;
+            background: #f59e0b;
+        }
+
+        /* Quick Add Modal */
+        .task-modal-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding-top: 80px;
+            background: rgba(15,23,42,0.4);
+            backdrop-filter: blur(4px);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+        }
+
+        .task-modal-overlay.show {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .task-modal {
+            width: 420px;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 24px 64px rgba(0,0,0,0.2);
+            overflow: hidden;
+            transform: translateY(-12px);
+            transition: transform 0.25s ease;
+        }
+
+        .task-modal-overlay.show .task-modal {
+            transform: translateY(0);
+        }
+
+        .task-modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #f1f5f9;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .task-modal-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+
+        .task-modal-close {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: #94a3b8;
+            padding: 4px;
+            font-size: 18px;
+        }
+
+        .task-modal-body {
+            padding: 16px 20px;
+        }
+
+        .task-modal-input {
+            width: 100%;
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 1.5px solid #e2e8f0;
+            font-size: 14px;
+            outline: none;
+            box-sizing: border-box;
+            transition: border-color 0.15s;
+        }
+
+        .task-modal-input:focus {
+            border-color: #d97706;
+        }
+
+        .task-modal-list-selector {
+            display: flex;
+            gap: 6px;
+            margin-top: 14px;
+        }
+
+        .task-modal-list-btn {
+            flex: 1;
+            padding: 8px 4px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.15s;
+            border: 2px solid #f1f5f9;
+            background: #fff;
+            color: #64748b;
+        }
+
+        .task-modal-list-btn.active {
+            border-color: var(--list-accent, #d97706);
+            background: color-mix(in srgb, var(--list-accent, #d97706) 10%, transparent);
+            color: var(--list-accent, #d97706);
+        }
+
+        .task-modal-list-icon {
+            font-size: 16px;
+            margin-bottom: 2px;
+            display: block;
+        }
+
+        .task-modal-section-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin: 14px 0 6px;
+        }
+
+        .task-modal-priority-selector {
+            display: flex;
+            gap: 4px;
+        }
+
+        .task-modal-priority-btn {
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+            border: 2px solid transparent;
+            background: #f8fafc;
+            color: #94a3b8;
+        }
+
+        .task-modal-priority-btn.active {
+            border-color: var(--priority-color);
+            background: var(--priority-bg);
+            color: var(--priority-color);
+        }
+
+        .task-modal-footer {
+            padding: 12px 20px 16px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .task-modal-btn {
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        .task-modal-btn.secondary {
+            border: 1px solid #e2e8f0;
+            background: #fff;
+            color: #64748b;
+        }
+
+        .task-modal-btn.primary {
+            border: none;
+            background: linear-gradient(135deg, #1a2744, #2d4a7a);
+            color: #fff;
+            font-weight: 600;
+        }
+
+        .task-modal-btn.primary:hover {
+            transform: translateY(-1px);
+        }
+
+        /* Task Toast */
+        .task-toast {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-10px);
+            z-index: 200;
+            padding: 10px 20px;
+            border-radius: 10px;
+            background: #1e293b;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s ease;
+        }
+
+        .task-toast.show {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        /* Empty State */
+        .task-column-empty {
+            padding: 24px 16px;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 12px;
+        }
+
+        /* Scrollbar styling for task board */
+        .task-kanban::-webkit-scrollbar,
+        .task-column-cards::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+
+        .task-kanban::-webkit-scrollbar-track,
+        .task-column-cards::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .task-kanban::-webkit-scrollbar-thumb,
+        .task-column-cards::-webkit-scrollbar-thumb {
+            background: #d1d5db;
+            border-radius: 99px;
+        }
+
+        .task-kanban::-webkit-scrollbar-thumb:hover,
+        .task-column-cards::-webkit-scrollbar-thumb:hover {
+            background: #9ca3af;
+        }
     </style>
 </head>
 <body>
@@ -1896,6 +3590,9 @@ DASHBOARD_HTML = """
                 <h3>Overview</h3>
                 <div class="nav-item active" data-view="dashboard">
                     📊 Dashboard
+                </div>
+                <div class="nav-item" data-view="tasks">
+                    ⚡ Tasks
                 </div>
             </div>
 
@@ -1939,6 +3636,12 @@ DASHBOARD_HTML = """
                 </div>
                 <div class="nav-item" data-view="skills">
                     🛠️ Skills
+                </div>
+                <div class="nav-item" data-view="parser">
+                    🔧 Parser System
+                </div>
+                <div class="nav-item" data-view="search">
+                    🔍 Knowledge Search
                 </div>
             </div>
         </div>
@@ -2139,6 +3842,79 @@ DASHBOARD_HTML = """
             }
         }
 
+        // Claude Code Health Panel
+        async function refreshClaudeHealth() {
+            const container = document.getElementById('claude-health-content');
+            if (!container) return;
+
+            try {
+                const health = await api('/claude-code-health');
+
+                if (health.error) {
+                    container.innerHTML = '<p style="color: var(--warning);">Health data unavailable: ' + health.error + '</p>';
+                    return;
+                }
+
+                // Determine overall health status
+                const isHealthy = health.job_success_rate >= 80 && health.clear_success_rate >= 80 && !health.alerts.recent_garbage;
+                const isWarning = (health.job_success_rate >= 50 && health.job_success_rate < 80) || (health.clear_success_rate >= 50 && health.clear_success_rate < 80);
+                const statusColor = isHealthy ? 'var(--success)' : (isWarning ? 'var(--warning)' : 'var(--error)');
+                const statusText = isHealthy ? 'Healthy' : (isWarning ? 'Degraded' : 'Unhealthy');
+
+                // Build alerts list
+                let alertsHtml = '';
+                if (health.alerts.consecutive_failure_alert) {
+                    alertsHtml += '<div style="padding: 0.5rem; background: rgba(239,68,68,0.2); border-radius: 4px; margin-bottom: 0.5rem;">⚠️ ' + health.consecutive_failures + ' consecutive job failures</div>';
+                }
+                if (health.alerts.clear_rate_alert) {
+                    alertsHtml += '<div style="padding: 0.5rem; background: rgba(239,68,68,0.2); border-radius: 4px; margin-bottom: 0.5rem;">⚠️ /clear success rate low (' + health.clear_success_rate + '%)</div>';
+                }
+                if (health.alerts.recent_garbage) {
+                    alertsHtml += '<div style="padding: 0.5rem; background: rgba(251,191,36,0.2); border-radius: 4px; margin-bottom: 0.5rem;">⚠️ Recent garbage responses detected</div>';
+                }
+
+                // Build recent jobs table
+                let jobsHtml = '';
+                if (health.recent_jobs && health.recent_jobs.length > 0) {
+                    jobsHtml = '<table style="width: 100%; font-size: 0.85rem; margin-top: 1rem;"><thead><tr><th style="text-align: left; padding: 0.25rem;">Time</th><th style="text-align: left; padding: 0.25rem;">Job</th><th style="text-align: center; padding: 0.25rem;">Status</th><th style="text-align: right; padding: 0.25rem;">Duration</th></tr></thead><tbody>';
+                    health.recent_jobs.forEach(job => {
+                        const statusIcon = job.success && !job.is_garbage ? '✅' : (job.is_garbage ? '🗑️' : '❌');
+                        const statusTitle = job.success ? (job.is_garbage ? 'Garbage response' : 'Success') : (job.error || 'Failed');
+                        jobsHtml += '<tr><td style="padding: 0.25rem; color: var(--text-secondary);">' + job.timestamp + '</td><td style="padding: 0.25rem;">' + job.name + '</td><td style="text-align: center; padding: 0.25rem;" title="' + statusTitle + '">' + statusIcon + '</td><td style="text-align: right; padding: 0.25rem;">' + job.duration + 's</td></tr>';
+                    });
+                    jobsHtml += '</tbody></table>';
+                } else {
+                    jobsHtml = '<p style="color: var(--text-secondary); margin-top: 1rem;">No recent jobs recorded</p>';
+                }
+
+                container.innerHTML = \`
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1rem;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 1.5rem; font-weight: bold; color: \${statusColor};">\${statusText}</div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary);">Overall Status</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 1.5rem; font-weight: bold; color: \${health.job_success_rate >= 80 ? 'var(--success)' : (health.job_success_rate >= 50 ? 'var(--warning)' : 'var(--error)')};">\${health.job_success_rate}%</div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary);">Job Success Rate</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 1.5rem; font-weight: bold; color: \${health.clear_success_rate >= 80 ? 'var(--success)' : (health.clear_success_rate >= 50 ? 'var(--warning)' : 'var(--error)')};">\${health.clear_success_rate}%</div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary);">/clear Success</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 1.5rem; font-weight: bold; color: \${health.garbage_rate <= 5 ? 'var(--success)' : (health.garbage_rate <= 20 ? 'var(--warning)' : 'var(--error)')};">\${health.garbage_rate}%</div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary);">Garbage Rate</div>
+                        </div>
+                    </div>
+                    \${alertsHtml}
+                    <div style="font-weight: 600; font-size: 0.9rem;">Recent Jobs (last \${health.recent_jobs?.length || 0})</div>
+                    \${jobsHtml}
+                \`;
+            } catch (err) {
+                container.innerHTML = '<p style="color: var(--error);">Error loading health data: ' + err.message + '</p>';
+            }
+        }
+
         function showRestartModal(type) {
             const modal = document.getElementById('restart-modal');
             const title = document.getElementById('modal-title');
@@ -2317,6 +4093,15 @@ DASHBOARD_HTML = """
                     </div>
                 </div>
 
+                <!-- Claude Code Health Panel -->
+                <div id="claude-health-panel" class="card" style="margin-bottom: 1.5rem;">
+                    <div class="card-header">
+                        <span class="card-title">🩺 Claude Code Health</span>
+                        <button class="btn btn-sm btn-secondary" onclick="refreshClaudeHealth()">Refresh</button>
+                    </div>
+                    <div id="claude-health-content">Loading health data...</div>
+                </div>
+
                 <div class="grid grid-2">
                     <div class="card">
                         <div class="card-header">
@@ -2350,6 +4135,9 @@ DASHBOARD_HTML = """
                     </div>
                 </div>
             `;
+
+            // Load Claude health data
+            refreshClaudeHealth();
         }
 
         async function renderContext() {
@@ -2785,6 +4573,762 @@ DASHBOARD_HTML = """
             `;
         }
 
+        // ====================================================================
+        // Parser System Functions
+        // ====================================================================
+
+        let parserTab = 'fixtures';
+
+        async function renderParser() {
+            const content = document.getElementById('content');
+            content.innerHTML = '<h2>Loading parser system...</h2>';
+
+            const status = await api('/parser/status');
+
+            if (status.error) {
+                content.innerHTML = `
+                    <h2>🔧 Parser System</h2>
+                    <div class="card">
+                        <p style="color: var(--error);">Error: ${escapeHtml(status.error)}</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const passRate = status.fixtures.total > 0
+                ? (status.fixtures.pass_rate * 100).toFixed(1)
+                : '0.0';
+            const passClass = passRate >= 90 ? 'success' : passRate >= 70 ? 'warning' : 'error';
+
+            content.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h2>🔧 Parser System</h2>
+                    <button class="btn btn-secondary" onclick="renderParser()">Refresh</button>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="grid grid-4" style="margin-bottom: 1.5rem;">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Pass Rate</span>
+                        </div>
+                        <div style="font-size: 2rem; color: var(--${passClass});">
+                            ${passRate}%
+                        </div>
+                        <div style="color: var(--text-secondary);">
+                            ${status.fixtures.passing}/${status.fixtures.total} fixtures
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Captures (24h)</span>
+                        </div>
+                        <div style="font-size: 2rem;">
+                            ${status.captures_24h.total}
+                        </div>
+                        <div style="color: var(--text-secondary);">
+                            ${status.captures_24h.failures} failures
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Feedback</span>
+                        </div>
+                        <div style="font-size: 2rem;">
+                            ${status.feedback.pending}
+                        </div>
+                        <div style="color: var(--text-secondary);">
+                            ${status.feedback.high_priority} high priority
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Cycles</span>
+                        </div>
+                        <div style="font-size: 2rem;">
+                            ${status.cycles.total}
+                        </div>
+                        <div style="color: var(--text-secondary);">
+                            ${status.cycles.committed} committed
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tabs -->
+                <div class="memory-tabs" style="margin-bottom: 1rem;">
+                    <div class="memory-tab ${parserTab === 'fixtures' ? 'active' : ''}"
+                         onclick="switchParserTab('fixtures')">Fixtures</div>
+                    <div class="memory-tab ${parserTab === 'captures' ? 'active' : ''}"
+                         onclick="switchParserTab('captures')">Captures</div>
+                    <div class="memory-tab ${parserTab === 'feedback' ? 'active' : ''}"
+                         onclick="switchParserTab('feedback')">Feedback</div>
+                    <div class="memory-tab ${parserTab === 'cycles' ? 'active' : ''}"
+                         onclick="switchParserTab('cycles')">Cycles</div>
+                    <div class="memory-tab ${parserTab === 'drift' ? 'active' : ''}"
+                         onclick="switchParserTab('drift')">Drift</div>
+                </div>
+
+                <!-- Tab Content -->
+                <div id="parser-tab-content"></div>
+
+                <!-- Actions -->
+                <div style="margin-top: 1.5rem; display: flex; gap: 0.5rem;">
+                    <button class="btn btn-primary" onclick="runParserRegression()">
+                        Run Regression
+                    </button>
+                    <button class="btn btn-secondary" onclick="markParserReviewed()">
+                        Mark Reviewed
+                    </button>
+                </div>
+            `;
+
+            await loadParserTab(parserTab);
+        }
+
+        async function switchParserTab(tab) {
+            parserTab = tab;
+            document.querySelectorAll('#content .memory-tab').forEach(t => {
+                t.classList.toggle('active', t.textContent.toLowerCase() === tab);
+            });
+            await loadParserTab(tab);
+        }
+
+        async function loadParserTab(tab) {
+            const container = document.getElementById('parser-tab-content');
+            container.innerHTML = '<div class="card"><p style="color: var(--text-secondary);">Loading...</p></div>';
+
+            switch(tab) {
+                case 'fixtures': await renderFixturesTab(container); break;
+                case 'captures': await renderCapturesTab(container); break;
+                case 'feedback': await renderFeedbackTab(container); break;
+                case 'cycles': await renderCyclesTab(container); break;
+                case 'drift': await renderDriftTab(container); break;
+            }
+        }
+
+        async function renderFixturesTab(container) {
+            const data = await api('/parser/fixtures');
+
+            if (data.error) {
+                container.innerHTML = `<div class="card"><p style="color: var(--error);">Error: ${escapeHtml(data.error)}</p></div>`;
+                return;
+            }
+
+            // Category breakdown
+            const categories = Object.entries(data.by_category || {});
+            let categoryHtml = '<p style="color: var(--text-secondary);">No fixtures found</p>';
+
+            if (categories.length > 0) {
+                categoryHtml = `
+                    <div class="grid grid-3">
+                        ${categories.map(([cat, stats]) => {
+                            const rate = stats.total > 0 ? (stats.passed / stats.total * 100).toFixed(0) : 0;
+                            const rateClass = rate >= 90 ? 'success' : rate >= 70 ? 'warning' : 'error';
+                            return `
+                                <div class="card">
+                                    <div class="card-header">
+                                        <span class="card-title">${escapeHtml(cat)}</span>
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                        <div style="flex: 1; height: 8px; background: var(--border); border-radius: 4px;">
+                                            <div style="width: ${rate}%; height: 100%; background: var(--${rateClass}); border-radius: 4px;"></div>
+                                        </div>
+                                        <span style="color: var(--${rateClass}); font-weight: 600;">${rate}%</span>
+                                    </div>
+                                    <div style="color: var(--text-secondary); font-size: 0.85rem; margin-top: 0.5rem;">
+                                        ${stats.passed}/${stats.total} passing
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            }
+
+            // Chronic failures
+            let failuresHtml = '';
+            if (data.chronic_failures && data.chronic_failures.length > 0) {
+                failuresHtml = `
+                    <div class="card" style="margin-top: 1rem;">
+                        <div class="card-header">
+                            <span class="card-title">⚠️ Chronic Failures (3+ fails)</span>
+                        </div>
+                        <div style="max-height: 200px; overflow-y: auto;">
+                            ${data.chronic_failures.map(f => `
+                                <div style="padding: 0.5rem; border-bottom: 1px solid var(--border);">
+                                    <div style="display: flex; justify-content: space-between;">
+                                        <span style="font-family: monospace; font-size: 0.85rem;">${escapeHtml(f.id.substring(0, 8))}</span>
+                                        <span style="color: var(--error);">${f.fail_count} fails</span>
+                                    </div>
+                                    <div style="color: var(--text-secondary); font-size: 0.85rem;">${escapeHtml(f.category)}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = categoryHtml + failuresHtml;
+        }
+
+        async function renderCapturesTab(container) {
+            const data = await api('/parser/captures');
+
+            if (data.error) {
+                container.innerHTML = `<div class="card"><p style="color: var(--error);">Error: ${escapeHtml(data.error)}</p></div>`;
+                return;
+            }
+
+            // Quality signal counts
+            const stats = data.stats || {};
+            const signalHtml = `
+                <div class="grid grid-4" style="margin-bottom: 1rem;">
+                    <div class="card" style="text-align: center;">
+                        <div style="font-size: 1.5rem;">${stats.empty || 0}</div>
+                        <div style="color: var(--text-secondary); font-size: 0.85rem;">Empty</div>
+                    </div>
+                    <div class="card" style="text-align: center;">
+                        <div style="font-size: 1.5rem;">${stats.ansi || 0}</div>
+                        <div style="color: var(--text-secondary); font-size: 0.85rem;">ANSI</div>
+                    </div>
+                    <div class="card" style="text-align: center;">
+                        <div style="font-size: 1.5rem;">${stats.echo || 0}</div>
+                        <div style="color: var(--text-secondary); font-size: 0.85rem;">Echo</div>
+                    </div>
+                    <div class="card" style="text-align: center;">
+                        <div style="font-size: 1.5rem;">${stats.reacted || 0}</div>
+                        <div style="color: var(--text-secondary); font-size: 0.85rem;">Reacted</div>
+                    </div>
+                </div>
+            `;
+
+            // Captures table
+            let capturesHtml = '<p style="color: var(--text-secondary);">No captures in last 24h</p>';
+            if (data.captures && data.captures.length > 0) {
+                capturesHtml = `
+                    <div class="card" style="max-height: 400px; overflow-y: auto;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--border);">
+                                    <th style="text-align: left; padding: 0.5rem;">Time</th>
+                                    <th style="text-align: left; padding: 0.5rem;">Channel</th>
+                                    <th style="text-align: left; padding: 0.5rem;">Skill</th>
+                                    <th style="text-align: center; padding: 0.5rem;">Flags</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${data.captures.map(c => {
+                                    const time = new Date(c.captured_at).toLocaleTimeString();
+                                    const flags = [];
+                                    if (c.was_empty) flags.push('⬜');
+                                    if (c.had_ansi) flags.push('🔴');
+                                    if (c.had_echo) flags.push('🔄');
+                                    if (c.user_reacted) flags.push(c.user_reacted);
+                                    return `
+                                        <tr style="border-bottom: 1px solid var(--border);">
+                                            <td style="padding: 0.5rem; font-size: 0.85rem;">${time}</td>
+                                            <td style="padding: 0.5rem; font-size: 0.85rem;">${escapeHtml(c.channel_name || '-')}</td>
+                                            <td style="padding: 0.5rem; font-size: 0.85rem;">${escapeHtml(c.skill_name || '-')}</td>
+                                            <td style="padding: 0.5rem; text-align: center;">${flags.join(' ') || '-'}</td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = signalHtml + capturesHtml;
+        }
+
+        async function renderFeedbackTab(container) {
+            const data = await api('/parser/feedback');
+
+            if (data.error) {
+                container.innerHTML = `<div class="card"><p style="color: var(--error);">Error: ${escapeHtml(data.error)}</p></div>`;
+                return;
+            }
+
+            // Summary
+            const summary = data.summary || {};
+            const summaryHtml = `
+                <div class="card" style="margin-bottom: 1rem;">
+                    <div style="display: flex; gap: 2rem;">
+                        <div>
+                            <span style="font-size: 1.5rem; font-weight: 600;">${summary.total || 0}</span>
+                            <span style="color: var(--text-secondary);"> pending</span>
+                        </div>
+                        <div>
+                            <span style="font-size: 1.5rem; font-weight: 600; color: var(--error);">${summary.high_priority || 0}</span>
+                            <span style="color: var(--text-secondary);"> high priority</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Feedback list
+            let feedbackHtml = '<p style="color: var(--text-secondary);">No pending feedback</p>';
+            if (data.feedback && data.feedback.length > 0) {
+                feedbackHtml = `
+                    <div class="card" style="max-height: 400px; overflow-y: auto;">
+                        ${data.feedback.map(f => {
+                            const time = new Date(f.created_at).toLocaleString();
+                            const priorityColor = f.priority === 'high' ? 'error' : f.priority === 'normal' ? 'warning' : 'text-secondary';
+                            return `
+                                <div style="padding: 0.75rem; border-bottom: 1px solid var(--border);">
+                                    <div style="display: flex; justify-content: space-between; align-items: start;">
+                                        <div>
+                                            <span style="font-weight: 600;">${escapeHtml(f.category)}</span>
+                                            ${f.skill_name ? `<span style="color: var(--text-secondary);"> • ${escapeHtml(f.skill_name)}</span>` : ''}
+                                        </div>
+                                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                            <span style="color: var(--${priorityColor}); font-size: 0.75rem;">${escapeHtml(f.priority)}</span>
+                                            <button class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;"
+                                                    onclick="resolveFeedback('${f.id}')">Resolve</button>
+                                        </div>
+                                    </div>
+                                    ${f.description ? `<div style="margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.85rem;">${escapeHtml(f.description)}</div>` : ''}
+                                    <div style="margin-top: 0.25rem; color: var(--text-secondary); font-size: 0.75rem;">
+                                        ${escapeHtml(f.input_method)} • ${time}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            }
+
+            container.innerHTML = summaryHtml + feedbackHtml;
+        }
+
+        async function renderCyclesTab(container) {
+            const data = await api('/parser/cycles');
+
+            if (data.error) {
+                container.innerHTML = `<div class="card"><p style="color: var(--error);">Error: ${escapeHtml(data.error)}</p></div>`;
+                return;
+            }
+
+            // Review status
+            const review = data.review_status || {};
+            const reviewClass = review.review_required ? 'error' : 'success';
+            const reviewHtml = `
+                <div class="card" style="margin-bottom: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-size: 1.5rem; font-weight: 600;">${review.cycles_since_review || 0}</span>
+                            <span style="color: var(--text-secondary);"> cycles since last review</span>
+                        </div>
+                        <div style="color: var(--${reviewClass});">
+                            ${review.review_required ? '⚠️ Review Required' : '✅ Up to date'}
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Cycles table
+            let cyclesHtml = '<p style="color: var(--text-secondary);">No improvement cycles yet</p>';
+            if (data.cycles && data.cycles.length > 0) {
+                cyclesHtml = `
+                    <div class="card" style="max-height: 400px; overflow-y: auto;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--border);">
+                                    <th style="text-align: left; padding: 0.5rem;">Date</th>
+                                    <th style="text-align: left; padding: 0.5rem;">Target</th>
+                                    <th style="text-align: center; padding: 0.5rem;">Score</th>
+                                    <th style="text-align: center; padding: 0.5rem;">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${data.cycles.map(c => {
+                                    const date = new Date(c.started_at).toLocaleDateString();
+                                    const scoreBefore = c.score_before ? (c.score_before * 100).toFixed(1) : '-';
+                                    const scoreAfter = c.score_after ? (c.score_after * 100).toFixed(1) : '-';
+                                    const scoreChange = c.score_before && c.score_after
+                                        ? ((c.score_after - c.score_before) * 100).toFixed(1)
+                                        : null;
+                                    const changeClass = scoreChange > 0 ? 'success' : scoreChange < 0 ? 'error' : 'text-secondary';
+                                    return `
+                                        <tr style="border-bottom: 1px solid var(--border);">
+                                            <td style="padding: 0.5rem; font-size: 0.85rem;">${date}</td>
+                                            <td style="padding: 0.5rem; font-size: 0.85rem;">${escapeHtml(c.target_stage || '-')}</td>
+                                            <td style="padding: 0.5rem; text-align: center; font-size: 0.85rem;">
+                                                ${scoreBefore}%
+                                                ${scoreChange !== null ? `<span style="color: var(--${changeClass});">(${scoreChange > 0 ? '+' : ''}${scoreChange})</span>` : ''}
+                                            </td>
+                                            <td style="padding: 0.5rem; text-align: center;">
+                                                ${c.committed ? '✅' : '❌'}
+                                                ${c.human_reviewed ? '👁️' : ''}
+                                            </td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = reviewHtml + cyclesHtml;
+        }
+
+        async function renderDriftTab(container) {
+            const data = await api('/parser/drift');
+
+            if (data.error) {
+                container.innerHTML = `<div class="card"><p style="color: var(--error);">Error: ${escapeHtml(data.error)}</p></div>`;
+                return;
+            }
+
+            // Skill health grid
+            let healthHtml = '<p style="color: var(--text-secondary);">No skill health data</p>';
+            if (data.skill_health && data.skill_health.length > 0) {
+                healthHtml = `
+                    <div class="grid grid-3" style="margin-bottom: 1rem;">
+                        ${data.skill_health.map(s => {
+                            const score = s.avg_score ? (s.avg_score * 100).toFixed(0) : '-';
+                            const statusClass = s.status === 'healthy' ? 'success' : s.status === 'warning' ? 'warning' : 'error';
+                            return `
+                                <div class="card">
+                                    <div class="card-header">
+                                        <span class="card-title">${escapeHtml(s.display_name || s.skill_name)}</span>
+                                    </div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <span style="font-size: 1.5rem; color: var(--${statusClass});">${score}%</span>
+                                        <span style="color: var(--text-secondary); font-size: 0.85rem;">${s.drift_count || 0} drifts</span>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            }
+
+            // Drift alerts
+            let alertsHtml = '';
+            if (data.alerts && data.alerts.length > 0) {
+                alertsHtml = `
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">⚠️ Recent Drift Alerts</span>
+                        </div>
+                        <div style="max-height: 300px; overflow-y: auto;">
+                            ${data.alerts.map(a => {
+                                const time = new Date(a.captured_at).toLocaleString();
+                                const score = a.format_score ? (a.format_score * 100).toFixed(0) : '-';
+                                return `
+                                    <div style="padding: 0.75rem; border-bottom: 1px solid var(--border);">
+                                        <div style="display: flex; justify-content: space-between;">
+                                            <span style="font-weight: 600;">${escapeHtml(a.skill_name)}</span>
+                                            <span style="color: var(--error);">${score}%</span>
+                                        </div>
+                                        ${a.drift_details ? `<div style="margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.85rem;">${escapeHtml(a.drift_details.join(', '))}</div>` : ''}
+                                        <div style="margin-top: 0.25rem; color: var(--text-secondary); font-size: 0.75rem;">${time}</div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                `;
+            } else {
+                alertsHtml = '<div class="card"><p style="color: var(--success);">✅ No drift alerts in last 24h</p></div>';
+            }
+
+            container.innerHTML = healthHtml + alertsHtml;
+        }
+
+        async function runParserRegression() {
+            showToast('Running regression tests...');
+            const result = await api('/parser/run-regression', { method: 'POST' });
+            if (result.success) {
+                showToast('Regression complete!');
+                await renderParser();
+            } else {
+                showToast('Regression failed: ' + (result.error || 'Unknown error'));
+            }
+        }
+
+        async function markParserReviewed() {
+            const result = await api('/parser/mark-reviewed', { method: 'POST' });
+            if (result.success) {
+                showToast('Marked as reviewed');
+                await loadParserTab('cycles');
+            } else {
+                showToast('Error: ' + (result.error || 'Unknown error'));
+            }
+        }
+
+        async function resolveFeedback(feedbackId) {
+            const result = await api(`/parser/feedback/${feedbackId}/resolve`, { method: 'POST' });
+            if (result.success) {
+                showToast('Feedback resolved');
+                await loadParserTab('feedback');
+            } else {
+                showToast('Error: ' + (result.error || 'Unknown error'));
+            }
+        }
+
+        // ====================================================================
+        // Knowledge Search Functions
+        // ====================================================================
+
+        let searchTab = 'memory';
+
+        async function renderSearch() {
+            const content = document.getElementById('content');
+
+            content.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h2>🔍 Knowledge Search</h2>
+                </div>
+
+                <p style="margin-bottom: 1rem; color: var(--text-secondary);">
+                    Search Peter's knowledge systems using the exact same methods Peter uses.
+                </p>
+
+                <!-- Tabs -->
+                <div class="memory-tabs" style="margin-bottom: 1rem;">
+                    <div class="memory-tab ${searchTab === 'memory' ? 'active' : ''}"
+                         onclick="switchSearchTab('memory')">🧠 Peterbot Memory</div>
+                    <div class="memory-tab ${searchTab === 'brain' ? 'active' : ''}"
+                         onclick="switchSearchTab('brain')">📚 Second Brain</div>
+                </div>
+
+                <!-- Search Input -->
+                <div class="card" style="margin-bottom: 1rem;">
+                    <div style="display: flex; gap: 0.5rem;">
+                        <input type="text" id="search-query"
+                               style="flex: 1; padding: 0.75rem; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 1rem;"
+                               placeholder="Enter your search query..."
+                               onkeypress="if(event.key==='Enter') runKnowledgeSearch()">
+                        <button class="btn btn-primary" onclick="runKnowledgeSearch()">Search</button>
+                    </div>
+                </div>
+
+                <!-- Results -->
+                <div id="search-results"></div>
+
+                <!-- Stats (for Second Brain tab) -->
+                <div id="search-stats" style="margin-top: 1rem;"></div>
+            `;
+
+            // Load stats for Second Brain if that tab is active
+            if (searchTab === 'brain') {
+                await loadSecondBrainStats();
+            }
+        }
+
+        async function switchSearchTab(tab) {
+            searchTab = tab;
+            document.querySelectorAll('#content .memory-tab').forEach(t => {
+                const isMemory = t.textContent.includes('Memory');
+                const isBrain = t.textContent.includes('Brain');
+                t.classList.toggle('active', (tab === 'memory' && isMemory) || (tab === 'brain' && isBrain));
+            });
+
+            // Clear results when switching tabs
+            document.getElementById('search-results').innerHTML = '';
+            document.getElementById('search-stats').innerHTML = '';
+
+            // Load stats for Second Brain
+            if (tab === 'brain') {
+                await loadSecondBrainStats();
+            }
+        }
+
+        async function runKnowledgeSearch() {
+            const query = document.getElementById('search-query').value.trim();
+            if (!query) {
+                showToast('Please enter a search query');
+                return;
+            }
+
+            const resultsDiv = document.getElementById('search-results');
+            resultsDiv.innerHTML = '<div class="card"><p style="color: var(--text-secondary);">Searching...</p></div>';
+
+            if (searchTab === 'memory') {
+                await searchMemory(query, resultsDiv);
+            } else {
+                await searchSecondBrain(query, resultsDiv);
+            }
+        }
+
+        async function searchMemory(query, resultsDiv) {
+            const data = await api(`/search/memory?query=${encodeURIComponent(query)}`);
+
+            if (!data.success) {
+                resultsDiv.innerHTML = `
+                    <div class="card">
+                        <p style="color: var(--error);">Error: ${escapeHtml(data.error || 'Unknown error')}</p>
+                        ${data.endpoint ? `<p style="color: var(--text-secondary); font-size: 0.85rem;">Endpoint: ${escapeHtml(data.endpoint)}</p>` : ''}
+                    </div>
+                `;
+                return;
+            }
+
+            resultsDiv.innerHTML = `
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">🧠 Memory Context Result</span>
+                        <span style="color: var(--text-secondary); font-size: 0.85rem;">
+                            ${data.length} chars | Project: ${escapeHtml(data.project)}
+                        </span>
+                    </div>
+                    <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-secondary);">
+                        Endpoint: ${escapeHtml(data.endpoint)}
+                    </div>
+                    <div class="code-viewer" style="margin-top: 1rem;">
+                        <div class="code-header">
+                            <span>Context Injected to Peter</span>
+                        </div>
+                        <div class="code-content" style="max-height: 500px; overflow-y: auto;">
+                            <pre style="white-space: pre-wrap;">${escapeHtml(data.context || '(empty)')}</pre>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function searchSecondBrain(query, resultsDiv) {
+            const data = await api(`/search/second-brain?query=${encodeURIComponent(query)}&limit=10`);
+
+            if (!data.success) {
+                resultsDiv.innerHTML = `
+                    <div class="card">
+                        <p style="color: var(--error);">Error: ${escapeHtml(data.error || 'Unknown error')}</p>
+                        ${data.traceback ? `<pre style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.5rem; white-space: pre-wrap;">${escapeHtml(data.traceback)}</pre>` : ''}
+                    </div>
+                `;
+                return;
+            }
+
+            // Individual items
+            let itemsHtml = '';
+            if (data.items && data.items.length > 0) {
+                itemsHtml = data.items.map((item, i) => {
+                    const similarity = item.similarity ? (item.similarity * 100).toFixed(1) : '?';
+                    const simClass = item.similarity >= 0.85 ? 'success' : item.similarity >= 0.75 ? 'warning' : 'text-secondary';
+                    return `
+                        <div class="card" style="margin-bottom: 0.5rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: start;">
+                                <div>
+                                    <span style="font-weight: 600;">${i + 1}. ${escapeHtml(item.title || 'Untitled')}</span>
+                                    <span style="color: var(--${simClass}); font-size: 0.85rem; margin-left: 0.5rem;">
+                                        ${similarity}% match
+                                    </span>
+                                </div>
+                                <span style="color: var(--text-secondary); font-size: 0.75rem;">
+                                    ${escapeHtml(item.content_type || '')} / ${escapeHtml(item.capture_type || '')}
+                                </span>
+                            </div>
+                            ${item.summary ? `<p style="margin-top: 0.5rem; color: var(--text-secondary);">${escapeHtml(item.summary.substring(0, 300))}${item.summary.length > 300 ? '...' : ''}</p>` : ''}
+                            ${item.topics && item.topics.length > 0 ? `<div style="margin-top: 0.5rem;"><span style="color: var(--text-secondary); font-size: 0.75rem;">Tags: ${item.topics.slice(0, 5).map(t => escapeHtml(t)).join(', ')}</span></div>` : ''}
+                            ${item.excerpts && item.excerpts.length > 0 ? `<blockquote style="margin-top: 0.5rem; padding-left: 0.75rem; border-left: 2px solid var(--border); color: var(--text-secondary); font-size: 0.85rem;">${escapeHtml(item.excerpts[0].substring(0, 200))}...</blockquote>` : ''}
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                itemsHtml = '<div class="card"><p style="color: var(--text-secondary);">No results found</p></div>';
+            }
+
+            resultsDiv.innerHTML = `
+                <div style="margin-bottom: 1rem;">
+                    <span style="font-weight: 600;">${data.count} results found</span>
+                </div>
+
+                ${itemsHtml}
+
+                ${data.formatted_context ? `
+                    <div class="card" style="margin-top: 1rem;">
+                        <div class="card-header">
+                            <span class="card-title">📝 Formatted Context (What Peter Sees)</span>
+                        </div>
+                        <div class="code-viewer" style="margin-top: 0.5rem;">
+                            <div class="code-content" style="max-height: 400px; overflow-y: auto;">
+                                <pre style="white-space: pre-wrap;">${escapeHtml(data.formatted_context)}</pre>
+                            </div>
+                        </div>
+                    </div>
+                ` : ''}
+            `;
+        }
+
+        async function loadSecondBrainStats() {
+            const statsDiv = document.getElementById('search-stats');
+            statsDiv.innerHTML = '<div class="card"><p style="color: var(--text-secondary);">Loading stats...</p></div>';
+
+            const data = await api('/search/second-brain/stats');
+
+            if (!data.success) {
+                statsDiv.innerHTML = `<div class="card"><p style="color: var(--error);">Error loading stats: ${escapeHtml(data.error || 'Unknown')}</p></div>`;
+                return;
+            }
+
+            // Topics cloud
+            let topicsHtml = '';
+            if (data.topics && data.topics.length > 0) {
+                topicsHtml = data.topics.map(t => `
+                    <span style="display: inline-block; padding: 0.25rem 0.5rem; margin: 0.25rem; background: var(--bg-tertiary); border-radius: 4px; font-size: 0.85rem; cursor: pointer;"
+                          onclick="document.getElementById('search-query').value='${escapeHtml(t.topic)}'; runKnowledgeSearch();">
+                        ${escapeHtml(t.topic)} <span style="color: var(--text-secondary);">(${t.count})</span>
+                    </span>
+                `).join('');
+            }
+
+            // Recent items
+            let recentHtml = '';
+            if (data.recent_items && data.recent_items.length > 0) {
+                recentHtml = data.recent_items.map(item => `
+                    <div style="padding: 0.5rem 0; border-bottom: 1px solid var(--border);">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="font-weight: 500;">${escapeHtml(item.title || 'Untitled')}</span>
+                            <span style="color: var(--text-secondary); font-size: 0.75rem;">${escapeHtml(item.capture_type || '')}</span>
+                        </div>
+                        ${item.topics && item.topics.length > 0 ? `<div style="color: var(--text-secondary); font-size: 0.75rem;">${item.topics.slice(0, 3).join(', ')}</div>` : ''}
+                    </div>
+                `).join('');
+            }
+
+            statsDiv.innerHTML = `
+                <div class="grid grid-2">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">📊 Stats</span>
+                        </div>
+                        <div style="font-size: 1.5rem; margin: 0.5rem 0;">${data.total_items || 0}</div>
+                        <div style="color: var(--text-secondary);">Knowledge Items</div>
+                        <div style="margin-top: 1rem;">
+                            <span style="font-size: 1.25rem;">${data.total_connections || 0}</span>
+                            <span style="color: var(--text-secondary);"> connections</span>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">🏷️ Top Topics (click to search)</span>
+                        </div>
+                        <div style="max-height: 150px; overflow-y: auto;">
+                            ${topicsHtml || '<p style="color: var(--text-secondary);">No topics found</p>'}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <span class="card-title">🕐 Recent Items</span>
+                    </div>
+                    <div style="max-height: 250px; overflow-y: auto;">
+                        ${recentHtml || '<p style="color: var(--text-secondary);">No recent items</p>'}
+                    </div>
+                </div>
+            `;
+        }
+
         async function editFile(type, name) {
             const content = document.getElementById('content');
             content.innerHTML = '<h2>Loading file for editing...</h2>';
@@ -2847,6 +5391,791 @@ DASHBOARD_HTML = """
             }
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        // TASK BOARD
+        // ════════════════════════════════════════════════════════════════════
+
+        let taskActiveList = 'peter_queue';
+        let taskData = { tasks: [], categories: [] };
+        let taskDraggedId = null;
+        let taskDragOverCol = null;
+        let taskHeartbeatTarget = null;
+        let taskSearchQuery = '';
+
+        const TASK_PRIORITY = {
+            critical: { label: 'Critical', color: '#dc2626', bg: '#fef2f2' },
+            high: { label: 'High', color: '#ea580c', bg: '#fff7ed' },
+            medium: { label: 'Medium', color: '#d97706', bg: '#fffbeb' },
+            low: { label: 'Low', color: '#2563eb', bg: '#eff6ff' },
+            someday: { label: 'Someday', color: '#9ca3af', bg: '#f9fafb' }
+        };
+
+        const TASK_CATEGORY = {
+            'peterbot': { label: 'Peterbot', color: '#6366f1', bg: '#eef2ff' },
+            'hadley-bricks': { label: 'Hadley Bricks', color: '#b45309', bg: '#fef3c7' },
+            'ebay': { label: 'eBay', color: '#dc2626', bg: '#fef2f2' },
+            'bricklink': { label: 'BrickLink', color: '#2563eb', bg: '#eff6ff' },
+            'vinted': { label: 'Vinted', color: '#0d9488', bg: '#f0fdfa' },
+            'running': { label: 'Running', color: '#16a34a', bg: '#f0fdf4' },
+            'finance': { label: 'Finance', color: '#ca8a04', bg: '#fefce8' },
+            'personal': { label: 'Personal', color: '#7c3aed', bg: '#f5f3ff' },
+            'infrastructure': { label: 'Infrastructure', color: '#6b7280', bg: '#f9fafb' },
+            'familyfuel': { label: 'FamilyFuel', color: '#10b981', bg: '#ecfdf5' },
+            'amazon': { label: 'Amazon', color: '#f97316', bg: '#fff7ed' },
+            'home': { label: 'Home', color: '#78716c', bg: '#f5f5f4' }
+        };
+
+        const TASK_LISTS = [
+            { id: 'personal_todo', label: 'My Todos', icon: '📋', accent: '#2563eb' },
+            { id: 'peter_queue', label: 'Peter Queue', icon: '🤖', accent: '#d97706' },
+            { id: 'idea', label: 'Ideas', icon: '💡', accent: '#7c3aed' },
+            { id: 'research', label: 'Research', icon: '🔬', accent: '#059669' }
+        ];
+
+        const TASK_COLUMNS = {
+            personal_todo: [
+                { id: 'inbox', label: 'Inbox', color: '#94a3b8', bg: '#f8fafc' },
+                { id: 'scheduled', label: 'Scheduled', color: '#2563eb', bg: '#f0f6ff' },
+                { id: 'in_progress', label: 'In Progress', color: '#d97706', bg: '#fefbf0' },
+                { id: 'done', label: 'Done', color: '#16a34a', bg: '#f0fdf2' }
+            ],
+            peter_queue: [
+                { id: 'queued', label: 'Queued', color: '#64748b', bg: '#f8fafc' },
+                { id: 'heartbeat_scheduled', label: 'Heartbeat Scheduled', color: '#d97706', bg: '#fefbf0', pulse: true },
+                { id: 'in_heartbeat', label: 'In Heartbeat', color: '#ea580c', bg: '#fff5ed', pulse: true },
+                { id: 'in_progress', label: 'In Progress', color: '#2563eb', bg: '#f0f6ff' },
+                { id: 'review', label: 'Review', color: '#7c3aed', bg: '#f6f3ff' },
+                { id: 'done', label: 'Done', color: '#16a34a', bg: '#f0fdf2' }
+            ],
+            idea: [
+                { id: 'inbox', label: 'Captured', color: '#94a3b8', bg: '#f8fafc' },
+                { id: 'scheduled', label: 'Refined', color: '#2563eb', bg: '#f0f6ff' },
+                { id: 'review', label: 'Approved', color: '#7c3aed', bg: '#f6f3ff' },
+                { id: 'done', label: 'Promoted', color: '#16a34a', bg: '#f0fdf2' }
+            ],
+            research: [
+                { id: 'queued', label: 'Queued', color: '#64748b', bg: '#f8fafc' },
+                { id: 'in_progress', label: 'Researching', color: '#d97706', bg: '#fefbf0' },
+                { id: 'findings_ready', label: 'Findings Ready', color: '#7c3aed', bg: '#f6f3ff' },
+                { id: 'done', label: 'Actioned', color: '#16a34a', bg: '#f0fdf2' }
+            ]
+        };
+
+        const TASK_EFFORT_LABELS = {
+            trivial: 'Trivial', '30min': '30 min', '2hr': '2 hr',
+            half_day: 'Half day', multi_day: 'Multi-day'
+        };
+
+        const HADLEY_API = 'http://localhost:8100';
+
+        function formatTaskDate(dateStr) {
+            if (!dateStr) return null;
+            const d = new Date(dateStr);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const diff = Math.round((d - today) / 86400000);
+            if (diff === 0) return 'Today';
+            if (diff === 1) return 'Tomorrow';
+            if (diff === -1) return 'Yesterday';
+            if (diff < -1) return Math.abs(diff) + 'd overdue';
+            if (diff <= 7) return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' });
+            return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+        }
+
+        function isTaskOverdue(dateStr) {
+            if (!dateStr) return false;
+            const d = new Date(dateStr);
+            const today = new Date();
+            today.setHours(23, 59, 59, 999);
+            return d < today;
+        }
+
+        function getUpcomingDays() {
+            const days = [];
+            for (let i = 0; i < 10; i++) {
+                const d = new Date();
+                d.setDate(d.getDate() + i + 1);
+                days.push({
+                    date: d,
+                    label: d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }),
+                    iso: d.toISOString().split('T')[0]
+                });
+            }
+            return days;
+        }
+
+        async function loadTasks() {
+            try {
+                const [tasksResp, catsResp, countsResp] = await Promise.all([
+                    fetch(HADLEY_API + '/ptasks/list/' + taskActiveList + '?include_done=true'),
+                    fetch(HADLEY_API + '/ptasks/categories'),
+                    fetch(HADLEY_API + '/ptasks/counts')
+                ]);
+
+                const tasksData = await tasksResp.json();
+                const catsData = await catsResp.json();
+                const countsData = await countsResp.json();
+
+                taskData.tasks = tasksData.tasks || [];
+                taskData.categories = catsData.categories || [];
+                taskData.counts = countsData.counts || {};
+            } catch (e) {
+                console.error('Failed to load tasks:', e);
+                taskData.tasks = [];
+                taskData.counts = {};
+            }
+        }
+
+        function renderTaskCard(task) {
+            const p = TASK_PRIORITY[task.priority] || TASK_PRIORITY.medium;
+            const isQueue = taskActiveList === 'peter_queue';
+            const scheduledLabel = formatTaskDate(task.scheduled_date);
+            const dueDateLabel = formatTaskDate(task.due_date);
+            const overdue = isTaskOverdue(task.due_date);
+            const hbLabel = task.heartbeat_scheduled_for ? formatTaskDate(task.heartbeat_scheduled_for) : null;
+
+            let categoriesHtml = '';
+            if (task.categories && task.categories.length > 0) {
+                categoriesHtml = '<div class="task-categories">';
+                task.categories.forEach(slug => {
+                    const cat = TASK_CATEGORY[slug];
+                    if (cat) {
+                        categoriesHtml += '<span class="category-badge" style="color: ' + cat.color + '; background: ' + cat.bg + '; border: 1px solid ' + cat.color + '22;">' + cat.label + '</span>';
+                    }
+                });
+                categoriesHtml += '</div>';
+            }
+
+            let footerHtml = '<div class="task-card-footer">';
+            if (task.attachments > 0) {
+                footerHtml += '<span>📎 ' + task.attachments + '</span>';
+            }
+            if (task.comments > 0) {
+                footerHtml += '<span>💬 ' + task.comments + '</span>';
+            }
+            if (scheduledLabel) {
+                footerHtml += '<span class="scheduled-date">🗓️ ' + scheduledLabel + '</span>';
+            }
+            if (dueDateLabel) {
+                footerHtml += '<span class="task-date' + (overdue ? ' overdue' : '') + '">⏰ ' + dueDateLabel + '</span>';
+            }
+            if (hbLabel) {
+                footerHtml += '<span class="heartbeat-date">⚡ ' + hbLabel + '</span>';
+            }
+            footerHtml += '<span class="spacer"></span>';
+            if (task.created_by === 'peter') {
+                footerHtml += '<span class="by-peter">by Peter</span>';
+            }
+            footerHtml += '</div>';
+
+            let actionsHtml = '<div class="task-card-actions">';
+            if (isQueue && task.status === 'queued') {
+                actionsHtml += '<button class="task-action-btn heartbeat" onclick="event.stopPropagation(); toggleTaskHeartbeat(\\'' + task.id + '\\')">⚡ Add to Heartbeat</button>';
+            }
+            if (task.status !== 'done') {
+                actionsHtml += '<button class="task-action-btn" onclick="event.stopPropagation(); markTaskDone(\\'' + task.id + '\\')">✓ Done</button>';
+            }
+            actionsHtml += '</div>';
+
+            return '<div class="task-card" data-task-id="' + task.id + '" draggable="true" ' +
+                   'onclick="showEditTaskModal(\\'' + task.id + '\\')" ' +
+                   'ondragstart="onTaskDragStart(event, \\'' + task.id + '\\')" ' +
+                   'ondragend="onTaskDragEnd(event)" ' +
+                   'style="border-left: 3.5px solid ' + p.color + '; cursor: pointer;">' +
+                   '<div class="task-card-title">' + (task.is_pinned ? '⭐ ' : '') + escapeHtml(task.title) + '</div>' +
+                   '<div class="task-card-meta">' +
+                   '<span class="priority-pill ' + task.priority + '"><span class="dot"></span>' + p.label + '</span>' +
+                   (task.estimated_effort ? '<span class="effort-badge">🕐 ' + (TASK_EFFORT_LABELS[task.estimated_effort] || task.estimated_effort) + '</span>' : '') +
+                   '</div>' +
+                   categoriesHtml +
+                   footerHtml +
+                   actionsHtml +
+                   (taskHeartbeatTarget === task.id ? renderHeartbeatDropdown(task.id) : '') +
+                   '</div>';
+        }
+
+        function renderHeartbeatDropdown(taskId) {
+            const days = getUpcomingDays();
+            const scheduledCounts = {};
+            taskData.tasks.filter(t => t.heartbeat_scheduled_for).forEach(t => {
+                const d = t.heartbeat_scheduled_for.split('T')[0];
+                scheduledCounts[d] = (scheduledCounts[d] || 0) + 1;
+            });
+
+            let datesHtml = '';
+            days.slice(0, 10).forEach(d => {
+                const count = scheduledCounts[d.iso] || 0;
+                let dotsHtml = '';
+                for (let i = 0; i < Math.min(count, 4); i++) {
+                    dotsHtml += '<span class="heartbeat-date-dot"></span>';
+                }
+                datesHtml += '<button class="heartbeat-date-btn" onclick="event.stopPropagation(); scheduleTaskHeartbeat(\\'' + taskId + '\\', \\'' + d.iso + '\\')">' +
+                             '<span class="day">' + d.date.toLocaleDateString('en-GB', { weekday: 'short' }) + '</span>' +
+                             '<span class="num">' + d.date.getDate() + '</span>' +
+                             '<div class="heartbeat-date-dots">' + dotsHtml + '</div></button>';
+            });
+
+            return '<div class="heartbeat-dropdown" onclick="event.stopPropagation();">' +
+                   '<div class="heartbeat-dropdown-header">' +
+                   '<div class="heartbeat-dropdown-title">⚡ Schedule for Heartbeat</div></div>' +
+                   '<div class="heartbeat-dropdown-actions">' +
+                   '<button class="heartbeat-action primary" onclick="scheduleTaskHeartbeat(\\'' + taskId + '\\', null)">' +
+                   '<span class="heartbeat-action-icon">⚡</span>' +
+                   '<div class="heartbeat-action-label">Add to Current Heartbeat<div class="heartbeat-action-sublabel">Start working on this now</div></div></button>' +
+                   '<button class="heartbeat-action" onclick="scheduleTaskHeartbeat(\\'' + taskId + '\\', \\'' + days[0].iso + '\\')">' +
+                   '<span class="heartbeat-action-icon" style="background: #f1f5f9;">▶</span>' +
+                   '<div class="heartbeat-action-label">Next Heartbeat — ' + days[0].label + '<div class="heartbeat-action-sublabel">Queue for the next cycle</div></div></button>' +
+                   '</div>' +
+                   '<div class="heartbeat-dates-label">Pick a day</div>' +
+                   '<div class="heartbeat-dates-grid">' + datesHtml + '</div></div>';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function renderTasks() {
+            loadTasks().then(() => {
+                const columns = TASK_COLUMNS[taskActiveList] || [];
+                const filteredTasks = taskData.tasks.filter(t => {
+                    if (taskSearchQuery && !t.title.toLowerCase().includes(taskSearchQuery.toLowerCase())) return false;
+                    return true;
+                });
+
+                const getListCount = (listId) => {
+                    return taskData.counts[listId] || 0;
+                };
+
+                let tabsHtml = '';
+                TASK_LISTS.forEach(l => {
+                    const active = taskActiveList === l.id;
+                    tabsHtml += '<button class="task-tab' + (active ? ' active' : '') + '" data-list="' + l.id + '" onclick="switchTaskList(\\'' + l.id + '\\')">' +
+                               '<span class="task-tab-icon">' + l.icon + '</span>' +
+                               l.label +
+                               '<span class="task-tab-count">' + getListCount(l.id) + '</span></button>';
+                });
+
+                let columnsHtml = '';
+                columns.forEach(col => {
+                    const colTasks = filteredTasks.filter(t => t.status === col.id).sort((a, b) => {
+                        const pOrder = { critical: 0, high: 1, medium: 2, low: 3, someday: 4 };
+                        return (pOrder[a.priority] || 2) - (pOrder[b.priority] || 2);
+                    });
+
+                    let cardsHtml = '';
+                    colTasks.forEach(task => {
+                        cardsHtml += renderTaskCard(task);
+                    });
+
+                    if (colTasks.length === 0) {
+                        cardsHtml = '<div class="task-column-empty">No tasks</div>';
+                    }
+
+                    columnsHtml += '<div class="task-column" data-col="' + col.id + '" style="background: ' + col.bg + ';" ' +
+                                  'ondragover="onTaskDragOver(event, \\'' + col.id + '\\')" ' +
+                                  'ondrop="onTaskDrop(event, \\'' + col.id + '\\')">' +
+                                  '<div class="task-column-header">' +
+                                  '<div class="task-column-dot' + (col.pulse ? ' pulse' : '') + '" style="background: ' + col.color + ';"></div>' +
+                                  '<span class="task-column-label">' + col.label + '</span>' +
+                                  '<span class="task-column-count" style="color: ' + col.color + '; background: ' + col.color + '18;">' + colTasks.length + '</span>' +
+                                  '</div>' +
+                                  '<div class="task-column-cards">' + cardsHtml + '</div></div>';
+                });
+
+                document.getElementById('content').innerHTML =
+                    '<div class="task-board">' +
+                    '<div class="task-header">' +
+                    '<div class="task-header-brand">' +
+                    '<div class="task-logo">⚡</div>' +
+                    '<div><div class="task-header-title">Tasks</div>' +
+                    '<div class="task-header-subtitle">HADLEY BRICKS</div></div></div>' +
+                    '<div class="task-search">' +
+                    '<span class="task-search-icon">🔍</span>' +
+                    '<input type="text" placeholder="Search tasks..." value="' + taskSearchQuery + '" onkeyup="onTaskSearch(event)">' +
+                    '</div>' +
+                    '<button class="task-add-btn" onclick="showTaskModal()">+ Add Task</button>' +
+                    '<button class="task-add-btn" style="background: #475569; margin-left: 8px;" onclick="showCategoryConfig()">⚙️ Tags</button>' +
+                    '</div>' +
+                    '<div class="task-tabs">' + tabsHtml + '</div>' +
+                    '<div class="task-kanban">' + columnsHtml + '</div>' +
+                    '</div>' +
+                    '<div class="task-modal-overlay" id="task-modal" onclick="hideTaskModal()">' +
+                    '<div class="task-modal" onclick="event.stopPropagation()">' +
+                    '<div class="task-modal-header">' +
+                    '<span class="task-modal-title">New Task</span>' +
+                    '<button class="task-modal-close" onclick="hideTaskModal()">✕</button>' +
+                    '</div>' +
+                    '<div class="task-modal-body">' +
+                    '<input type="text" class="task-modal-input" id="task-title-input" placeholder="What needs to be done?">' +
+                    '<div class="task-modal-list-selector">' +
+                    TASK_LISTS.map(l => '<button class="task-modal-list-btn' + (taskActiveList === l.id ? ' active' : '') + '" style="--list-accent: ' + l.accent + ';" data-list="' + l.id + '" onclick="selectTaskModalList(\\'' + l.id + '\\')">' +
+                        '<span class="task-modal-list-icon">' + l.icon + '</span>' + l.label + '</button>').join('') +
+                    '</div>' +
+                    '<div class="task-modal-section-label">Priority</div>' +
+                    '<div class="task-modal-priority-selector">' +
+                    Object.entries(TASK_PRIORITY).map(([key, p]) => '<button class="task-modal-priority-btn' + (key === 'medium' ? ' active' : '') + '" style="--priority-color: ' + p.color + '; --priority-bg: ' + p.bg + ';" data-priority="' + key + '" onclick="selectTaskModalPriority(\\'' + key + '\\')">' + p.label + '</button>').join('') +
+                    '</div>' +
+                    '</div>' +
+                    '<div class="task-modal-footer">' +
+                    '<button class="task-modal-btn secondary" onclick="hideTaskModal()">Cancel</button>' +
+                    '<button class="task-modal-btn primary" onclick="createTask()">Create Task</button>' +
+                    '</div></div></div>' +
+                    '<div class="task-toast" id="task-toast"></div>';
+            });
+        }
+
+        function switchTaskList(listId) {
+            taskActiveList = listId;
+            taskSearchQuery = '';
+            taskHeartbeatTarget = null;
+            renderTasks();
+        }
+
+        function onTaskSearch(event) {
+            taskSearchQuery = event.target.value;
+            renderTasks();
+        }
+
+        function toggleTaskHeartbeat(taskId) {
+            taskHeartbeatTarget = taskHeartbeatTarget === taskId ? null : taskId;
+            renderTasks();
+        }
+
+        async function scheduleTaskHeartbeat(taskId, dateStr) {
+            try {
+                const body = dateStr ? { schedule_date: dateStr } : {};
+                await fetch(HADLEY_API + '/ptasks/' + taskId + '/heartbeat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                taskHeartbeatTarget = null;
+                showTaskToast(dateStr ? 'Scheduled for heartbeat on ' + formatTaskDate(dateStr) : 'Added to current heartbeat ⚡');
+                renderTasks();
+            } catch (e) {
+                showTaskToast('Failed to schedule heartbeat');
+            }
+        }
+
+        async function markTaskDone(taskId) {
+            try {
+                await fetch(HADLEY_API + '/ptasks/' + taskId + '/status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'done', actor: 'chris' })
+                });
+                showTaskToast('Marked as done ✓');
+                renderTasks();
+            } catch (e) {
+                showTaskToast('Failed to update task');
+            }
+        }
+
+        let taskModalListType = null;
+        let taskModalPriority = 'medium';
+
+        function showTaskModal() {
+            taskModalListType = taskActiveList;
+            taskModalPriority = 'medium';
+            document.getElementById('task-modal').classList.add('show');
+            setTimeout(() => document.getElementById('task-title-input').focus(), 100);
+        }
+
+        function hideTaskModal() {
+            document.getElementById('task-modal').classList.remove('show');
+            document.getElementById('task-title-input').value = '';
+        }
+
+        function selectTaskModalList(listId) {
+            taskModalListType = listId;
+            document.querySelectorAll('.task-modal-list-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.list === listId);
+            });
+        }
+
+        function selectTaskModalPriority(priority) {
+            taskModalPriority = priority;
+            document.querySelectorAll('.task-modal-priority-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.priority === priority);
+            });
+        }
+
+        async function createTask() {
+            const title = document.getElementById('task-title-input').value.trim();
+            if (!title) {
+                showTaskToast('Please enter a task title');
+                return;
+            }
+
+            try {
+                await fetch(HADLEY_API + '/ptasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        list_type: taskModalListType || taskActiveList,
+                        title: title,
+                        priority: taskModalPriority,
+                        created_by: 'chris'
+                    })
+                });
+                hideTaskModal();
+                showTaskToast('Task created');
+                renderTasks();
+            } catch (e) {
+                showTaskToast('Failed to create task');
+            }
+        }
+
+        // Edit task functionality
+        let editingTaskId = null;
+        let editTaskData = null;
+
+        function showEditTaskModal(taskId) {
+            const task = taskData.tasks.find(t => t.id === taskId);
+            if (!task) return;
+
+            editingTaskId = taskId;
+            editTaskData = { ...task };
+
+            // Create edit modal HTML
+            const columns = TASK_COLUMNS[task.list_type] || [];
+            const statusOptions = columns.map(col =>
+                '<option value="' + col.id + '"' + (task.status === col.id ? ' selected' : '') + '>' + col.label + '</option>'
+            ).join('');
+
+            const priorityOptions = Object.entries(TASK_PRIORITY).map(([key, p]) =>
+                '<option value="' + key + '"' + (task.priority === key ? ' selected' : '') + '>' + p.label + '</option>'
+            ).join('');
+
+            const effortOptions = ['', 'trivial', '30min', '2hr', 'half_day', 'multi_day'].map(e =>
+                '<option value="' + e + '"' + (task.estimated_effort === e ? ' selected' : '') + '>' + (TASK_EFFORT_LABELS[e] || 'None') + '</option>'
+            ).join('');
+
+            const modal = document.createElement('div');
+            modal.className = 'task-modal-overlay show';
+            modal.id = 'task-edit-modal';
+            modal.onclick = function(e) { if (e.target === modal) hideEditTaskModal(); };
+            modal.innerHTML =
+                '<div class="task-modal" style="max-width: 500px;" onclick="event.stopPropagation()">' +
+                '<div class="task-modal-header">' +
+                '<span class="task-modal-title">Edit Task</span>' +
+                '<button class="task-modal-close" onclick="hideEditTaskModal()">✕</button>' +
+                '</div>' +
+                '<div class="task-modal-body">' +
+                '<label style="display: block; margin-bottom: 4px; color: #94a3b8; font-size: 12px;">Title</label>' +
+                '<input type="text" class="task-modal-input" id="edit-task-title" value="' + escapeHtml(task.title) + '">' +
+                '<label style="display: block; margin: 12px 0 4px; color: #94a3b8; font-size: 12px;">Description</label>' +
+                '<textarea class="task-modal-input" id="edit-task-desc" rows="3" style="resize: vertical;">' + escapeHtml(task.description || '') + '</textarea>' +
+                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">' +
+                '<div><label style="display: block; margin-bottom: 4px; color: #94a3b8; font-size: 12px;">Status</label>' +
+                '<select class="task-modal-input" id="edit-task-status" style="padding: 8px;">' + statusOptions + '</select></div>' +
+                '<div><label style="display: block; margin-bottom: 4px; color: #94a3b8; font-size: 12px;">Priority</label>' +
+                '<select class="task-modal-input" id="edit-task-priority" style="padding: 8px;">' + priorityOptions + '</select></div>' +
+                '</div>' +
+                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 12px;">' +
+                '<div><label style="display: block; margin-bottom: 4px; color: #94a3b8; font-size: 12px;">📅 Scheduled</label>' +
+                '<input type="date" class="task-modal-input" id="edit-task-scheduled" value="' + (task.scheduled_date ? task.scheduled_date.split('T')[0] : '') + '" style="padding: 8px;"></div>' +
+                '<div><label style="display: block; margin-bottom: 4px; color: #94a3b8; font-size: 12px;">⏰ Due Date</label>' +
+                '<input type="date" class="task-modal-input" id="edit-task-due" value="' + (task.due_date ? task.due_date.split('T')[0] : '') + '" style="padding: 8px;"></div>' +
+                '<div><label style="display: block; margin-bottom: 4px; color: #94a3b8; font-size: 12px;">🕐 Effort</label>' +
+                '<select class="task-modal-input" id="edit-task-effort" style="padding: 8px;">' + effortOptions + '</select></div>' +
+                '</div>' +
+                '</div>' +
+                '<div class="task-modal-footer">' +
+                '<button class="task-modal-btn" style="background: #dc2626; margin-right: auto;" onclick="deleteTask(\\'' + taskId + '\\')">Delete</button>' +
+                '<button class="task-modal-btn secondary" onclick="hideEditTaskModal()">Cancel</button>' +
+                '<button class="task-modal-btn primary" onclick="saveTask()">Save</button>' +
+                '</div></div>';
+
+            document.body.appendChild(modal);
+        }
+
+        function hideEditTaskModal() {
+            const modal = document.getElementById('task-edit-modal');
+            if (modal) modal.remove();
+            editingTaskId = null;
+            editTaskData = null;
+        }
+
+        async function saveTask() {
+            if (!editingTaskId) return;
+
+            const title = document.getElementById('edit-task-title').value.trim();
+            const description = document.getElementById('edit-task-desc').value.trim();
+            const status = document.getElementById('edit-task-status').value;
+            const priority = document.getElementById('edit-task-priority').value;
+            const scheduledDate = document.getElementById('edit-task-scheduled').value;
+            const dueDate = document.getElementById('edit-task-due').value;
+            const effort = document.getElementById('edit-task-effort').value;
+
+            if (!title) {
+                showTaskToast('Title is required');
+                return;
+            }
+
+            try {
+                // Update task details
+                await fetch(HADLEY_API + '/ptasks/' + editingTaskId, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: title,
+                        description: description || null,
+                        priority: priority,
+                        scheduled_date: scheduledDate || null,
+                        due_date: dueDate || null,
+                        estimated_effort: effort || null
+                    })
+                });
+
+                // Update status if changed
+                if (status !== editTaskData.status) {
+                    await fetch(HADLEY_API + '/ptasks/' + editingTaskId + '/status', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: status, actor: 'chris' })
+                    });
+                }
+
+                hideEditTaskModal();
+                showTaskToast('Task updated');
+                renderTasks();
+            } catch (e) {
+                console.error('Failed to save task:', e);
+                showTaskToast('Failed to save task');
+            }
+        }
+
+        async function deleteTask(taskId) {
+            if (!confirm('Delete this task?')) return;
+
+            try {
+                await fetch(HADLEY_API + '/ptasks/' + taskId, { method: 'DELETE' });
+                hideEditTaskModal();
+                showTaskToast('Task deleted');
+                renderTasks();
+            } catch (e) {
+                showTaskToast('Failed to delete task');
+            }
+        }
+
+        // Category Config Functions
+        async function showCategoryConfig() {
+            const cats = taskData.categories || [];
+
+            let catsHtml = '';
+            cats.forEach(cat => {
+                catsHtml += '<div class="cat-config-row" data-cat-id="' + cat.id + '">' +
+                    '<div class="cat-config-color" style="background: ' + cat.color + ';" onclick="pickCatColor(\\'' + cat.id + '\\')"></div>' +
+                    '<input type="text" class="cat-config-name" value="' + escapeHtml(cat.name) + '" data-cat-id="' + cat.id + '" onchange="updateCatName(\\'' + cat.id + '\\', this.value)">' +
+                    '<span class="cat-config-slug">' + cat.slug + '</span>' +
+                    '<button class="cat-config-delete" onclick="deleteCat(\\'' + cat.id + '\\')">🗑️</button>' +
+                    '</div>';
+            });
+
+            const modal = document.createElement('div');
+            modal.className = 'task-modal-overlay show';
+            modal.id = 'cat-config-modal';
+            modal.onclick = function(e) { if (e.target === modal) hideCategoryConfig(); };
+            modal.innerHTML =
+                '<div class="task-modal" style="max-width: 500px;" onclick="event.stopPropagation()">' +
+                '<div class="task-modal-header">' +
+                '<span class="task-modal-title">⚙️ Manage Tags</span>' +
+                '<button class="task-modal-close" onclick="hideCategoryConfig()">✕</button>' +
+                '</div>' +
+                '<div class="task-modal-body" style="max-height: 400px; overflow-y: auto;">' +
+                '<div class="cat-config-list">' + catsHtml + '</div>' +
+                '<div class="cat-config-add">' +
+                '<input type="color" id="new-cat-color" value="#6366F1" style="width: 40px; height: 36px; border: none; cursor: pointer;">' +
+                '<input type="text" class="task-modal-input" id="new-cat-name" placeholder="New tag name..." style="flex: 1;">' +
+                '<button class="task-modal-btn primary" style="padding: 8px 16px;" onclick="createCat()">Add</button>' +
+                '</div>' +
+                '</div>' +
+                '<div class="task-modal-footer">' +
+                '<button class="task-modal-btn primary" onclick="hideCategoryConfig()">Done</button>' +
+                '</div></div>' +
+                '<style>' +
+                '.cat-config-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }' +
+                '.cat-config-row { display: flex; align-items: center; gap: 10px; padding: 8px; background: #1e293b; border-radius: 6px; }' +
+                '.cat-config-color { width: 28px; height: 28px; border-radius: 6px; cursor: pointer; flex-shrink: 0; }' +
+                '.cat-config-name { flex: 1; background: transparent; border: 1px solid #334155; border-radius: 4px; padding: 6px 10px; color: #e2e8f0; font-size: 14px; }' +
+                '.cat-config-name:focus { border-color: #6366f1; outline: none; }' +
+                '.cat-config-slug { color: #64748b; font-size: 12px; min-width: 80px; }' +
+                '.cat-config-delete { background: none; border: none; cursor: pointer; font-size: 16px; opacity: 0.6; }' +
+                '.cat-config-delete:hover { opacity: 1; }' +
+                '.cat-config-add { display: flex; gap: 10px; align-items: center; padding-top: 12px; border-top: 1px solid #334155; }' +
+                '</style>';
+
+            document.body.appendChild(modal);
+        }
+
+        function hideCategoryConfig() {
+            const modal = document.getElementById('cat-config-modal');
+            if (modal) modal.remove();
+        }
+
+        async function createCat() {
+            const name = document.getElementById('new-cat-name').value.trim();
+            const color = document.getElementById('new-cat-color').value;
+
+            if (!name) {
+                showTaskToast('Enter a tag name');
+                return;
+            }
+
+            try {
+                const resp = await fetch(HADLEY_API + '/ptasks/categories', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name, color: color })
+                });
+
+                if (!resp.ok) throw new Error('Failed to create');
+
+                showTaskToast('Tag created');
+                hideCategoryConfig();
+                renderTasks(); // Reload to get new categories
+            } catch (e) {
+                showTaskToast('Failed to create tag');
+            }
+        }
+
+        async function updateCatName(catId, newName) {
+            if (!newName.trim()) return;
+
+            try {
+                await fetch(HADLEY_API + '/ptasks/categories/' + catId, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName.trim() })
+                });
+                showTaskToast('Tag updated');
+            } catch (e) {
+                showTaskToast('Failed to update tag');
+            }
+        }
+
+        function pickCatColor(catId) {
+            const input = document.createElement('input');
+            input.type = 'color';
+            input.style.position = 'absolute';
+            input.style.opacity = '0';
+            document.body.appendChild(input);
+
+            input.addEventListener('change', async function() {
+                try {
+                    await fetch(HADLEY_API + '/ptasks/categories/' + catId, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ color: input.value })
+                    });
+                    // Update the color swatch immediately
+                    const row = document.querySelector('.cat-config-row[data-cat-id="' + catId + '"]');
+                    if (row) {
+                        row.querySelector('.cat-config-color').style.background = input.value;
+                    }
+                    showTaskToast('Color updated');
+                } catch (e) {
+                    showTaskToast('Failed to update color');
+                }
+                document.body.removeChild(input);
+            });
+
+            input.click();
+        }
+
+        async function deleteCat(catId) {
+            if (!confirm('Delete this tag? It will be removed from all tasks.')) return;
+
+            try {
+                await fetch(HADLEY_API + '/ptasks/categories/' + catId, { method: 'DELETE' });
+                // Remove the row from UI
+                const row = document.querySelector('.cat-config-row[data-cat-id="' + catId + '"]');
+                if (row) row.remove();
+                showTaskToast('Tag deleted');
+            } catch (e) {
+                showTaskToast('Failed to delete tag');
+            }
+        }
+
+        function showTaskToast(message) {
+            const toast = document.getElementById('task-toast');
+            toast.textContent = '⚡ ' + message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2500);
+        }
+
+        // Drag and drop
+        function onTaskDragStart(event, taskId) {
+            taskDraggedId = taskId;
+            event.target.classList.add('dragging');
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', taskId);
+        }
+
+        function onTaskDragEnd(event) {
+            taskDraggedId = null;
+            event.target.classList.remove('dragging');
+            document.querySelectorAll('.task-column').forEach(col => col.classList.remove('drag-over'));
+        }
+
+        function onTaskDragOver(event, colId) {
+            event.preventDefault();
+            taskDragOverCol = colId;
+            const col = document.querySelector('.task-column[data-col="' + colId + '"]');
+            if (col) {
+                document.querySelectorAll('.task-column').forEach(c => c.classList.remove('drag-over'));
+                col.classList.add('drag-over');
+                col.style.borderColor = getColumnColor(colId);
+            }
+        }
+
+        function getColumnColor(colId) {
+            const columns = TASK_COLUMNS[taskActiveList] || [];
+            const col = columns.find(c => c.id === colId);
+            return col ? col.color : '#64748b';
+        }
+
+        async function onTaskDrop(event, colId) {
+            event.preventDefault();
+            if (!taskDraggedId) return;
+
+            const task = taskData.tasks.find(t => t.id === taskDraggedId);
+            if (!task || task.status === colId) {
+                taskDraggedId = null;
+                return;
+            }
+
+            try {
+                // For heartbeat scheduling via drag
+                if (colId === 'in_heartbeat' && task.status === 'queued') {
+                    await fetch(HADLEY_API + '/ptasks/' + taskDraggedId + '/heartbeat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({})
+                    });
+                } else {
+                    await fetch(HADLEY_API + '/ptasks/' + taskDraggedId + '/status', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: colId, actor: 'chris' })
+                    });
+                }
+
+                const columns = TASK_COLUMNS[taskActiveList] || [];
+                const colName = columns.find(c => c.id === colId)?.label || colId;
+                showTaskToast('Task moved to ' + colName);
+                renderTasks();
+            } catch (e) {
+                console.error('Failed to move task:', e);
+                showTaskToast('Failed to move task');
+            }
+
+            taskDraggedId = null;
+        }
+
         function switchView(view) {
             currentView = view;
 
@@ -2859,6 +6188,7 @@ DASHBOARD_HTML = """
             // Render view
             switch(view) {
                 case 'dashboard': renderDashboard(); break;
+                case 'tasks': renderTasks(); break;
                 case 'context': renderContext(); break;
                 case 'captures': renderCaptures(); break;
                 case 'memory': renderMemory(); break;
@@ -2869,6 +6199,8 @@ DASHBOARD_HTML = """
                 case 'heartbeat': renderHeartbeat(); break;
                 case 'schedule': renderSchedule(); break;
                 case 'skills': renderSkills(); break;
+                case 'parser': renderParser(); break;
+                case 'search': renderSearch(); break;
             }
         }
 
@@ -2918,4 +6250,4 @@ DASHBOARD_HTML = """
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8200)
+    uvicorn.run(app, host="0.0.0.0", port=5000)
