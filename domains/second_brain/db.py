@@ -361,7 +361,7 @@ async def semantic_search(
                 )
 
             result = results_by_parent[parent_id]
-            similarity = row.get("similarity", 0.0)
+            similarity = float(row.get("similarity", 0.0))  # Supabase returns string
 
             # Add chunk
             chunk = KnowledgeChunk.from_db_row({
