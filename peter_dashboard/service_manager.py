@@ -202,10 +202,20 @@ def _find_process_by_pattern(pattern: str) -> list[int]:
     return pids
 
 
+# Cache for process start times (PID -> ISO timestamp)
+# Process start times don't change, so we can cache indefinitely per PID
+_process_start_time_cache: dict[int, str] = {}
+
+
 def _get_process_start_time(pid: int) -> Optional[str]:
-    """Get the start time of a process as ISO timestamp."""
+    """Get the start time of a process as ISO timestamp. Results are cached."""
     if not pid:
         return None
+
+    # Check cache first
+    if pid in _process_start_time_cache:
+        return _process_start_time_cache[pid]
+
     try:
         # Use WMIC to get process creation date
         result = subprocess.run(
@@ -227,7 +237,9 @@ def _get_process_start_time(pid: int) -> Optional[str]:
                 minute = line[10:12]
                 second = line[12:14]
                 # Return as ISO format
-                return f"{year}-{month}-{day}T{hour}:{minute}:{second}"
+                start_time = f"{year}-{month}-{day}T{hour}:{minute}:{second}"
+                _process_start_time_cache[pid] = start_time
+                return start_time
     except Exception:
         pass
     return None
