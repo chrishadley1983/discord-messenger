@@ -651,24 +651,28 @@ async def get_system_status():
                 "latency_ms": hadley_http_status.get("latency_ms"),
                 "pid": svc_status.get("hadley_api", {}).get("pid"),
                 "port": 8100,
-                "process_status": svc_status.get("hadley_api", {}).get("status", "unknown")
+                "process_status": svc_status.get("hadley_api", {}).get("status", "unknown"),
+                "last_restart": _last_restart_time.get("hadley_api")
             },
             "hadley_bricks": {
                 "status": hb_http_status.get("status", "down"),
                 "latency_ms": hb_http_status.get("latency_ms"),
                 "pid": svc_status.get("hadley_bricks", {}).get("pid"),
                 "port": 3000,
-                "process_status": svc_status.get("hadley_bricks", {}).get("status", "unknown")
+                "process_status": svc_status.get("hadley_bricks", {}).get("status", "unknown"),
+                "last_restart": _last_restart_time.get("hadley_bricks")
             },
-            "claude_mem": mem_status,
+            "claude_mem": {**mem_status, "last_restart": _last_restart_time.get("claude_mem")},
             "discord_bot": {
                 "status": "up" if svc_status.get("discord_bot", {}).get("status") == "running" else "down",
                 "pid": svc_status.get("discord_bot", {}).get("pid"),
-                "process_status": svc_status.get("discord_bot", {}).get("status", "unknown")
+                "process_status": svc_status.get("discord_bot", {}).get("status", "unknown"),
+                "last_restart": _last_restart_time.get("discord_bot")
             },
             "peterbot_session": {
                 "status": "up" if peterbot_session else "down",
-                "attached": peterbot_session["attached"] if peterbot_session else False
+                "attached": peterbot_session["attached"] if peterbot_session else False,
+                "last_restart": _last_restart_time.get("peterbot_session")
             }
         },
         "tmux_sessions": sessions
