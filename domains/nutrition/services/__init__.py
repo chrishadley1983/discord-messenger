@@ -3,7 +3,9 @@
 from .supabase_service import (
     insert_meal,
     insert_water,
+    delete_meal,
     get_today_totals,
+    get_nutrition_totals,
     get_today_meals,
     get_week_summary
 )
@@ -20,7 +22,9 @@ from .favourites_service import (
 __all__ = [
     "insert_meal",
     "insert_water",
+    "delete_meal",
     "get_today_totals",
+    "get_nutrition_totals",
     "get_today_meals",
     "get_week_summary",
     "get_steps",

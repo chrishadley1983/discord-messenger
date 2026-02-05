@@ -32,6 +32,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # xAI Grok
 GROK_API_KEY = os.getenv("GROK_API_KEY")
+GROK_MANAGEMENT_KEY = os.getenv("GROK_MANAGEMENT_KEY")
+GROK_TEAM_ID = os.getenv("GROK_TEAM_ID")
 
 # Moonshot Kimi
 MOONSHOT_API_KEY = os.getenv("MOONSHOT_API_KEY")

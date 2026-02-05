@@ -96,6 +96,34 @@ async def insert_water(ml: float) -> dict:
         raise
 
 
+async def delete_meal(meal_id: str) -> dict:
+    """Delete a nutrition log entry by ID.
+
+    Args:
+        meal_id: UUID of the meal/water entry to delete
+
+    Returns:
+        dict with success status
+    """
+    try:
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            raise ValueError("Supabase credentials not configured")
+
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f"{_get_rest_url()}/nutrition_logs?id=eq.{meal_id}",
+                headers=_get_headers(),
+                timeout=30
+            )
+            response.raise_for_status()
+
+        logger.info(f"Deleted nutrition entry: {meal_id}")
+        return {"success": True, "deleted_id": meal_id}
+    except Exception as e:
+        logger.error(f"Failed to delete meal {meal_id}: {e}")
+        raise
+
+
 async def get_today_totals() -> dict:
     """Get today's nutrition totals."""
     try:
@@ -162,6 +190,57 @@ async def get_today_meals() -> list:
         return data
     except Exception as e:
         logger.error(f"Failed to get today's meals: {e}")
+        raise
+
+
+async def get_nutrition_totals(date: str = None) -> dict:
+    """Get nutrition totals for a specific date.
+
+    Args:
+        date: Date string in YYYY-MM-DD format. Defaults to today.
+
+    Returns:
+        dict with calories, protein_g, carbs_g, fat_g, water_ml totals
+    """
+    try:
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            raise ValueError("Supabase credentials not configured")
+
+        if date is None:
+            target_date = datetime.now().date()
+        else:
+            target_date = datetime.fromisoformat(date).date()
+
+        next_date = target_date + timedelta(days=1)
+
+        # PostgREST: use 'and' filter for multiple conditions on same column
+        filter_str = f"and=(logged_at.gte.{target_date.isoformat()}T00:00:00,logged_at.lt.{next_date.isoformat()}T00:00:00)"
+        url = f"{_get_rest_url()}/nutrition_logs?select=calories,protein_g,carbs_g,fat_g,water_ml,logged_at&{filter_str}"
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                url,
+                headers=_get_headers(),
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        logger.info(f"Retrieved {len(data)} nutrition records for {target_date}")
+
+        totals = {
+            "calories": sum(r["calories"] or 0 for r in data),
+            "protein_g": sum(r["protein_g"] or 0 for r in data),
+            "carbs_g": sum(r["carbs_g"] or 0 for r in data),
+            "fat_g": sum(r["fat_g"] or 0 for r in data),
+            "water_ml": sum(r["water_ml"] or 0 for r in data),
+            "date": target_date.isoformat()
+        }
+
+        logger.info(f"Retrieved totals for {target_date}: {totals['calories']} cal")
+        return totals
+    except Exception as e:
+        logger.error(f"Failed to get nutrition totals for {date}: {e}")
         raise
 
 
