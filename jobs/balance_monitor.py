@@ -72,35 +72,59 @@ async def _get_claude_balance() -> dict:
 async def _get_grok_balance() -> dict:
     """Get xAI Grok balance via management API.
 
-    xAI uses a management API with team-based billing.
-    See: https://console.x.ai for manual balance checking.
+    xAI uses a management API at https://management-api.x.ai (separate from inference API).
+    Balance is calculated as: prepaid credits - usage from invoices.
+    See: https://docs.x.ai/docs/management-api/billing
     """
     try:
         if not GROK_MANAGEMENT_KEY or not GROK_TEAM_ID:
             return {"error": "Grok management credentials not configured", "balance": None}
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"https://api.x.ai/v1/api-keys?team_id={GROK_TEAM_ID}",
-                headers={
-                    "Authorization": f"Bearer {GROK_MANAGEMENT_KEY}",
-                    "Content-Type": "application/json"
-                },
-                timeout=30
-            )
+        headers = {
+            "Authorization": f"Bearer {GROK_MANAGEMENT_KEY}",
+            "Content-Type": "application/json"
+        }
+        base_url = "https://management-api.x.ai"
 
-            if response.status_code == 200:
-                data = response.json()
-                # xAI API returns credit balance in the response
-                # Note: May need adjustment based on actual API response structure
-                if "balance" in data:
-                    return {"balance": float(data["balance"]), "source": "api"}
-                elif "credits" in data:
-                    return {"balance": float(data["credits"]), "source": "api"}
-                else:
-                    return {"error": "Balance not in response", "balance": None, "check": "console.x.ai"}
-            else:
-                return {"error": f"HTTP {response.status_code}", "balance": None, "check": "console.x.ai"}
+        async with httpx.AsyncClient() as client:
+            # Get prepaid credits (purchase history)
+            prepaid_url = f"{base_url}/v1/billing/teams/{GROK_TEAM_ID}/prepaid/balance"
+            prepaid_resp = await client.get(prepaid_url, headers=headers, timeout=30)
+
+            if prepaid_resp.status_code != 200:
+                return {"error": f"Prepaid API HTTP {prepaid_resp.status_code}", "balance": None, "check": "console.x.ai"}
+
+            prepaid_data = prepaid_resp.json()
+
+            # Sum all successful prepaid purchases (negative values = credits in accounting)
+            prepaid_cents = 0
+            for change in prepaid_data.get("changes", []):
+                if change.get("changeOrigin") == "PURCHASE" and change.get("topupStatus") == "SUCCEEDED":
+                    prepaid_cents += abs(int(change.get("amount", {}).get("val", 0)))
+
+            # Get usage from invoices
+            invoices_url = f"{base_url}/v1/billing/teams/{GROK_TEAM_ID}/invoices?pageSize=100"
+            invoices_resp = await client.get(invoices_url, headers=headers, timeout=30)
+
+            if invoices_resp.status_code != 200:
+                return {"error": f"Invoices API HTTP {invoices_resp.status_code}", "balance": None, "check": "console.x.ai"}
+
+            invoices_data = invoices_resp.json()
+
+            # Sum usage from all invoice lines (excluding prepaid purchase lines)
+            usage_cents = 0
+            for invoice in invoices_data.get("invoices", []):
+                for line in invoice.get("lines", []):
+                    desc = line.get("description", "")
+                    if "Prepaid" not in desc:  # Skip prepaid purchase lines
+                        usage_cents += int(line.get("amount", 0))
+
+            # Calculate remaining balance
+            remaining_cents = prepaid_cents - usage_cents
+            remaining_dollars = remaining_cents / 100
+
+            return {"balance": remaining_dollars, "source": "api"}
+
     except Exception as e:
         logger.error(f"Grok balance query error: {e}")
         return {"error": str(e), "balance": None, "check": "console.x.ai"}
