@@ -450,7 +450,21 @@ async def wait_for_response(
             stable_count = 0
             last_content = current
 
-    logger.warning(f"Response timeout after {timeout}s, returning partial")
+    logger.warning(f"Response timeout after {timeout}s, cancelling stuck operation")
+
+    # Cancel stuck operation by sending Escape (interrupt current tool/fetch)
+    try:
+        _tmux("send-keys", "-t", PETERBOT_SESSION, "Escape")
+        await asyncio.sleep(0.5)
+        # Send Ctrl+C as backup cancellation
+        _tmux("send-keys", "-t", PETERBOT_SESSION, "C-c")
+        await asyncio.sleep(1.0)
+        # Get final screen state after cancellation
+        last_content = get_session_screen()
+        logger.info("Sent cancel signals (Escape + Ctrl+C) after timeout")
+    except Exception as e:
+        logger.warning(f"Failed to send cancel signal: {e}")
+
     return last_content  # Timeout, return what we have
 
 
