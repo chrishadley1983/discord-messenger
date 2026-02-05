@@ -76,7 +76,7 @@ MONITORED_SERVICES = {
     },
     "hadley_bricks": {
         "name": "Hadley Bricks",
-        "url": "http://localhost:3000/api/health",
+        "url": "http://localhost:3000/",  # Root returns 307 redirect when healthy
         "critical": False,  # Not critical for Peterbot operation
     },
     "peterbot_session": {
