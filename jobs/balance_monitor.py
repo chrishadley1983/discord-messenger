@@ -73,9 +73,11 @@ async def _get_grok_balance() -> dict:
     """Get xAI Grok balance via management API.
 
     xAI uses a management API at https://management-api.x.ai (separate from inference API).
-    Balance is calculated as: prepaid credits - usage from invoices.
-    See: https://docs.x.ai/docs/management-api/billing
+    Balance is calculated as: prepaid credits - total usage (from /usage analytics endpoint).
+    See: https://docs.x.ai/developers/management-api/billing
     """
+    from datetime import datetime
+
     try:
         if not GROK_MANAGEMENT_KEY or not GROK_TEAM_ID:
             return {"error": "Grok management credentials not configured", "balance": None}
@@ -87,7 +89,7 @@ async def _get_grok_balance() -> dict:
         base_url = "https://management-api.x.ai"
 
         async with httpx.AsyncClient() as client:
-            # Get prepaid credits (purchase history)
+            # 1. Get prepaid credits (purchase history)
             prepaid_url = f"{base_url}/v1/billing/teams/{GROK_TEAM_ID}/prepaid/balance"
             prepaid_resp = await client.get(prepaid_url, headers=headers, timeout=30)
 
@@ -101,29 +103,43 @@ async def _get_grok_balance() -> dict:
             for change in prepaid_data.get("changes", []):
                 if change.get("changeOrigin") == "PURCHASE" and change.get("topupStatus") == "SUCCEEDED":
                     prepaid_cents += abs(int(change.get("amount", {}).get("val", 0)))
+            prepaid_usd = prepaid_cents / 100
 
-            # Get usage from invoices
-            invoices_url = f"{base_url}/v1/billing/teams/{GROK_TEAM_ID}/invoices?pageSize=100"
-            invoices_resp = await client.get(invoices_url, headers=headers, timeout=30)
+            # 2. Get total usage via analytics endpoint (real-time)
+            usage_url = f"{base_url}/v1/billing/teams/{GROK_TEAM_ID}/usage"
+            usage_body = {
+                "analyticsRequest": {
+                    "timeRange": {
+                        "startTime": "2025-01-01 00:00:00",
+                        "endTime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "timezone": "Etc/GMT"
+                    },
+                    "timeUnit": "TIME_UNIT_DAY",
+                    "values": [
+                        {"name": "usd", "aggregation": "AGGREGATION_SUM"}
+                    ],
+                    "groupBy": [],
+                    "filters": []
+                }
+            }
+            usage_resp = await client.post(usage_url, headers=headers, json=usage_body, timeout=30)
 
-            if invoices_resp.status_code != 200:
-                return {"error": f"Invoices API HTTP {invoices_resp.status_code}", "balance": None, "check": "console.x.ai"}
+            if usage_resp.status_code != 200:
+                return {"error": f"Usage API HTTP {usage_resp.status_code}", "balance": None, "check": "console.x.ai"}
 
-            invoices_data = invoices_resp.json()
+            usage_data = usage_resp.json()
 
-            # Sum usage from all invoice lines (excluding prepaid purchase lines)
-            usage_cents = 0
-            for invoice in invoices_data.get("invoices", []):
-                for line in invoice.get("lines", []):
-                    desc = line.get("description", "")
-                    if "Prepaid" not in desc:  # Skip prepaid purchase lines
-                        usage_cents += int(line.get("amount", 0))
+            # Sum all usage from time series data
+            total_usage = 0.0
+            for series in usage_data.get("timeSeries", []):
+                for dp in series.get("dataPoints", []):
+                    for val in dp.get("values", []):
+                        total_usage += val
 
             # Calculate remaining balance
-            remaining_cents = prepaid_cents - usage_cents
-            remaining_dollars = remaining_cents / 100
+            remaining = prepaid_usd - total_usage
 
-            return {"balance": remaining_dollars, "source": "api"}
+            return {"balance": round(remaining, 2), "source": "api"}
 
     except Exception as e:
         logger.error(f"Grok balance query error: {e}")
