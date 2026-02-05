@@ -1112,13 +1112,68 @@ const JobsView = {
 
 /**
  * Services View - Service monitoring and control
+ * Enhanced with detail panel, tmux viewer, health history, and control actions
  */
 const ServicesView = {
   title: 'Services',
 
+  // State
+  services: {},
+  tmuxSessions: [],
+  selectedService: null,
+  healthHistory: {},  // { serviceKey: [{ timestamp, status }] }
+  screenRefreshInterval: null,
+  autoRefreshInterval: null,
+
+  // Service configuration
+  serviceInfo: {
+    hadley_api: {
+      name: 'Hadley API',
+      icon: Icons.server,
+      port: 8100,
+      managed: 'NSSM',
+      description: 'REST API for external services',
+      healthEndpoint: '/health',
+      isTmux: false,
+    },
+    discord_bot: {
+      name: 'Discord Bot',
+      icon: Icons.messageCircle,
+      managed: 'NSSM',
+      description: 'Main Discord bot process',
+      isTmux: false,
+    },
+    hadley_bricks: {
+      name: 'Hadley Bricks',
+      icon: Icons.box,
+      port: 3000,
+      managed: 'NSSM',
+      description: 'LEGO inventory management system',
+      healthEndpoint: '/api/health',
+      isTmux: false,
+    },
+    peterbot_session: {
+      name: 'Peterbot Session',
+      icon: Icons.terminal,
+      managed: 'tmux',
+      description: 'Claude Code tmux session for Peterbot',
+      tmuxSession: 'claude-peterbot',
+      isTmux: true,
+    },
+    claude_mem: {
+      name: 'Memory Worker',
+      icon: Icons.brain,
+      port: 37777,
+      managed: 'Systemd',
+      description: 'Claude memory observation worker',
+      healthEndpoint: '/health',
+      isTmux: false,
+    },
+  },
+
   async render(container) {
     container.innerHTML = `
-      <div class="animate-fade-in">
+      <div class="animate-fade-in services-view">
         <div class="flex justify-between items-center mb-lg">
           <div>
             <h2>System Services</h2>
@@ -1128,55 +1183,454 @@ const ServicesView = {
             <button class="btn btn-secondary" onclick="ServicesView.refresh()">
               ${Icons.refresh} Refresh
             </button>
-            <button class="btn btn-primary" onclick="ServicesView.restartAll()">
+            <button class="btn btn-primary" onclick="ServicesView.confirmRestartAll()">
               ${Icons.refreshCw} Restart All
             </button>
           </div>
         </div>
 
-        <div class="grid grid-cols-2 gap-md" id="services-list">
-          ${Components.skeleton('card')}
-          ${Components.skeleton('card')}
-          ${Components.skeleton('card')}
-          ${Components.skeleton('card')}
+        <div class="services-layout">
+          <div class="services-grid-container">
+            <div class="grid grid-cols-2 gap-md" id="services-list">
+              ${Components.skeleton('card')}
+              ${Components.skeleton('card')}
+              ${Components.skeleton('card')}
+              ${Components.skeleton('card')}
+              ${Components.skeleton('card')}
+            </div>
+          </div>
+
+          <div class="service-detail-panel" id="service-detail-panel">
+            <div class="detail-panel-placeholder">
+              <div class="empty-state">
+                <div class="empty-state-icon">${Icons.server}</div>
+                <div class="empty-state-title">Select a service</div>
+                <div class="empty-state-description">Click on a service card to view details</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     `;
 
+    // Add custom styles for services view
+    this.injectStyles();
+
+    // Load data and start auto-refresh
     await this.loadData();
+    this.startAutoRefresh();
   },
 
-  async loadData() {
-    try {
-      const status = await API.get('/api/status');
-      this.renderServices(status.services, status.tmux_sessions);
-    } catch (error) {
-      console.error('Failed to load services:', error);
-      Toast.error('Error', 'Failed to load service status');
+  injectStyles() {
+    if (document.getElementById('services-view-styles')) return;
+
+    const styles = document.createElement('style');
+    styles.id = 'services-view-styles';
+    styles.textContent = `
+      .services-layout {
+        display: flex;
+        gap: var(--spacing-lg);
+        min-height: 600px;
+      }
+
+      .services-grid-container {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .service-detail-panel {
+        width: 420px;
+        flex-shrink: 0;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .detail-panel-placeholder {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: var(--spacing-xl);
+      }
+
+      .service-card.selected {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px var(--accent-light);
+      }
+
+      .service-card.clickable {
+        cursor: pointer;
+      }
+
+      .service-card.clickable:hover {
+        border-color: var(--accent);
+      }
+
+      /* Health History Bar */
+      .health-history {
+        display: flex;
+        gap: 2px;
+        margin-top: var(--spacing-sm);
+        height: 8px;
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+        background: var(--bg-hover);
+      }
+
+      .health-block {
+        flex: 1;
+        min-width: 4px;
+        transition: background-color var(--transition-fast);
+      }
+
+      .health-block.healthy {
+        background-color: var(--status-running);
+      }
+
+      .health-block.unhealthy {
+        background-color: var(--status-error);
+      }
+
+      .health-block.unknown {
+        background-color: var(--status-idle);
+      }
+
+      .health-summary {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        margin-top: var(--spacing-xs);
+      }
+
+      /* Detail Panel Header */
+      .detail-header {
+        padding: var(--spacing-lg);
+        border-bottom: 1px solid var(--border);
+        background: var(--bg-hover);
+      }
+
+      .detail-header-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: var(--spacing-sm);
+      }
+
+      .detail-service-name {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+      }
+
+      .detail-service-name h3 {
+        margin: 0;
+        font-size: var(--text-lg);
+      }
+
+      .detail-description {
+        font-size: var(--text-sm);
+        color: var(--text-secondary);
+        margin-top: var(--spacing-xs);
+      }
+
+      /* Detail Panel Content */
+      .detail-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: var(--spacing-lg);
+      }
+
+      .detail-section {
+        margin-bottom: var(--spacing-lg);
+      }
+
+      .detail-section-title {
+        font-size: var(--text-sm);
+        font-weight: var(--font-semibold);
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: var(--spacing-sm);
+      }
+
+      .detail-stats {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: var(--spacing-md);
+      }
+
+      .detail-stat {
+        background: var(--bg-hover);
+        padding: var(--spacing-md);
+        border-radius: var(--radius-md);
+      }
+
+      .detail-stat-label {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        margin-bottom: var(--spacing-xs);
+      }
+
+      .detail-stat-value {
+        font-size: var(--text-base);
+        font-weight: var(--font-semibold);
+      }
+
+      /* Terminal Viewer */
+      .terminal-viewer {
+        background: #1a1a2e;
+        color: #e0e0e0;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        line-height: 1.4;
+        padding: var(--spacing-md);
+        border-radius: var(--radius-md);
+        max-height: 300px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+
+      .terminal-viewer-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: var(--spacing-sm);
+      }
+
+      .terminal-viewer-controls {
+        display: flex;
+        gap: var(--spacing-sm);
+        align-items: center;
+      }
+
+      .terminal-auto-refresh {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-xs);
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+      }
+
+      .terminal-auto-refresh input {
+        margin: 0;
+      }
+
+      /* Send Command Input */
+      .send-command-container {
+        display: flex;
+        gap: var(--spacing-sm);
+        margin-top: var(--spacing-sm);
+      }
+
+      .send-command-container input {
+        flex: 1;
+        padding: var(--spacing-sm) var(--spacing-md);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        font-family: var(--font-mono);
+        font-size: var(--text-sm);
+        background: var(--bg-input);
+      }
+
+      /* Detail Actions */
+      .detail-actions {
+        padding: var(--spacing-lg);
+        border-top: 1px solid var(--border);
+        display: flex;
+        gap: var(--spacing-sm);
+        flex-wrap: wrap;
+      }
+
+      /* Confirmation Modal Content */
+      .confirm-content {
+        text-align: center;
+        padding: var(--spacing-md);
+      }
+
+      .confirm-icon {
+        font-size: 48px;
+        margin-bottom: var(--spacing-md);
+        color: var(--status-paused);
+      }
+
+      .confirm-title {
+        font-size: var(--text-lg);
+        font-weight: var(--font-semibold);
+        margin-bottom: var(--spacing-sm);
+      }
+
+      .confirm-message {
+        color: var(--text-secondary);
+        margin-bottom: var(--spacing-lg);
+      }
+
+      .confirm-buttons {
+        display: flex;
+        gap: var(--spacing-sm);
+        justify-content: center;
+      }
+
+      /* Latency indicator */
+      .latency-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--spacing-xs);
+      }
+
+      .latency-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+      }
+
+      .latency-good { background-color: var(--status-running); }
+      .latency-medium { background-color: var(--status-paused); }
+      .latency-poor { background-color: var(--status-error); }
+
+      @media (max-width: 1200px) {
+        .services-layout {
+          flex-direction: column;
+        }
+
+        .service-detail-panel {
+          width: 100%;
+        }
+      }
+    `;
+    document.head.appendChild(styles);
+  },
+
+  startAutoRefresh() {
+    // Refresh service status every 30 seconds
+    this.autoRefreshInterval = setInterval(() => {
+      this.loadData(true);  // silent refresh
+    }, 30000);
+  },
+
+  stopAutoRefresh() {
+    if (this.autoRefreshInterval) {
+      clearInterval(this.autoRefreshInterval);
+      this.autoRefreshInterval = null;
+    }
+    if (this.screenRefreshInterval) {
+      clearInterval(this.screenRefreshInterval);
+      this.screenRefreshInterval = null;
     }
   },
 
-  renderServices(services, tmuxSessions) {
-    const serviceInfo = {
-      hadley_api: { name: 'Hadley API', icon: Icons.server, port: 8100, managed: 'NSSM' },
-      discord_bot: { name: 'Discord Bot', icon: Icons.messageCircle, managed: 'NSSM' },
-      claude_mem: { name: 'Claude Memory', icon: Icons.brain, port: 37777, managed: 'Systemd' },
-      peterbot_session: { name: 'Peterbot Session', icon: Icons.terminal, managed: 'tmux' },
-      hadley_bricks: { name: 'Hadley Bricks', icon: Icons.box, port: 3000, managed: 'NSSM' },
-    };
+  async loadData(silent = false) {
+    try {
+      const status = await API.get('/api/status');
+      this.services = status.services || {};
+      this.tmuxSessions = status.tmux_sessions || [];
 
-    const html = Object.entries(services).map(([key, svc]) => {
-      const info = serviceInfo[key] || { name: key, icon: Icons.server };
+      // Record health history
+      this.recordHealthHistory();
+
+      this.renderServices();
+
+      // Update detail panel if a service is selected
+      if (this.selectedService && this.services[this.selectedService]) {
+        this.renderDetailPanel(this.selectedService);
+      }
+    } catch (error) {
+      console.error('Failed to load services:', error);
+      if (!silent) {
+        Toast.error('Error', 'Failed to load service status');
+      }
+    }
+  },
+
+  recordHealthHistory() {
+    const now = Date.now();
+    Object.entries(this.services).forEach(([key, svc]) => {
+      if (!this.healthHistory[key]) {
+        this.healthHistory[key] = [];
+      }
+
+      const status = svc.status === 'up' || svc.status === 'running' ? 'healthy' : 'unhealthy';
+      this.healthHistory[key].push({ timestamp: now, status });
+
+      // Keep only last 24 hours (assuming 30s intervals = 2880 records max)
+      // But for display we only show last ~24 blocks
+      if (this.healthHistory[key].length > 2880) {
+        this.healthHistory[key] = this.healthHistory[key].slice(-2880);
+      }
+    });
+  },
+
+  getHealthBlocks(serviceKey) {
+    const history = this.healthHistory[serviceKey] || [];
+    const blockCount = 24;  // Show 24 blocks for 24h-ish representation
+
+    if (history.length === 0) {
+      return Array(blockCount).fill('unknown');
+    }
+
+    // If we have fewer records than blocks, pad with most recent status
+    if (history.length < blockCount) {
+      const lastStatus = history[history.length - 1]?.status || 'unknown';
+      const padded = [...history];
+      while (padded.length < blockCount) {
+        padded.unshift({ status: 'unknown' });
+      }
+      return padded.slice(-blockCount).map(h => h.status);
+    }
+
+    // Sample evenly across history
+    const step = Math.floor(history.length / blockCount);
+    const blocks = [];
+    for (let i = 0; i < blockCount; i++) {
+      const idx = Math.min(i * step, history.length - 1);
+      blocks.push(history[idx]?.status || 'unknown');
+    }
+    return blocks;
+  },
+
+  calculateUptime(serviceKey) {
+    const history = this.healthHistory[serviceKey] || [];
+    if (history.length === 0) return 100;
+
+    const healthyCount = history.filter(h => h.status === 'healthy').length;
+    return Math.round((healthyCount / history.length) * 100);
+  },
+
+  getLatencyClass(latency) {
+    if (!latency) return 'unknown';
+    if (latency < 100) return 'good';
+    if (latency < 500) return 'medium';
+    return 'poor';
+  },
+
+  renderServices() {
+    const html = Object.entries(this.services).map(([key, svc]) => {
+      const info = this.serviceInfo[key] || { name: key, icon: Icons.server };
       const details = [];
+      const isSelected = this.selectedService === key;
+      const uptime = this.calculateUptime(key);
+      const healthBlocks = this.getHealthBlocks(key);
 
       if (info.port) details.push({ label: 'Port', value: info.port });
       if (svc.pid) details.push({ label: 'PID', value: svc.pid });
-      if (svc.latency_ms) details.push({ label: 'Latency', value: `${svc.latency_ms}ms` });
-      if (info.managed) details.push({ label: 'Managed by', value: info.managed });
-      if (svc.attached !== undefined) details.push({ label: 'Attached', value: svc.attached ? 'Yes' : 'No' });
+      if (svc.latency_ms) {
+        const latencyClass = this.getLatencyClass(svc.latency_ms);
+        details.push({
+          label: 'Latency',
+          value: `<span class="latency-indicator"><span class="latency-dot latency-${latencyClass}"></span>${svc.latency_ms}ms</span>`
+        });
+      }
+      if (info.managed) details.push({ label: 'Managed', value: info.managed });
 
       return `
-        <div class="service-card">
+        <div class="service-card clickable ${isSelected ? 'selected' : ''}"
+             onclick="ServicesView.selectService('${key}')">
           <div class="service-card-header">
             <div class="flex items-center gap-sm">
               <span class="text-xl">${info.icon}</span>
@@ -1192,11 +1646,20 @@ const ServicesView = {
               </div>
             `).join('')}
           </div>
-          <div class="service-card-actions">
-            <button class="btn btn-sm btn-secondary" onclick="ServicesView.restart('${key}')">
+
+          <div class="health-history" title="24h uptime: ${uptime}%">
+            ${healthBlocks.map(status => `<div class="health-block ${status}"></div>`).join('')}
+          </div>
+          <div class="health-summary">
+            <span>24h Health</span>
+            <span class="${uptime >= 95 ? 'text-success' : uptime >= 80 ? 'text-warning' : 'text-error'}">${uptime}% uptime</span>
+          </div>
+
+          <div class="service-card-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-sm btn-secondary" onclick="ServicesView.confirmRestart('${key}')">
               ${Icons.refreshCw} Restart
             </button>
-            <button class="btn btn-sm btn-danger" onclick="ServicesView.stop('${key}')">
+            <button class="btn btn-sm btn-danger" onclick="ServicesView.confirmStop('${key}')">
               ${Icons.square} Stop
             </button>
           </div>
@@ -1204,13 +1667,388 @@ const ServicesView = {
       `;
     }).join('');
 
-    document.getElementById('services-list').innerHTML = html;
+    const servicesList = document.getElementById('services-list');
+    if (servicesList) {
+      servicesList.innerHTML = html;
+    }
+  },
+
+  selectService(serviceKey) {
+    this.selectedService = serviceKey;
+    this.renderServices();  // Re-render to update selection state
+    this.renderDetailPanel(serviceKey);
+  },
+
+  renderDetailPanel(serviceKey) {
+    const svc = this.services[serviceKey];
+    const info = this.serviceInfo[serviceKey] || { name: serviceKey, icon: Icons.server };
+    const panel = document.getElementById('service-detail-panel');
+
+    if (!panel || !svc) return;
+
+    const uptime = this.calculateUptime(serviceKey);
+    const isTmux = info.isTmux;
+
+    panel.innerHTML = `
+      <div class="detail-header">
+        <div class="detail-header-top">
+          <div class="detail-service-name">
+            <span class="text-2xl">${info.icon}</span>
+            <div>
+              <h3>${info.name}</h3>
+              <div class="detail-description">${info.description || ''}</div>
+            </div>
+          </div>
+          ${Components.statusBadge(svc.status)}
+        </div>
+      </div>
+
+      <div class="detail-content">
+        <div class="detail-section">
+          <div class="detail-section-title">Status Information</div>
+          <div class="detail-stats">
+            <div class="detail-stat">
+              <div class="detail-stat-label">Status</div>
+              <div class="detail-stat-value ${svc.status === 'up' ? 'text-success' : 'text-error'}">
+                ${svc.status === 'up' || svc.status === 'running' ? 'Running' : 'Stopped'}
+              </div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Uptime (24h)</div>
+              <div class="detail-stat-value ${uptime >= 95 ? 'text-success' : uptime >= 80 ? 'text-warning' : 'text-error'}">
+                ${uptime}%
+              </div>
+            </div>
+            ${svc.pid ? `
+              <div class="detail-stat">
+                <div class="detail-stat-label">Process ID</div>
+                <div class="detail-stat-value">${svc.pid}</div>
+              </div>
+            ` : ''}
+            ${info.port ? `
+              <div class="detail-stat">
+                <div class="detail-stat-label">Port</div>
+                <div class="detail-stat-value">${info.port}</div>
+              </div>
+            ` : ''}
+            ${svc.latency_ms ? `
+              <div class="detail-stat">
+                <div class="detail-stat-label">Latency</div>
+                <div class="detail-stat-value">
+                  <span class="latency-indicator">
+                    <span class="latency-dot latency-${this.getLatencyClass(svc.latency_ms)}"></span>
+                    ${svc.latency_ms}ms
+                  </span>
+                </div>
+              </div>
+            ` : ''}
+            <div class="detail-stat">
+              <div class="detail-stat-label">Managed By</div>
+              <div class="detail-stat-value">${info.managed || 'Unknown'}</div>
+            </div>
+            ${svc.attached !== undefined ? `
+              <div class="detail-stat">
+                <div class="detail-stat-label">Attached</div>
+                <div class="detail-stat-value">${svc.attached ? 'Yes' : 'No'}</div>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+
+        ${isTmux ? `
+          <div class="detail-section">
+            <div class="terminal-viewer-header">
+              <div class="detail-section-title">Terminal Output</div>
+              <div class="terminal-viewer-controls">
+                <label class="terminal-auto-refresh">
+                  <input type="checkbox" id="screen-auto-refresh" checked onchange="ServicesView.toggleScreenAutoRefresh(this.checked)">
+                  Auto-refresh (5s)
+                </label>
+                <button class="btn btn-sm btn-secondary" onclick="ServicesView.refreshScreen()">
+                  ${Icons.refresh}
+                </button>
+                <button class="btn btn-sm btn-secondary" onclick="ServicesView.clearScreen()">
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div class="terminal-viewer" id="terminal-output">Loading...</div>
+            <div class="send-command-container">
+              <input type="text" id="terminal-command" placeholder="Type a command..."
+                     onkeypress="if(event.key==='Enter')ServicesView.sendCommand()">
+              <button class="btn btn-sm btn-primary" onclick="ServicesView.sendCommand()">
+                Send
+              </button>
+            </div>
+          </div>
+        ` : `
+          <div class="detail-section">
+            <div class="detail-section-title">Health Checks</div>
+            <div id="health-check-results">
+              <div class="text-muted">Loading health check data...</div>
+            </div>
+          </div>
+        `}
+      </div>
+
+      <div class="detail-actions">
+        <button class="btn btn-secondary" onclick="ServicesView.confirmRestart('${serviceKey}')">
+          ${Icons.refreshCw} Restart Service
+        </button>
+        <button class="btn btn-danger" onclick="ServicesView.confirmStop('${serviceKey}')">
+          ${Icons.square} Stop Service
+        </button>
+        ${!isTmux && info.port ? `
+          <button class="btn btn-secondary" onclick="ServicesView.viewLogs('${serviceKey}')">
+            ${Icons.fileText} View Logs
+          </button>
+        ` : ''}
+      </div>
+    `;
+
+    // Load terminal output for tmux sessions
+    if (isTmux) {
+      this.refreshScreen();
+      this.startScreenAutoRefresh();
+    } else {
+      this.stopScreenAutoRefresh();
+      this.loadHealthChecks(serviceKey);
+    }
+  },
+
+  async loadHealthChecks(serviceKey) {
+    const container = document.getElementById('health-check-results');
+    if (!container) return;
+
+    const info = this.serviceInfo[serviceKey];
+    const svc = this.services[serviceKey];
+
+    if (!info || !info.port) {
+      container.innerHTML = '<div class="text-muted">No health endpoint configured</div>';
+      return;
+    }
+
+    // Display recent health status
+    const history = this.healthHistory[serviceKey] || [];
+    const recentChecks = history.slice(-10).reverse();
+
+    if (recentChecks.length === 0) {
+      container.innerHTML = '<div class="text-muted">No health check history available</div>';
+      return;
+    }
+
+    container.innerHTML = `
+      <div class="health-check-list">
+        ${recentChecks.map((check, idx) => {
+          const time = new Date(check.timestamp).toLocaleTimeString();
+          return `
+            <div class="service-card-detail">
+              <span class="text-muted">${time}</span>
+              <span class="${check.status === 'healthy' ? 'text-success' : 'text-error'}">
+                ${check.status === 'healthy' ? 'Healthy' : 'Unhealthy'}
+              </span>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  },
+
+  startScreenAutoRefresh() {
+    this.stopScreenAutoRefresh();
+    const checkbox = document.getElementById('screen-auto-refresh');
+    if (checkbox && checkbox.checked) {
+      this.screenRefreshInterval = setInterval(() => {
+        this.refreshScreen();
+      }, 5000);
+    }
+  },
+
+  stopScreenAutoRefresh() {
+    if (this.screenRefreshInterval) {
+      clearInterval(this.screenRefreshInterval);
+      this.screenRefreshInterval = null;
+    }
+  },
+
+  toggleScreenAutoRefresh(enabled) {
+    if (enabled) {
+      this.startScreenAutoRefresh();
+    } else {
+      this.stopScreenAutoRefresh();
+    }
+  },
+
+  async refreshScreen() {
+    if (!this.selectedService) return;
+
+    const info = this.serviceInfo[this.selectedService];
+    if (!info || !info.tmuxSession) return;
+
+    const terminal = document.getElementById('terminal-output');
+    if (!terminal) return;
+
+    try {
+      const data = await API.get(`/api/screen/${info.tmuxSession}?lines=60`);
+      if (data.content) {
+        terminal.textContent = this.escapeTerminalContent(data.content);
+        terminal.scrollTop = terminal.scrollHeight;
+      } else if (data.error) {
+        terminal.textContent = `Error: ${data.error}`;
+      }
+    } catch (error) {
+      terminal.textContent = `Failed to load: ${error.message}`;
+    }
+  },
+
+  escapeTerminalContent(content) {
+    // Remove ANSI escape codes but keep the text structure
+    return content
+      .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')  // ANSI escape sequences
+      .replace(/\x1b\].*?\x07/g, '')           // OSC sequences
+      .replace(/\r/g, '');                      // Carriage returns
+  },
+
+  async sendCommand() {
+    const input = document.getElementById('terminal-command');
+    if (!input || !input.value.trim()) return;
+
+    const command = input.value.trim();
+
+    // Show confirmation for potentially dangerous commands
+    const dangerousPatterns = ['/clear', 'exit', 'kill', 'rm ', 'shutdown'];
+    const isDangerous = dangerousPatterns.some(p => command.toLowerCase().includes(p));
+
+    if (isDangerous) {
+      if (!confirm(`This command may be destructive. Are you sure you want to send:\n\n${command}`)) {
+        return;
+      }
+    }
+
+    const info = this.serviceInfo[this.selectedService];
+    if (!info || !info.tmuxSession) return;
+
+    try {
+      await API.post(`/api/send/${info.tmuxSession}?text=${encodeURIComponent(command)}`);
+      input.value = '';
+      Toast.success('Sent', 'Command sent to session');
+
+      // Refresh screen after a short delay
+      setTimeout(() => this.refreshScreen(), 500);
+    } catch (error) {
+      Toast.error('Error', `Failed to send command: ${error.message}`);
+    }
+  },
+
+  async clearScreen() {
+    const info = this.serviceInfo[this.selectedService];
+    if (!info || !info.tmuxSession) return;
+
+    if (!confirm('Send /clear to the session? This will clear the Claude Code context.')) {
+      return;
+    }
+
+    try {
+      await API.post(`/api/send/${info.tmuxSession}?text=${encodeURIComponent('/clear')}`);
+      Toast.success('Sent', 'Clear command sent');
+      setTimeout(() => this.refreshScreen(), 1000);
+    } catch (error) {
+      Toast.error('Error', `Failed to clear: ${error.message}`);
+    }
+  },
+
+  viewLogs(serviceKey) {
+    // Navigate to logs view with service filter
+    Router.navigate('/logs');
+    // The logs view should pick up the service filter
+    setTimeout(() => {
+      const searchInput = document.querySelector('.data-table-search input');
+      if (searchInput) {
+        searchInput.value = this.serviceInfo[serviceKey]?.name || serviceKey;
+        searchInput.dispatchEvent(new Event('input'));
+      }
+    }, 100);
+  },
+
+  confirmRestart(serviceKey) {
+    const info = this.serviceInfo[serviceKey] || { name: serviceKey };
+
+    Modal.open({
+      title: 'Confirm Restart',
+      content: `
+        <div class="confirm-content">
+          <div class="confirm-icon">${Icons.refreshCw}</div>
+          <div class="confirm-title">Restart ${info.name}?</div>
+          <div class="confirm-message">
+            This will restart the service. It may take a few seconds to come back online.
+          </div>
+        </div>
+      `,
+      footer: `
+        <div class="confirm-buttons">
+          <button class="btn btn-secondary" onclick="Modal.close()">Cancel</button>
+          <button class="btn btn-primary" onclick="ServicesView.restart('${serviceKey}')">
+            ${Icons.refreshCw} Restart
+          </button>
+        </div>
+      `,
+    });
+  },
+
+  confirmStop(serviceKey) {
+    const info = this.serviceInfo[serviceKey] || { name: serviceKey };
+
+    Modal.open({
+      title: 'Confirm Stop',
+      content: `
+        <div class="confirm-content">
+          <div class="confirm-icon" style="color: var(--status-error);">${Icons.alertCircle}</div>
+          <div class="confirm-title">Stop ${info.name}?</div>
+          <div class="confirm-message">
+            This will stop the service. You will need to restart it manually.
+          </div>
+        </div>
+      `,
+      footer: `
+        <div class="confirm-buttons">
+          <button class="btn btn-secondary" onclick="Modal.close()">Cancel</button>
+          <button class="btn btn-danger" onclick="ServicesView.stop('${serviceKey}')">
+            ${Icons.square} Stop
+          </button>
+        </div>
+      `,
+    });
+  },
+
+  confirmRestartAll() {
+    Modal.open({
+      title: 'Confirm Restart All',
+      content: `
+        <div class="confirm-content">
+          <div class="confirm-icon" style="color: var(--status-paused);">${Icons.alertCircle}</div>
+          <div class="confirm-title">Restart All Services?</div>
+          <div class="confirm-message">
+            This will restart all services simultaneously. The system may be temporarily unavailable.
+          </div>
+        </div>
+      `,
+      footer: `
+        <div class="confirm-buttons">
+          <button class="btn btn-secondary" onclick="Modal.close()">Cancel</button>
+          <button class="btn btn-primary" onclick="ServicesView.restartAll()">
+            ${Icons.refreshCw} Restart All
+          </button>
+        </div>
+      `,
+    });
   },
 
   async restart(service) {
+    Modal.close();
+
     try {
       await API.post(`/api/restart/${service}`);
-      Toast.success('Restarting', `${Format.serviceName(service)} is restarting`);
+      Toast.success('Restarting', `${this.serviceInfo[service]?.name || service} is restarting`);
       setTimeout(() => this.loadData(), 2000);
     } catch (error) {
       Toast.error('Error', `Failed to restart: ${error.message}`);
@@ -1218,11 +2056,11 @@ const ServicesView = {
   },
 
   async stop(service) {
-    if (!confirm(`Are you sure you want to stop ${Format.serviceName(service)}?`)) return;
+    Modal.close();
 
     try {
       await API.post(`/api/stop/${service}`);
-      Toast.success('Stopped', `${Format.serviceName(service)} has been stopped`);
+      Toast.success('Stopped', `${this.serviceInfo[service]?.name || service} has been stopped`);
       setTimeout(() => this.loadData(), 1000);
     } catch (error) {
       Toast.error('Error', `Failed to stop: ${error.message}`);
@@ -1230,7 +2068,7 @@ const ServicesView = {
   },
 
   async restartAll() {
-    if (!confirm('Are you sure you want to restart all services?')) return;
+    Modal.close();
 
     try {
       await API.post('/api/restart-all');
@@ -1244,6 +2082,12 @@ const ServicesView = {
   async refresh() {
     await this.loadData();
     Toast.info('Refreshed', 'Service status updated');
+  },
+
+  // Cleanup when leaving the view
+  destroy() {
+    this.stopAutoRefresh();
+    this.selectedService = null;
   },
 };
 
@@ -1496,113 +2340,347 @@ const LogsView = {
 
 
 /**
- * Files View - Configuration file browser
+ * Files View - Enhanced Configuration File Browser
+ * Features: File tree, syntax highlighting, editing, search, tabs, markdown preview
  */
 const FilesView = {
   title: 'Files',
+  files: [], skills: [], currentFile: null, openTabs: [], activeTabIndex: -1,
+  isEditing: false, hasUnsavedChanges: false, originalContent: '',
+  searchQuery: '', searchMatches: [], searchCurrentIndex: -1, fileCache: {},
+  expandedFolders: { skills: false, logs: false }, maxDisplayLines: 1000, isPreviewMode: false,
 
-  async render(container) {
-    container.innerHTML = `
-      <div class="animate-fade-in">
-        <div class="flex justify-between items-center mb-lg">
-          <div>
-            <h2>Configuration Files</h2>
-            <p class="text-secondary">View and edit configuration files</p>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-4 gap-md">
-          <div class="card">
-            <div class="card-header">
-              <h3 class="card-title">Files</h3>
-            </div>
-            <div class="card-body p-0" id="file-list">
-              ${Components.skeleton('text', 8)}
-            </div>
-          </div>
-
-          <div class="col-span-3 card">
-            <div class="card-header">
-              <h3 class="card-title" id="file-name">Select a file</h3>
-              <div class="flex gap-sm">
-                <button class="btn btn-sm btn-secondary" id="btn-save" disabled onclick="FilesView.save()">
-                  ${Icons.save} Save
-                </button>
-              </div>
-            </div>
-            <div class="card-body">
-              <div id="file-content" class="code-block" style="min-height: 400px;">
-                Select a file from the list to view its contents.
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    await this.loadFiles();
+  categories: {
+    config: { files: ['CLAUDE.md', 'PETERBOT_SOUL.md', 'SCHEDULE.md', 'HEARTBEAT.md', 'USER.md', 'Bot Config'] },
+    code: { files: ['Router', 'Parser'] }
   },
 
-  async loadFiles() {
+  async render(container) {
+    this.setupBeforeUnloadWarning();
+    container.innerHTML = `
+      <div class="animate-fade-in files-view">
+        <div class="flex justify-between items-center mb-md">
+          <div><h2>File Manager</h2><p class="text-secondary">Browse, view, and edit configuration files</p></div>
+          <button class="btn btn-secondary" onclick="FilesView.refresh()">${Icons.refresh} Refresh</button>
+        </div>
+        <div class="file-tabs-container mb-md" id="file-tabs" style="display: none;"><div class="file-tabs" id="file-tabs-list"></div></div>
+        <div class="files-layout">
+          <div class="file-tree-sidebar card">
+            <div class="card-header"><h3 class="card-title">${Icons.folder} Files</h3></div>
+            <div class="card-body p-0" id="file-tree">${Components.skeleton('text', 10)}</div>
+          </div>
+          <div class="file-content-area">
+            <div class="file-info-bar card mb-md" id="file-info-bar" style="display: none;">
+              <div class="card-body py-sm"><div class="flex justify-between items-center">
+                <div class="flex items-center gap-md"><span class="file-info-path" id="file-info-path"></span><span class="file-info-meta text-muted text-sm" id="file-info-meta"></span></div>
+                <div class="flex items-center gap-sm"><span class="file-info-type status-badge idle" id="file-info-type"></span></div>
+              </div></div>
+            </div>
+            <div class="file-toolbar card mb-md" id="file-toolbar" style="display: none;">
+              <div class="card-body py-sm"><div class="flex justify-between items-center">
+                <div class="flex items-center gap-sm">
+                  <button class="btn btn-sm btn-secondary" id="btn-edit" onclick="FilesView.toggleEdit()">${Icons.code} Edit</button>
+                  <button class="btn btn-sm btn-secondary" id="btn-preview" onclick="FilesView.togglePreview()" style="display: none;">${Icons.fileText} Preview</button>
+                  <span class="toolbar-divider"></span>
+                  <button class="btn btn-sm btn-primary" id="btn-save" onclick="FilesView.save()" style="display: none;">${Icons.save} Save</button>
+                  <button class="btn btn-sm btn-ghost" id="btn-cancel" onclick="FilesView.cancelEdit()" style="display: none;">Cancel</button>
+                </div>
+                <div class="flex items-center gap-sm">
+                  <div class="file-search-box"><span class="file-search-icon">${Icons.search}</span>
+                    <input type="text" id="file-search-input" placeholder="Search in file..." oninput="FilesView.searchInFile(this.value)" onkeydown="FilesView.handleSearchKeydown(event)">
+                    <span class="file-search-nav" id="file-search-nav" style="display: none;"><span id="file-search-count">0/0</span>
+                      <button class="btn btn-sm btn-ghost" onclick="FilesView.prevMatch()">${Icons.chevronLeft}</button>
+                      <button class="btn btn-sm btn-ghost" onclick="FilesView.nextMatch()">${Icons.chevronRight}</button>
+                    </span>
+                  </div>
+                </div>
+              </div></div>
+            </div>
+            <div class="file-content-card card"><div class="card-body p-0">
+              <div id="file-viewer-container" class="file-viewer-container">
+                <div class="file-placeholder"><div class="empty-state"><div class="empty-state-icon">${Icons.fileText}</div><div class="empty-state-title">Select a file</div><div class="empty-state-description">Choose a file from the tree to view its contents</div></div></div>
+              </div>
+            </div></div>
+          </div>
+        </div>
+      </div>`;
+    await this.loadData();
+  },
+
+  async loadData() {
     try {
-      const data = await API.get('/api/files');
-      const files = data.files || data || [];
-      this.renderFileList(files);
+      const [filesData, skillsData] = await Promise.all([API.get('/api/files'), API.get('/api/skills').catch(() => ({ skills: [] }))]);
+      this.files = filesData.files || filesData || [];
+      this.skills = skillsData.skills || [];
+      this.renderFileTree();
     } catch (error) {
       console.error('Failed to load files:', error);
-      document.getElementById('file-list').innerHTML = `
-        <div class="p-md text-muted">Failed to load files</div>
-      `;
+      document.getElementById('file-tree').innerHTML = `<div class="p-md text-muted">Failed to load files. <button class="btn btn-sm btn-secondary" onclick="FilesView.loadData()">Retry</button></div>`;
     }
   },
 
-  renderFileList(files) {
-    // Group files by type
-    const windowsFiles = files.filter(f => f.type === 'windows' || !f.type);
-    const wslFiles = files.filter(f => f.type === 'wsl');
+  renderFileTree() {
+    const windowsFiles = this.files.filter(f => f.type === 'windows' || !f.type);
+    const wslFiles = this.files.filter(f => f.type === 'wsl');
+    const configFiles = windowsFiles.filter(f => this.categories.config.files.includes(f.name));
+    const codeFiles = windowsFiles.filter(f => this.categories.code.files.includes(f.name));
+    document.getElementById('file-tree').innerHTML = `<div class="file-tree">
+      <div class="file-tree-section"><div class="file-tree-header"><span class="file-tree-icon">${Icons.settings}</span><span class="file-tree-label">Config Files</span></div><div class="file-tree-items">${configFiles.map(f => this.renderFileItem(f)).join('')}</div></div>
+      <div class="file-tree-section"><div class="file-tree-header"><span class="file-tree-icon">${Icons.code}</span><span class="file-tree-label">Code Files</span></div><div class="file-tree-items">${codeFiles.map(f => this.renderFileItem(f)).join('')}</div></div>
+      <div class="file-tree-section"><div class="file-tree-header file-tree-folder" onclick="FilesView.toggleFolder('skills')"><span class="file-tree-expand ${this.expandedFolders.skills ? 'expanded' : ''}">${Icons.chevronRight}</span><span class="file-tree-icon">${Icons.folder}</span><span class="file-tree-label">Skills</span><span class="file-tree-badge">${this.skills.length}</span></div><div class="file-tree-items file-tree-folder-items ${this.expandedFolders.skills ? 'expanded' : ''}" id="skills-folder">${this.skills.map(s => `<div class="file-tree-item" onclick="FilesView.loadSkill('${s.name}')"><span class="file-tree-icon">${Icons.book}</span><span class="file-tree-label">${s.name}</span></div>`).join('')}</div></div>
+      <div class="file-tree-section"><div class="file-tree-header"><span class="file-tree-icon">${Icons.terminal}</span><span class="file-tree-label">WSL Files</span></div><div class="file-tree-items">${wslFiles.map(f => this.renderFileItem(f)).join('')}</div></div>
+      <div class="file-tree-section"><div class="file-tree-header file-tree-folder" onclick="FilesView.toggleFolder('logs')"><span class="file-tree-expand ${this.expandedFolders.logs ? 'expanded' : ''}">${Icons.chevronRight}</span><span class="file-tree-icon">${Icons.folder}</span><span class="file-tree-label">Logs</span></div><div class="file-tree-items file-tree-folder-items ${this.expandedFolders.logs ? 'expanded' : ''}" id="logs-folder"><div class="file-tree-item" onclick="FilesView.loadLog('bot')"><span class="file-tree-icon">${Icons.fileText}</span><span class="file-tree-label">discord_bot.log</span></div><div class="file-tree-item" onclick="FilesView.loadLog('raw_capture')"><span class="file-tree-icon">${Icons.fileText}</span><span class="file-tree-label">raw_capture.log</span></div></div></div>
+    </div>`;
+  },
 
-    const html = `
-      <div class="p-sm">
-        <div class="text-xs font-semibold text-muted mb-sm">WINDOWS FILES</div>
-        ${windowsFiles.map(f => `
-          <div class="sidebar-item" onclick="FilesView.loadFile('${f.name}', '${f.type || 'windows'}')">
-            <span class="sidebar-item-icon">${Icons.file}</span>
-            <span class="sidebar-item-label">${f.name}</span>
-          </div>
-        `).join('')}
+  renderFileItem(file) {
+    const icon = this.getFileIcon(file.name);
+    const activeClass = this.currentFile && this.currentFile.name === file.name ? 'active' : '';
+    return `<div class="file-tree-item ${activeClass}" onclick="FilesView.loadFile('${file.name}', '${file.type || 'windows'}')"><span class="file-tree-icon">${icon}</span><span class="file-tree-label">${file.name}</span></div>`;
+  },
 
-        ${wslFiles.length ? `
-          <div class="text-xs font-semibold text-muted mt-md mb-sm">WSL FILES</div>
-          ${wslFiles.map(f => `
-            <div class="sidebar-item" onclick="FilesView.loadFile('${f.name}', 'wsl')">
-              <span class="sidebar-item-icon">${Icons.file}</span>
-              <span class="sidebar-item-label">${f.name}</span>
-            </div>
-          `).join('')}
-        ` : ''}
-      </div>
-    `;
+  getFileIcon(filename) {
+    if (filename.endsWith('.md')) return Icons.fileText;
+    if (filename.endsWith('.py')) return Icons.code;
+    if (filename.endsWith('.json')) return Icons.code;
+    if (filename.endsWith('.log')) return Icons.activity;
+    return Icons.file;
+  },
 
-    document.getElementById('file-list').innerHTML = html;
+  getFileType(filename) {
+    if (filename.endsWith('.md')) return 'markdown';
+    if (filename.endsWith('.py')) return 'python';
+    if (filename.endsWith('.json')) return 'json';
+    if (filename.endsWith('.log')) return 'log';
+    return 'text';
+  },
+
+  toggleFolder(folder) {
+    this.expandedFolders[folder] = !this.expandedFolders[folder];
+    const folderEl = document.getElementById(`${folder}-folder`);
+    const expandIcon = folderEl?.parentElement?.querySelector('.file-tree-expand');
+    if (folderEl) folderEl.classList.toggle('expanded', this.expandedFolders[folder]);
+    if (expandIcon) expandIcon.classList.toggle('expanded', this.expandedFolders[folder]);
   },
 
   async loadFile(name, type) {
+    if (this.hasUnsavedChanges && !confirm('You have unsaved changes. Discard them?')) return;
     try {
-      const data = await API.get(`/api/file/${type}/${encodeURIComponent(name)}`);
-      document.getElementById('file-name').textContent = name;
-      document.getElementById('file-content').textContent = data.content || 'Empty file';
-      document.getElementById('btn-save').disabled = false;
-      this.currentFile = { name, type };
-    } catch (error) {
-      Toast.error('Error', `Failed to load file: ${error.message}`);
+      const cacheKey = `${type}:${name}`;
+      let data = this.fileCache[cacheKey];
+      if (!data) { this.showLoading(); data = await API.get(`/api/file/${type}/${encodeURIComponent(name)}`); this.fileCache[cacheKey] = data; }
+      const fileInfo = this.files.find(f => f.name === name && (f.type || 'windows') === type);
+      this.currentFile = { name, type, content: data.content || '', path: fileInfo?.path || name, modified: fileInfo?.modified, size: data.size };
+      this.originalContent = this.currentFile.content;
+      this.hasUnsavedChanges = false; this.isEditing = false; this.isPreviewMode = false; this.searchMatches = []; this.searchCurrentIndex = -1;
+      this.addTab(name, type); this.showFileInfo(); this.showToolbar(); this.renderFileContent();
+    } catch (error) { Toast.error('Error', `Failed to load file: ${error.message}`); }
+  },
+
+  async loadSkill(skillName) {
+    if (this.hasUnsavedChanges && !confirm('You have unsaved changes. Discard them?')) return;
+    try {
+      this.showLoading();
+      const data = await API.get(`/api/skill/${encodeURIComponent(skillName)}`);
+      this.currentFile = { name: `${skillName}/SKILL.md`, type: 'skill', content: data.content || '', path: `/home/chris_hadley/peterbot/.claude/skills/${skillName}/SKILL.md`, skillName };
+      this.originalContent = this.currentFile.content; this.hasUnsavedChanges = false; this.isEditing = false; this.isPreviewMode = false;
+      this.addTab(`${skillName}/SKILL.md`, 'skill'); this.showFileInfo(); this.showToolbar(); this.renderFileContent();
+    } catch (error) { Toast.error('Error', `Failed to load skill: ${error.message}`); }
+  },
+
+  async loadLog(logType) {
+    try {
+      this.showLoading();
+      let data = logType === 'bot' ? await API.get('/api/logs/bot') : await API.get('/api/captures');
+      this.currentFile = { name: `${logType}.log`, type: 'log', content: data.content || data.logs || 'No log content available', path: logType === 'bot' ? 'logs/bot.log' : 'raw_capture.log', readOnly: true };
+      this.originalContent = this.currentFile.content; this.hasUnsavedChanges = false; this.isEditing = false; this.isPreviewMode = false;
+      this.addTab(`${logType}.log`, 'log'); this.showFileInfo(); this.showToolbar(); this.renderFileContent();
+    } catch (error) { Toast.error('Error', `Failed to load log: ${error.message}`); }
+  },
+
+  showLoading() { document.getElementById('file-viewer-container').innerHTML = `<div class="file-loading"><div class="spinner"></div><span>Loading file...</span></div>`; },
+
+  showFileInfo() {
+    const infoBar = document.getElementById('file-info-bar');
+    if (!this.currentFile) { infoBar.style.display = 'none'; return; }
+    infoBar.style.display = 'block';
+    document.getElementById('file-info-path').textContent = this.currentFile.path;
+    const meta = [];
+    if (this.currentFile.modified) meta.push(`Modified: ${Format.datetime(this.currentFile.modified)}`);
+    if (this.currentFile.size) meta.push(`Size: ${Format.bytes(this.currentFile.size)}`);
+    meta.push(`${this.currentFile.content.split('\n').length} lines`);
+    document.getElementById('file-info-meta').textContent = meta.join(' | ');
+    document.getElementById('file-info-type').textContent = this.getFileType(this.currentFile.name).toUpperCase();
+  },
+
+  showToolbar() {
+    document.getElementById('file-toolbar').style.display = 'block';
+    document.getElementById('btn-preview').style.display = this.currentFile.name.endsWith('.md') ? 'inline-flex' : 'none';
+    document.getElementById('btn-edit').style.display = this.currentFile.readOnly ? 'none' : 'inline-flex';
+  },
+
+  renderFileContent() {
+    const container = document.getElementById('file-viewer-container');
+    const content = this.currentFile.content, fileType = this.getFileType(this.currentFile.name);
+    const lines = content.split('\n'), displayLines = lines.slice(0, this.maxDisplayLines), hasMore = lines.length > this.maxDisplayLines;
+    if (this.isEditing) {
+      container.innerHTML = `<div class="file-editor-container"><textarea id="file-editor" class="file-editor" oninput="FilesView.onEditorChange()">${Utils.escapeHtml(content)}</textarea></div>${hasMore ? `<div class="file-truncated-warning">Note: File has ${lines.length} lines.</div>` : ''}`;
+      document.getElementById('file-editor').focus();
+    } else if (this.isPreviewMode && this.currentFile.name.endsWith('.md')) {
+      container.innerHTML = `<div class="markdown-preview">${this.renderMarkdown(content)}</div>`;
+    } else {
+      const highlightedLines = displayLines.map((line, idx) => `<div class="file-line" data-line="${idx + 1}"><span class="file-line-number">${idx + 1}</span><span class="file-line-content">${this.highlightSyntax(line, fileType)}</span></div>`).join('');
+      container.innerHTML = `<div class="file-viewer" id="file-viewer">${highlightedLines}</div>${hasMore ? `<div class="file-load-more"><button class="btn btn-secondary" onclick="FilesView.loadMoreLines()">Load more (${lines.length - this.maxDisplayLines} remaining)</button></div>` : ''}`;
     }
   },
 
+  highlightSyntax(line, fileType) {
+    let escaped = Utils.escapeHtml(line);
+    if (fileType === 'markdown') {
+      escaped = escaped.replace(/^(#{1,6})\s+(.*)$/, '<span class="syntax-header">$1 $2</span>');
+      escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<span class="syntax-bold">**$1**</span>');
+      escaped = escaped.replace(/`([^`]+)`/g, '<span class="syntax-code">`$1`</span>');
+      escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span class="syntax-link">[$1]($2)</span>');
+    } else if (fileType === 'python') {
+      escaped = escaped.replace(/\b(def|class|import|from|if|elif|else|for|while|try|except|finally|with|as|return|yield|raise|pass|break|continue|and|or|not|in|is|None|True|False|self|async|await|lambda)\b/g, '<span class="syntax-keyword">$1</span>');
+      escaped = escaped.replace(/(["'])(?:(?!\1)[^\\]|\\.)*\1/g, '<span class="syntax-string">$&</span>');
+      escaped = escaped.replace(/(#.*)$/, '<span class="syntax-comment">$1</span>');
+    } else if (fileType === 'json') {
+      escaped = escaped.replace(/"([^"]+)":/g, '<span class="syntax-key">"$1"</span>:');
+      escaped = escaped.replace(/:\s*"([^"]*)"(,?)/g, ': <span class="syntax-string">"$1"</span>$2');
+      escaped = escaped.replace(/:\s*(true|false|null)(,?)/g, ': <span class="syntax-keyword">$1</span>$2');
+    } else if (fileType === 'log') {
+      escaped = escaped.replace(/^(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2})/g, '<span class="syntax-timestamp">$1</span>');
+      escaped = escaped.replace(/\[(ERROR|WARN|WARNING)\]/gi, '<span class="syntax-error">[$1]</span>');
+      escaped = escaped.replace(/\[(INFO)\]/gi, '<span class="syntax-info">[$1]</span>');
+    }
+    return escaped;
+  },
+
+  loadMoreLines() { this.maxDisplayLines += 1000; this.renderFileContent(); },
+
+  addTab(name, type) {
+    const existingIdx = this.openTabs.findIndex(t => t.name === name && t.type === type);
+    if (existingIdx >= 0) this.activeTabIndex = existingIdx;
+    else { this.openTabs.push({ name, type }); this.activeTabIndex = this.openTabs.length - 1; }
+    this.renderTabs();
+  },
+
+  renderTabs() {
+    const tabsContainer = document.getElementById('file-tabs'), tabsList = document.getElementById('file-tabs-list');
+    if (this.openTabs.length === 0) { tabsContainer.style.display = 'none'; return; }
+    tabsContainer.style.display = 'block';
+    tabsList.innerHTML = this.openTabs.map((tab, idx) => {
+      const isActive = idx === this.activeTabIndex, hasChanges = isActive && this.hasUnsavedChanges;
+      return `<div class="file-tab ${isActive ? 'active' : ''} ${hasChanges ? 'unsaved' : ''}" onclick="FilesView.switchTab(${idx})"><span class="file-tab-icon">${this.getFileIcon(tab.name)}</span><span class="file-tab-name">${tab.name}${hasChanges ? ' *' : ''}</span><button class="file-tab-close" onclick="event.stopPropagation(); FilesView.closeTab(${idx})">${Icons.x}</button></div>`;
+    }).join('');
+  },
+
+  switchTab(idx) {
+    if (idx === this.activeTabIndex) return;
+    const tab = this.openTabs[idx];
+    if (tab.type === 'skill') this.loadSkill(tab.name.replace('/SKILL.md', ''));
+    else if (tab.type === 'log') this.loadLog(tab.name.replace('.log', ''));
+    else this.loadFile(tab.name, tab.type);
+  },
+
+  closeTab(idx) {
+    if (idx === this.activeTabIndex && this.hasUnsavedChanges && !confirm('You have unsaved changes. Discard them?')) return;
+    this.openTabs.splice(idx, 1);
+    if (this.openTabs.length === 0) {
+      this.currentFile = null; this.activeTabIndex = -1; this.hasUnsavedChanges = false;
+      document.getElementById('file-info-bar').style.display = 'none';
+      document.getElementById('file-toolbar').style.display = 'none';
+      document.getElementById('file-viewer-container').innerHTML = `<div class="file-placeholder"><div class="empty-state"><div class="empty-state-icon">${Icons.fileText}</div><div class="empty-state-title">Select a file</div><div class="empty-state-description">Choose a file from the tree to view its contents</div></div></div>`;
+    } else if (idx <= this.activeTabIndex) { this.activeTabIndex = Math.max(0, this.activeTabIndex - 1); this.switchTab(this.activeTabIndex); }
+    this.renderTabs();
+  },
+
+  toggleEdit() {
+    if (this.currentFile.readOnly) { Toast.warning('Read Only', 'This file cannot be edited'); return; }
+    this.isEditing = !this.isEditing; this.isPreviewMode = false;
+    const editBtn = document.getElementById('btn-edit'), saveBtn = document.getElementById('btn-save'), cancelBtn = document.getElementById('btn-cancel'), previewBtn = document.getElementById('btn-preview');
+    if (this.isEditing) { editBtn.innerHTML = `${Icons.fileText} View`; saveBtn.style.display = 'inline-flex'; cancelBtn.style.display = 'inline-flex'; previewBtn.style.display = 'none'; }
+    else { editBtn.innerHTML = `${Icons.code} Edit`; saveBtn.style.display = 'none'; cancelBtn.style.display = 'none'; previewBtn.style.display = this.currentFile.name.endsWith('.md') ? 'inline-flex' : 'none'; }
+    this.renderFileContent();
+  },
+
+  onEditorChange() {
+    const editor = document.getElementById('file-editor');
+    if (editor) { this.currentFile.content = editor.value; this.hasUnsavedChanges = editor.value !== this.originalContent; this.renderTabs(); }
+  },
+
   async save() {
-    if (!this.currentFile) return;
-    Toast.info('Info', 'Save functionality coming soon');
+    if (!this.currentFile || !this.hasUnsavedChanges) return;
+    try {
+      const { name, type, content } = this.currentFile;
+      if (type === 'skill') { Toast.warning('Cannot Save', 'Skill files cannot be saved from here yet'); return; }
+      await API.put(`/api/file/write/${type}/${encodeURIComponent(name)}?content=${encodeURIComponent(content)}`);
+      this.originalContent = content; this.hasUnsavedChanges = false; delete this.fileCache[`${type}:${name}`];
+      Toast.success('Saved', `${name} saved successfully`); this.renderTabs();
+    } catch (error) { Toast.error('Save Failed', error.message); }
+  },
+
+  cancelEdit() {
+    if (this.hasUnsavedChanges && !confirm('Discard unsaved changes?')) return;
+    this.currentFile.content = this.originalContent; this.hasUnsavedChanges = false; this.isEditing = false;
+    document.getElementById('btn-edit').innerHTML = `${Icons.code} Edit`;
+    document.getElementById('btn-save').style.display = 'none';
+    document.getElementById('btn-cancel').style.display = 'none';
+    document.getElementById('btn-preview').style.display = this.currentFile.name.endsWith('.md') ? 'inline-flex' : 'none';
+    this.renderFileContent(); this.renderTabs();
+  },
+
+  togglePreview() {
+    this.isPreviewMode = !this.isPreviewMode;
+    document.getElementById('btn-preview').innerHTML = this.isPreviewMode ? `${Icons.code} Code` : `${Icons.fileText} Preview`;
+    this.renderFileContent();
+  },
+
+  renderMarkdown(content) {
+    let html = Utils.escapeHtml(content);
+    html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>').replace(/^## (.*)$/gm, '<h2>$1</h2>').replace(/^# (.*)$/gm, '<h1>$1</h1>');
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+    html = html.replace(/^\s*[-*+]\s+(.*)$/gm, '<li>$1</li>').replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+    html = html.replace(/\n\n/g, '</p><p>'); html = '<p>' + html + '</p>';
+    return html;
+  },
+
+  searchInFile(query) {
+    this.searchQuery = query;
+    const viewer = document.getElementById('file-viewer'), nav = document.getElementById('file-search-nav'), countEl = document.getElementById('file-search-count');
+    if (!viewer || !query) { nav.style.display = 'none'; this.searchMatches = []; this.searchCurrentIndex = -1; if (this.currentFile && !this.isEditing) this.renderFileContent(); return; }
+    this.searchMatches = [];
+    const lines = viewer.querySelectorAll('.file-line'), regex = new RegExp(Utils.escapeRegex(query), 'gi');
+    lines.forEach((line, idx) => { const content = line.querySelector('.file-line-content'), text = content.textContent; if (regex.test(text)) { this.searchMatches.push(idx); content.innerHTML = text.replace(regex, '<mark class="search-highlight">$&</mark>'); } regex.lastIndex = 0; });
+    if (this.searchMatches.length > 0) { nav.style.display = 'flex'; this.searchCurrentIndex = 0; countEl.textContent = `1/${this.searchMatches.length}`; this.scrollToMatch(0); }
+    else { nav.style.display = 'flex'; countEl.textContent = '0/0'; }
+  },
+
+  handleSearchKeydown(event) { if (event.key === 'Enter') { event.shiftKey ? this.prevMatch() : this.nextMatch(); } else if (event.key === 'Escape') { document.getElementById('file-search-input').value = ''; this.searchInFile(''); } },
+  nextMatch() { if (this.searchMatches.length === 0) return; this.searchCurrentIndex = (this.searchCurrentIndex + 1) % this.searchMatches.length; document.getElementById('file-search-count').textContent = `${this.searchCurrentIndex + 1}/${this.searchMatches.length}`; this.scrollToMatch(this.searchCurrentIndex); },
+  prevMatch() { if (this.searchMatches.length === 0) return; this.searchCurrentIndex = (this.searchCurrentIndex - 1 + this.searchMatches.length) % this.searchMatches.length; document.getElementById('file-search-count').textContent = `${this.searchCurrentIndex + 1}/${this.searchMatches.length}`; this.scrollToMatch(this.searchCurrentIndex); },
+  scrollToMatch(idx) { const viewer = document.getElementById('file-viewer'), lines = viewer.querySelectorAll('.file-line'); lines.forEach(l => l.classList.remove('search-current')); const matchLine = lines[this.searchMatches[idx]]; if (matchLine) { matchLine.classList.add('search-current'); matchLine.scrollIntoView({ behavior: 'smooth', block: 'center' }); } },
+
+  setupBeforeUnloadWarning() { window.addEventListener('beforeunload', (e) => { if (this.hasUnsavedChanges) { e.preventDefault(); e.returnValue = ''; } }); },
+
+  async refresh() {
+    this.fileCache = {};
+    await this.loadData();
+    if (this.currentFile) {
+      const { name, type } = this.currentFile;
+      if (type === 'skill') await this.loadSkill(name.replace('/SKILL.md', ''));
+      else if (type === 'log') await this.loadLog(name.replace('.log', ''));
+      else await this.loadFile(name, type);
+    }
+    Toast.info('Refreshed', 'File list updated');
   },
 };
+
+Utils.escapeRegex = function(string) { return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
 
 
 /**
