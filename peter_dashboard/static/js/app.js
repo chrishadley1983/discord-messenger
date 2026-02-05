@@ -109,6 +109,18 @@ const Utils = {
       }
     };
   },
+
+  renderMarkdown(content) {
+    let html = Utils.escapeHtml(content);
+    html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>').replace(/^## (.*)$/gm, '<h2>$1</h2>').replace(/^# (.*)$/gm, '<h1>$1</h1>');
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+    html = html.replace(/^\s*[-*+]\s+(.*)$/gm, '<li>$1</li>').replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+    html = html.replace(/\n\n/g, '</p><p>'); html = '<p>' + html + '</p>';
+    return html;
+  },
 };
 
 
@@ -1119,8 +1131,10 @@ const JobsView = {
       { key: 'channel', label: 'Channel', sortable: true },
       { key: 'last_run', label: 'Last Run', sortable: true,
         render: (val) => val ? Format.relativeTime(val) : '-' },
+      { key: 'next_run', label: 'Next Run', sortable: true,
+        render: (val) => val ? Format.relativeTime(val) : '-' },
       { key: 'success_rate_24h', label: 'Success Rate', sortable: true,
-        render: (val) => val !== undefined ? `${val}%` : '-' },
+        render: (val) => val != null ? `${val}%` : '-' },
       { key: 'enabled', label: 'Enabled', width: '80px',
         render: (val) => `
           <button class="btn btn-sm btn-ghost" onclick="JobsView.toggleJob(event)">
@@ -1222,8 +1236,13 @@ const ServicesView = {
   tmuxSessions: [],
   selectedService: null,
   healthHistory: {},  // { serviceKey: [{ timestamp, status }] }
+  serverUptimes: {},  // { serviceKey: uptimePercentage } - from server
+  serverHistoryLoaded: false,
   screenRefreshInterval: null,
   autoRefreshInterval: null,
+
+  // LocalStorage key for health history persistence
+  HEALTH_HISTORY_KEY: 'peter_dashboard_health_history',
 
   // Service configuration
   serviceInfo: {
@@ -1316,9 +1335,46 @@ const ServicesView = {
     // Add custom styles for services view
     this.injectStyles();
 
+    // Load health history from localStorage first (for immediate display)
+    this.loadHealthHistoryFromStorage();
+
     // Load data and start auto-refresh
     await this.loadData();
     this.startAutoRefresh();
+  },
+
+  loadHealthHistoryFromStorage() {
+    try {
+      const stored = localStorage.getItem(this.HEALTH_HISTORY_KEY);
+      if (stored) {
+        const data = JSON.parse(stored);
+        // Only use data that's less than 24 hours old
+        const cutoff = Date.now() - (24 * 60 * 60 * 1000);
+        this.healthHistory = {};
+        Object.entries(data).forEach(([key, history]) => {
+          this.healthHistory[key] = history.filter(h => h.timestamp > cutoff);
+        });
+        console.log('[ServicesView] Loaded health history from localStorage:',
+          Object.keys(this.healthHistory).map(k => `${k}: ${this.healthHistory[k].length} records`).join(', '));
+      }
+    } catch (e) {
+      console.warn('[ServicesView] Failed to load health history from storage:', e);
+      this.healthHistory = {};
+    }
+  },
+
+  saveHealthHistoryToStorage() {
+    try {
+      // Only save last 24 hours worth of data to avoid localStorage bloat
+      const cutoff = Date.now() - (24 * 60 * 60 * 1000);
+      const dataToSave = {};
+      Object.entries(this.healthHistory).forEach(([key, history]) => {
+        dataToSave[key] = history.filter(h => h.timestamp > cutoff);
+      });
+      localStorage.setItem(this.HEALTH_HISTORY_KEY, JSON.stringify(dataToSave));
+    } catch (e) {
+      console.warn('[ServicesView] Failed to save health history to storage:', e);
+    }
   },
 
   injectStyles() {
@@ -1627,11 +1683,37 @@ const ServicesView = {
 
   async loadData(silent = false) {
     try {
+      // Fetch current status
       const status = await API.get('/api/status');
       this.services = status.services || {};
       this.tmuxSessions = status.tmux_sessions || [];
 
-      // Record health history
+      // Fetch server-side health history (includes accurate uptime calculations)
+      // Do this on every refresh to get the latest server-tracked data
+      try {
+        const healthData = await API.get('/api/health-history');
+        this.serverUptimes = healthData.uptimes || {};
+        // Merge server history with client-side history for display
+        if (healthData.history) {
+          Object.entries(healthData.history).forEach(([key, serverHistory]) => {
+            if (!this.healthHistory[key]) {
+              this.healthHistory[key] = [];
+            }
+            // Merge server history with client history, avoiding duplicates
+            const existingTimestamps = new Set(this.healthHistory[key].map(h => h.timestamp));
+            const newEntries = serverHistory.filter(h => !existingTimestamps.has(h.timestamp));
+            this.healthHistory[key] = [...this.healthHistory[key], ...newEntries]
+              .sort((a, b) => a.timestamp - b.timestamp)
+              .slice(-2880);  // Keep max 24 hours
+          });
+        }
+        this.serverHistoryLoaded = true;
+      } catch (historyError) {
+        console.warn('Failed to load health history from server:', historyError);
+        // Continue without server history - client-side tracking will still work
+      }
+
+      // Record current status to client-side history
       this.recordHealthHistory();
 
       this.renderServices();
@@ -1650,20 +1732,32 @@ const ServicesView = {
 
   recordHealthHistory() {
     const now = Date.now();
+    let hasChanges = false;
+
     Object.entries(this.services).forEach(([key, svc]) => {
       if (!this.healthHistory[key]) {
         this.healthHistory[key] = [];
       }
 
       const status = svc.status === 'up' || svc.status === 'running' ? 'healthy' : 'unhealthy';
-      this.healthHistory[key].push({ timestamp: now, status });
+
+      // Only record if there's no recent entry (within last 10 seconds) to avoid duplicates
+      const lastEntry = this.healthHistory[key][this.healthHistory[key].length - 1];
+      if (!lastEntry || (now - lastEntry.timestamp) > 10000) {
+        this.healthHistory[key].push({ timestamp: now, status });
+        hasChanges = true;
+      }
 
       // Keep only last 24 hours (assuming 30s intervals = 2880 records max)
-      // But for display we only show last ~24 blocks
       if (this.healthHistory[key].length > 2880) {
         this.healthHistory[key] = this.healthHistory[key].slice(-2880);
       }
     });
+
+    // Persist to localStorage after recording
+    if (hasChanges) {
+      this.saveHealthHistoryToStorage();
+    }
   },
 
   getHealthBlocks(serviceKey) {
@@ -1695,6 +1789,13 @@ const ServicesView = {
   },
 
   calculateUptime(serviceKey) {
+    // Use server-side uptime if available (source of truth)
+    // Server tracks all health checks persistently, even when dashboard is closed
+    if (this.serverUptimes && this.serverUptimes[serviceKey] !== undefined) {
+      return Math.round(this.serverUptimes[serviceKey]);
+    }
+
+    // Fall back to client-side calculation from localStorage-persisted history
     const history = this.healthHistory[serviceKey] || [];
     if (history.length === 0) return 100;
 
@@ -2285,11 +2386,16 @@ const SkillsView = {
 
   async select(skillName) {
     try {
-      const skill = await API.get(`/api/skill/${skillName}`);
+      const response = await API.get(`/api/skill/${skillName}`);
+
+      // Handle API response: { exists: bool, content: string, error?: string }
+      if (!response.exists) {
+        Toast.error('Error', response.error || 'Skill not found');
+        return;
+      }
 
       const content = `
-        <h3 class="mb-md">${skillName}</h3>
-        <div class="code-block">${Utils.escapeHtml(skill.content || 'No content available')}</div>
+        <div class="markdown-preview">${Utils.renderMarkdown(response.content)}</div>
       `;
 
       DetailPanel.open(content);
@@ -2306,6 +2412,11 @@ const SkillsView = {
 const LogsView = {
   title: 'Logs',
   logs: [],
+  allLogs: [],
+  sources: [],
+  currentSource: 'all',
+  currentLevel: 'all',
+  currentSearch: '',
 
   async render(container) {
     container.innerHTML = `
@@ -2324,22 +2435,19 @@ const LogsView = {
           <div class="data-table-header">
             <div class="data-table-search">
               <span class="data-table-search-icon">${Icons.search}</span>
-              <input type="text" placeholder="Search logs..."
+              <input type="text" placeholder="Search logs..." id="logs-search-input"
                      oninput="LogsView.search(this.value)">
             </div>
             <div class="data-table-filters">
-              <select class="form-select" onchange="LogsView.filterSource(this.value)">
+              <select class="form-select" id="logs-source-filter" onchange="LogsView.filterSource(this.value)">
                 <option value="all">All Sources</option>
-                <option value="bot">Bot</option>
-                <option value="api">API</option>
-                <option value="scheduler">Scheduler</option>
               </select>
-              <select class="form-select" onchange="LogsView.filterLevel(this.value)">
+              <select class="form-select" id="logs-level-filter" onchange="LogsView.filterLevel(this.value)">
                 <option value="all">All Levels</option>
-                <option value="debug">Debug</option>
-                <option value="info">Info</option>
-                <option value="warning">Warning</option>
-                <option value="error">Error</option>
+                <option value="DEBUG">Debug</option>
+                <option value="INFO">Info</option>
+                <option value="WARNING">Warning</option>
+                <option value="ERROR">Error</option>
               </select>
             </div>
           </div>
@@ -2350,14 +2458,37 @@ const LogsView = {
       </div>
     `;
 
+    await this.loadSources();
     await this.loadData();
+  },
+
+  async loadSources() {
+    try {
+      const data = await API.get('/api/logs/sources');
+      this.sources = data.sources || [];
+      const select = document.getElementById('logs-source-filter');
+      if (select && this.sources.length > 0) {
+        select.innerHTML = '<option value="all">All Sources</option>' +
+          this.sources.map(s => `<option value="${s.name}">${s.display_name}</option>`).join('');
+      }
+    } catch (error) {
+      console.error('Failed to load log sources:', error);
+    }
   },
 
   async loadData() {
     try {
-      const data = await API.get('/api/logs/bot?lines=100');
-      // Parse log lines into structured data
-      this.logs = this.parseLogs(data.content || data.logs || '');
+      // Build query params
+      const params = new URLSearchParams();
+      params.set('limit', '100');
+      if (this.currentSource !== 'all') params.set('source', this.currentSource);
+      if (this.currentLevel !== 'all') params.set('level', this.currentLevel);
+      if (this.currentSearch) params.set('search', this.currentSearch);
+
+      const data = await API.get(`/api/logs/unified?${params.toString()}`);
+      // API returns { logs: [...], total: N, has_more: bool }
+      this.allLogs = data.logs || [];
+      this.logs = this.allLogs;
       this.renderLogs(this.logs);
     } catch (error) {
       console.error('Failed to load logs:', error);
@@ -2370,31 +2501,6 @@ const LogsView = {
     }
   },
 
-  parseLogs(content) {
-    if (typeof content !== 'string') return [];
-
-    return content.split('\n')
-      .filter(line => line.trim())
-      .map(line => {
-        // Try to parse structured log format
-        const match = line.match(/^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+\[(\w+)\]\s+\[(\w+)\]\s+(.*)$/);
-        if (match) {
-          return {
-            timestamp: match[1],
-            level: match[2].toLowerCase(),
-            source: match[3].toLowerCase(),
-            message: match[4]
-          };
-        }
-        return {
-          timestamp: new Date().toISOString(),
-          level: 'info',
-          source: 'unknown',
-          message: line
-        };
-      });
-  },
-
   renderLogs(logs) {
     const container = document.getElementById('logs-container');
 
@@ -2402,41 +2508,56 @@ const LogsView = {
       container.innerHTML = `
         <div class="empty-state">
           <div class="empty-state-icon">${Icons.fileText}</div>
-          <div class="empty-state-title">No logs</div>
+          <div class="empty-state-title">No logs found</div>
+          <p class="text-secondary">Try adjusting your filters</p>
         </div>
       `;
       return;
     }
 
-    container.innerHTML = logs.map(log => Components.logEntry(log)).join('');
+    container.innerHTML = logs.map(log => this.renderLogEntry(log)).join('');
+  },
+
+  renderLogEntry(log) {
+    const level = (log.level || 'INFO').toLowerCase();
+    const source = log.source || 'unknown';
+    const message = log.message || '';
+    const timestamp = log.timestamp ? Format.time(log.timestamp) : '';
+
+    return `
+      <div class="log-entry">
+        <span class="log-timestamp">${timestamp}</span>
+        <span class="log-level ${level}">[${(log.level || 'INFO').toUpperCase()}]</span>
+        <span class="log-source">[${source}]</span>
+        <span class="log-message">${Utils.escapeHtml(message)}</span>
+      </div>
+    `;
   },
 
   search(query) {
-    const filtered = this.logs.filter(log =>
-      log.message.toLowerCase().includes(query.toLowerCase())
-    );
-    this.renderLogs(filtered);
+    this.currentSearch = query;
+    // Debounce the API call
+    clearTimeout(this._searchTimeout);
+    this._searchTimeout = setTimeout(() => this.loadData(), 300);
   },
 
   filterSource(source) {
-    const filtered = source === 'all'
-      ? this.logs
-      : this.logs.filter(log => log.source === source);
-    this.renderLogs(filtered);
+    this.currentSource = source;
+    this.loadData();
   },
 
   filterLevel(level) {
-    const filtered = level === 'all'
-      ? this.logs
-      : this.logs.filter(log => log.level === level);
-    this.renderLogs(filtered);
+    this.currentLevel = level;
+    this.loadData();
   },
 
   async refresh() {
+    document.getElementById('logs-container').innerHTML = Components.skeleton('text', 10);
     await this.loadData();
     Toast.info('Refreshed', 'Logs updated');
   },
 };
+
 
 
 /**
@@ -2738,15 +2859,7 @@ const FilesView = {
   },
 
   renderMarkdown(content) {
-    let html = Utils.escapeHtml(content);
-    html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>').replace(/^## (.*)$/gm, '<h2>$1</h2>').replace(/^# (.*)$/gm, '<h1>$1</h1>');
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>');
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
-    html = html.replace(/^\s*[-*+]\s+(.*)$/gm, '<li>$1</li>').replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
-    html = html.replace(/\n\n/g, '</p><p>'); html = '<p>' + html + '</p>';
-    return html;
+    return Utils.renderMarkdown(content);
   },
 
   searchInFile(query) {
@@ -2788,6 +2901,8 @@ Utils.escapeRegex = function(string) { return string.replace(/[.*+?^${}()|[\]\\]
  */
 const MemoryView = {
   title: 'Memory',
+  peterbotObservations: [],
+  claudeObservations: [],
 
   async render(container) {
     container.innerHTML = `
@@ -2797,12 +2912,16 @@ const MemoryView = {
             <h2>Memory Systems</h2>
             <p class="text-secondary">Browse and search memory observations</p>
           </div>
+          <button class="btn btn-secondary" onclick="MemoryView.refresh()">
+            ${Icons.refresh} Refresh
+          </button>
         </div>
 
         ${Components.tabs({
           id: 'memory-tabs',
           tabs: [
-            { label: 'Peterbot Memory', content: this.renderPeterbotMemory() },
+            { label: 'Peterbot Memory', badge: '', content: this.renderPeterbotMemory() },
+            { label: 'Claude Memory', badge: '', content: this.renderClaudeMemory() },
             { label: 'Second Brain', content: this.renderSecondBrain() },
           ]
         })}
@@ -2817,12 +2936,27 @@ const MemoryView = {
       <div class="mb-md">
         <div class="data-table-search" style="max-width: 400px;">
           <span class="data-table-search-icon">${Icons.search}</span>
-          <input type="text" placeholder="Search memory..."
-                 id="memory-search" onkeyup="if(event.key==='Enter')MemoryView.search(this.value)">
+          <input type="text" placeholder="Search peterbot memory..."
+                 id="peter-memory-search" onkeyup="if(event.key==='Enter')MemoryView.searchPeter(this.value)">
         </div>
       </div>
-      <div id="memory-results">
-        <p class="text-muted">Enter a search query to find memories</p>
+      <div id="peter-memory-list">
+        <div class="flex justify-center py-lg"><div class="spinner"></div></div>
+      </div>
+    `;
+  },
+
+  renderClaudeMemory() {
+    return `
+      <div class="mb-md">
+        <div class="data-table-search" style="max-width: 400px;">
+          <span class="data-table-search-icon">${Icons.search}</span>
+          <input type="text" placeholder="Search claude memory..."
+                 id="claude-memory-search" onkeyup="if(event.key==='Enter')MemoryView.searchClaude(this.value)">
+        </div>
+      </div>
+      <div id="claude-memory-list">
+        <div class="flex justify-center py-lg"><div class="spinner"></div></div>
       </div>
     `;
   },
@@ -2843,44 +2977,154 @@ const MemoryView = {
   },
 
   async loadData() {
-    // Load recent memories
+    this.loadPeterbotMemories();
+    this.loadClaudeMemories();
+  },
+
+  async loadPeterbotMemories() {
+    const container = document.getElementById('peter-memory-list');
+    if (!container) return;
     try {
-      const data = await API.get('/api/memory/recent');
-      // Render recent observations
+      const data = await API.get('/api/memory/peter?limit=50');
+      this.peterbotObservations = data.observations || [];
+      this.renderObservationList('peter-memory-list', this.peterbotObservations, 'peterbot');
+      this.updateBadge(0, this.peterbotObservations.length);
     } catch (error) {
-      console.log('Memory API not available');
+      console.error('Error loading peterbot memories:', error);
+      container.innerHTML = `<p class="text-error">Failed to load: ${error.message}</p>`;
     }
   },
 
-  async search(query) {
-    if (!query.trim()) return;
-
+  async loadClaudeMemories() {
+    const container = document.getElementById('claude-memory-list');
+    if (!container) return;
     try {
-      const results = await API.get(`/api/search/memory?q=${encodeURIComponent(query)}`);
-      this.renderResults('memory-results', results.results || []);
+      const data = await API.get('/api/memory/claude?limit=50');
+      this.claudeObservations = data.observations || [];
+      this.renderObservationList('claude-memory-list', this.claudeObservations, 'claude');
+      this.updateBadge(1, this.claudeObservations.length);
     } catch (error) {
-      Toast.error('Error', `Search failed: ${error.message}`);
+      console.error('Error loading claude memories:', error);
+      container.innerHTML = `<p class="text-error">Failed to load: ${error.message}</p>`;
     }
+  },
+
+  updateBadge(tabIndex, count) {
+    const tabs = document.querySelectorAll('#memory-tabs .tab');
+    if (tabs[tabIndex]) {
+      const badge = tabs[tabIndex].querySelector('.tab-badge');
+      if (badge) { badge.textContent = count; }
+      else { tabs[tabIndex].insertAdjacentHTML('beforeend', `<span class="tab-badge">${count}</span>`); }
+    }
+  },
+
+  renderObservationList(containerId, observations, source) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    if (!observations.length) { container.innerHTML = '<p class="text-muted">No observations found</p>'; return; }
+
+    const sourceColors = { 'peterbot': { bg: 'var(--primary)', text: 'white', label: 'Peterbot' }, 'claude': { bg: 'var(--warning)', text: 'black', label: 'Claude' } };
+
+    container.innerHTML = `
+      <div class="memory-observations-list">
+        ${observations.map(obs => {
+          const sourceStyle = sourceColors[source] || sourceColors['claude'];
+          const typeIcon = this.getTypeIcon(obs.type);
+          return `
+            <div class="memory-observation-item" onclick="MemoryView.showObservationDetail(${obs.id}, '${source}')">
+              <div class="memory-obs-header">
+                <div class="memory-obs-left">
+                  <span class="memory-obs-id">#${obs.id}</span>
+                  <span class="memory-obs-source" style="background: ${sourceStyle.bg}; color: ${sourceStyle.text};">${sourceStyle.label}</span>
+                  <span class="memory-obs-type">${typeIcon} ${obs.type || 'observation'}</span>
+                  ${obs.project && obs.project !== 'peterbot' ? `<span class="memory-obs-project">${obs.project}</span>` : ''}
+                </div>
+                <span class="memory-obs-time">${Format.datetime(obs.created_at)}</span>
+              </div>
+              <div class="memory-obs-title">${Utils.escapeHtml(obs.title || 'Untitled')}</div>
+              ${obs.subtitle ? `<div class="memory-obs-subtitle">${Utils.escapeHtml(obs.subtitle)}</div>` : ''}
+              ${obs.category ? `<span class="memory-obs-category">${obs.category}</span>` : ''}
+            </div>`;
+        }).join('')}
+      </div>
+      <style>
+        .memory-observations-list { display: flex; flex-direction: column; gap: 8px; }
+        .memory-observation-item { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; cursor: pointer; transition: all 0.2s ease; }
+        .memory-observation-item:hover { border-color: var(--primary); transform: translateX(4px); }
+        .memory-obs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px; }
+        .memory-obs-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .memory-obs-id { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
+        .memory-obs-source { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .memory-obs-type { font-size: 12px; color: var(--text-secondary); }
+        .memory-obs-project { font-size: 11px; color: var(--text-muted); background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; }
+        .memory-obs-time { font-size: 12px; color: var(--text-muted); }
+        .memory-obs-title { font-weight: 500; margin-bottom: 4px; }
+        .memory-obs-subtitle { font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; }
+        .memory-obs-category { display: inline-block; font-size: 11px; color: var(--text-muted); background: var(--bg-tertiary); padding: 2px 8px; border-radius: 12px; margin-top: 4px; }
+      </style>
+    `;
+  },
+
+  getTypeIcon(type) {
+    const icons = { 'observation': '[ ]', 'task': '[x]', 'decision': '[!]', 'learning': '[i]', 'preference': '[*]', 'context': '[-]', 'error': '[E]', 'success': '[S]' };
+    return icons[type] || '[ ]';
+  },
+
+  showObservationDetail(id, source) {
+    const observations = source === 'peterbot' ? this.peterbotObservations : this.claudeObservations;
+    const obs = observations.find(o => o.id === id);
+    if (!obs) return;
+
+    const content = `
+      <div class="mb-lg">
+        <div class="flex items-center gap-sm mb-md">
+          <span class="text-lg font-bold">#${obs.id}</span>
+          <span class="status-badge ${source === 'peterbot' ? 'info' : 'warning'}">${source}</span>
+          <span class="status-badge">${obs.type || 'observation'}</span>
+        </div>
+        <h3 class="mb-sm">${Utils.escapeHtml(obs.title || 'Untitled')}</h3>
+        ${obs.subtitle ? `<p class="text-secondary mb-md">${Utils.escapeHtml(obs.subtitle)}</p>` : ''}
+      </div>
+      <div class="mb-md"><label class="text-sm text-muted">Created</label><p>${Format.datetime(obs.created_at)}</p></div>
+      ${obs.project ? `<div class="mb-md"><label class="text-sm text-muted">Project</label><p>${obs.project}</p></div>` : ''}
+      ${obs.category ? `<div class="mb-md"><label class="text-sm text-muted">Category</label><p>${obs.category}</p></div>` : ''}
+      ${obs.narrative ? `<div class="mb-md"><label class="text-sm text-muted">Narrative</label><p>${Utils.escapeHtml(obs.narrative)}</p></div>` : ''}
+      ${obs.facts && obs.facts !== '[]' ? `<div class="mb-md"><label class="text-sm text-muted">Facts</label><pre class="code-block" style="max-height: 200px; overflow-y: auto;">${Utils.escapeHtml(typeof obs.facts === 'string' ? obs.facts : JSON.stringify(obs.facts, null, 2))}</pre></div>` : ''}
+      <div class="mb-md"><label class="text-sm text-muted">Status</label><p>${obs.is_active ? 'Active' : 'Inactive'}</p></div>
+    `;
+    DetailPanel.open(content);
+  },
+
+  async searchPeter(query) {
+    if (!query.trim()) { this.renderObservationList('peter-memory-list', this.peterbotObservations, 'peterbot'); return; }
+    try {
+      const results = await API.get(`/api/search/memory?query=${encodeURIComponent(query)}`);
+      if (results.observations) { this.renderObservationList('peter-memory-list', results.observations, 'peterbot'); }
+      else if (results.results) { this.renderSearchResults('peter-memory-list', results.results); }
+    } catch (error) { Toast.error('Error', `Search failed: ${error.message}`); }
+  },
+
+  async searchClaude(query) {
+    if (!query.trim()) { this.renderObservationList('claude-memory-list', this.claudeObservations, 'claude'); return; }
+    const filtered = this.claudeObservations.filter(obs =>
+      (obs.title && obs.title.toLowerCase().includes(query.toLowerCase())) ||
+      (obs.subtitle && obs.subtitle.toLowerCase().includes(query.toLowerCase())) ||
+      (obs.narrative && obs.narrative.toLowerCase().includes(query.toLowerCase()))
+    );
+    this.renderObservationList('claude-memory-list', filtered, 'claude');
   },
 
   async searchBrain(query) {
     if (!query.trim()) return;
-
     try {
       const results = await API.get(`/api/search/second-brain?q=${encodeURIComponent(query)}`);
-      this.renderResults('brain-results', results.results || []);
-    } catch (error) {
-      Toast.error('Error', `Search failed: ${error.message}`);
-    }
+      this.renderSearchResults('brain-results', results.results || []);
+    } catch (error) { Toast.error('Error', `Search failed: ${error.message}`); }
   },
 
-  renderResults(containerId, results) {
+  renderSearchResults(containerId, results) {
     const container = document.getElementById(containerId);
-    if (!results.length) {
-      container.innerHTML = '<p class="text-muted">No results found</p>';
-      return;
-    }
-
+    if (!results.length) { container.innerHTML = '<p class="text-muted">No results found</p>'; return; }
     container.innerHTML = results.map(r => `
       <div class="card mb-sm">
         <div class="card-body">
@@ -2888,10 +3132,16 @@ const MemoryView = {
             <span class="text-xs text-muted">#${r.id || '-'}</span>
             <span class="text-xs text-muted">${Format.datetime(r.timestamp || r.created_at)}</span>
           </div>
-          <p>${Utils.escapeHtml(r.content || r.text || '')}</p>
+          <p>${Utils.escapeHtml(r.content || r.text || r.title || '')}</p>
         </div>
       </div>
     `).join('');
+  },
+
+  async refresh() {
+    Toast.info('Refreshing', 'Loading memories...');
+    await this.loadData();
+    Toast.success('Done', 'Memories refreshed');
   },
 };
 
@@ -2974,6 +3224,413 @@ const SettingsView = {
     State.set({ sidebarCollapsed: collapsed });
     localStorage.setItem('sidebarCollapsed', collapsed);
     document.getElementById('sidebar').classList.toggle('collapsed', collapsed);
+  },
+};
+
+
+/**
+ * Parser View - Monitor parser system status, captures, feedback, and cycles
+ */
+const ParserView = {
+  title: 'Parser',
+  status: null,
+  captures: [],
+  feedback: [],
+  cycles: [],
+  activeTab: 'status',
+
+  async render(container) {
+    container.innerHTML = `
+      <div class="animate-fade-in">
+        <div class="flex justify-between items-center mb-lg">
+          <div>
+            <h2>Parser System</h2>
+            <p class="text-secondary">Monitor and manage the self-improving parser</p>
+          </div>
+          <div class="flex gap-sm">
+            <button class="btn btn-secondary" onclick="ParserView.runRegression()">
+              ${Icons.play} Run Regression
+            </button>
+            <button class="btn btn-secondary" onclick="ParserView.refresh()">
+              ${Icons.refresh} Refresh
+            </button>
+          </div>
+        </div>
+
+        <!-- Status Cards -->
+        <div class="grid grid-cols-4 gap-md mb-lg" id="parser-status-cards">
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs mb-lg">
+          <button class="tab ${this.activeTab === 'status' ? 'active' : ''}" onclick="ParserView.switchTab('status')">Fixtures</button>
+          <button class="tab ${this.activeTab === 'captures' ? 'active' : ''}" onclick="ParserView.switchTab('captures')">Captures</button>
+          <button class="tab ${this.activeTab === 'feedback' ? 'active' : ''}" onclick="ParserView.switchTab('feedback')">Feedback</button>
+          <button class="tab ${this.activeTab === 'cycles' ? 'active' : ''}" onclick="ParserView.switchTab('cycles')">Improvement Cycles</button>
+        </div>
+
+        <!-- Tab Content -->
+        <div class="card" id="parser-tab-content">
+          <div class="card-body">
+            ${Components.skeleton('list')}
+          </div>
+        </div>
+      </div>
+    `;
+
+    await this.loadData();
+  },
+
+  async loadData() {
+    try {
+      // Load all data in parallel
+      const [statusRes, capturesRes, feedbackRes, cyclesRes] = await Promise.all([
+        API.get('/api/parser/status'),
+        API.get('/api/parser/captures'),
+        API.get('/api/parser/feedback'),
+        API.get('/api/parser/cycles')
+      ]);
+
+      this.status = statusRes;
+      this.captures = capturesRes.captures || [];
+      this.feedback = feedbackRes.feedback || [];
+      this.cycles = cyclesRes.cycles || [];
+
+      this.renderStatusCards();
+      this.renderTabContent();
+    } catch (error) {
+      console.error('Failed to load parser data:', error);
+      document.getElementById('parser-status-cards').innerHTML = `
+        <div class="col-span-full">
+          <div class="empty-state">
+            <div class="empty-state-icon">${Icons.alertCircle}</div>
+            <div class="empty-state-title">Failed to load parser status</div>
+            <p class="text-secondary">${error.message}</p>
+            <button class="btn btn-primary mt-md" onclick="ParserView.loadData()">Retry</button>
+          </div>
+        </div>
+      `;
+    }
+  },
+
+  renderStatusCards() {
+    if (!this.status) return;
+
+    const s = this.status;
+    const cards = `
+      <div class="stat-card">
+        <div class="stat-card-icon" style="background: var(--success-bg); color: var(--success);">
+          ${Icons.check}
+        </div>
+        <div class="stat-card-content">
+          <div class="stat-card-value">${s.fixtures_loaded || 0}</div>
+          <div class="stat-card-label">Fixtures Loaded</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-card-icon" style="background: var(--info-bg); color: var(--info);">
+          ${Icons.messageCircle}
+        </div>
+        <div class="stat-card-content">
+          <div class="stat-card-value">${s.captures_today || 0}</div>
+          <div class="stat-card-label">Captures Today</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-card-icon" style="background: var(--warning-bg); color: var(--warning);">
+          ${Icons.alertCircle}
+        </div>
+        <div class="stat-card-content">
+          <div class="stat-card-value">${s.pending_feedback || 0}</div>
+          <div class="stat-card-label">Pending Feedback</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-card-icon" style="background: var(--accent-bg); color: var(--accent);">
+          ${Icons.activity}
+        </div>
+        <div class="stat-card-content">
+          <div class="stat-card-value">${s.improvement_cycles || 0}</div>
+          <div class="stat-card-label">Improvement Cycles</div>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('parser-status-cards').innerHTML = cards;
+  },
+
+  switchTab(tab) {
+    this.activeTab = tab;
+    // Update tab buttons
+    document.querySelectorAll('.tabs .tab').forEach(btn => {
+      btn.classList.toggle('active', btn.textContent.toLowerCase().includes(tab));
+    });
+    this.renderTabContent();
+  },
+
+  renderTabContent() {
+    const container = document.getElementById('parser-tab-content');
+    let content = '';
+
+    switch (this.activeTab) {
+      case 'status':
+        content = this.renderFixturesTab();
+        break;
+      case 'captures':
+        content = this.renderCapturesTab();
+        break;
+      case 'feedback':
+        content = this.renderFeedbackTab();
+        break;
+      case 'cycles':
+        content = this.renderCyclesTab();
+        break;
+    }
+
+    container.innerHTML = `<div class="card-body">${content}</div>`;
+  },
+
+  renderFixturesTab() {
+    if (!this.status || !this.status.fixtures) {
+      return `
+        <div class="empty-state">
+          <div class="empty-state-icon">${Icons.inbox}</div>
+          <div class="empty-state-title">No fixtures loaded</div>
+          <p class="text-secondary">Parser fixtures are not configured</p>
+        </div>
+      `;
+    }
+
+    const fixtures = this.status.fixtures;
+    const rows = Object.entries(fixtures).map(([name, data]) => `
+      <tr>
+        <td><code>${Utils.escapeHtml(name)}</code></td>
+        <td>${data.count || 0} examples</td>
+        <td>${data.last_updated ? Format.relativeTime(data.last_updated) : '-'}</td>
+        <td>
+          <span class="status-badge ${data.healthy ? 'success' : 'warning'}">
+            ${data.healthy ? 'Healthy' : 'Needs Review'}
+          </span>
+        </td>
+      </tr>
+    `).join('');
+
+    return `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Fixture</th>
+            <th>Examples</th>
+            <th>Last Updated</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || '<tr><td colspan="4" class="text-center text-muted">No fixtures found</td></tr>'}
+        </tbody>
+      </table>
+    `;
+  },
+
+  renderCapturesTab() {
+    if (!this.captures.length) {
+      return `
+        <div class="empty-state">
+          <div class="empty-state-icon">${Icons.messageCircle}</div>
+          <div class="empty-state-title">No recent captures</div>
+          <p class="text-secondary">Parser captures will appear here as messages are processed</p>
+        </div>
+      `;
+    }
+
+    const rows = this.captures.map(c => `
+      <tr class="cursor-pointer" onclick="ParserView.showCapture('${c.id}')">
+        <td><code class="text-sm">${Utils.escapeHtml(c.id?.substring(0, 8) || '-')}...</code></td>
+        <td>${Utils.escapeHtml(c.intent || 'unknown')}</td>
+        <td class="text-truncate" style="max-width: 300px;">${Utils.escapeHtml(c.input?.substring(0, 50) || '-')}...</td>
+        <td>${Format.relativeTime(c.timestamp)}</td>
+        <td>
+          <span class="status-badge ${c.success ? 'success' : 'error'}">
+            ${c.success ? 'Success' : 'Failed'}
+          </span>
+        </td>
+      </tr>
+    `).join('');
+
+    return `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Intent</th>
+            <th>Input</th>
+            <th>Time</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    `;
+  },
+
+  renderFeedbackTab() {
+    if (!this.feedback.length) {
+      return `
+        <div class="empty-state">
+          <div class="empty-state-icon">${Icons.check}</div>
+          <div class="empty-state-title">No pending feedback</div>
+          <p class="text-secondary">All feedback items have been resolved</p>
+        </div>
+      `;
+    }
+
+    const rows = this.feedback.map(f => `
+      <tr>
+        <td><code class="text-sm">${Utils.escapeHtml(f.id?.substring(0, 8) || '-')}...</code></td>
+        <td>${Utils.escapeHtml(f.type || 'unknown')}</td>
+        <td class="text-truncate" style="max-width: 300px;">${Utils.escapeHtml(f.message?.substring(0, 50) || '-')}...</td>
+        <td>${Format.relativeTime(f.created_at)}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary" onclick="ParserView.resolveFeedback('${f.id}')">
+            Resolve
+          </button>
+        </td>
+      </tr>
+    `).join('');
+
+    return `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Type</th>
+            <th>Message</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    `;
+  },
+
+  renderCyclesTab() {
+    if (!this.cycles.length) {
+      return `
+        <div class="empty-state">
+          <div class="empty-state-icon">${Icons.activity}</div>
+          <div class="empty-state-title">No improvement cycles</div>
+          <p class="text-secondary">Parser improvement cycles will appear here as the system learns</p>
+        </div>
+      `;
+    }
+
+    const rows = this.cycles.map(c => `
+      <tr>
+        <td><code class="text-sm">${c.version || '-'}</code></td>
+        <td>${c.changes_count || 0} changes</td>
+        <td>${Format.datetime(c.started_at)}</td>
+        <td>
+          <span class="status-badge ${c.status === 'completed' ? 'success' : c.status === 'failed' ? 'error' : 'pending'}">
+            ${c.status || 'unknown'}
+          </span>
+        </td>
+        <td>
+          ${c.regression_passed !== undefined ? (c.regression_passed ?
+            `<span class="text-success">${Icons.check} Passed</span>` :
+            `<span class="text-error">${Icons.x} Failed</span>`) : '-'}
+        </td>
+      </tr>
+    `).join('');
+
+    return `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Version</th>
+            <th>Changes</th>
+            <th>Started</th>
+            <th>Status</th>
+            <th>Regression</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    `;
+  },
+
+  showCapture(captureId) {
+    const capture = this.captures.find(c => c.id === captureId);
+    if (!capture) return;
+
+    const content = `
+      <h4 class="mb-md">Capture Details</h4>
+      <div class="mb-md">
+        <label class="text-sm text-muted">ID</label>
+        <p><code>${Utils.escapeHtml(capture.id)}</code></p>
+      </div>
+      <div class="mb-md">
+        <label class="text-sm text-muted">Intent</label>
+        <p>${Utils.escapeHtml(capture.intent || 'unknown')}</p>
+      </div>
+      <div class="mb-md">
+        <label class="text-sm text-muted">Input</label>
+        <pre class="code-block">${Utils.escapeHtml(capture.input || '')}</pre>
+      </div>
+      <div class="mb-md">
+        <label class="text-sm text-muted">Output</label>
+        <pre class="code-block">${Utils.escapeHtml(JSON.stringify(capture.output, null, 2) || '')}</pre>
+      </div>
+      <div class="mb-md">
+        <label class="text-sm text-muted">Timestamp</label>
+        <p>${Format.datetime(capture.timestamp)}</p>
+      </div>
+    `;
+
+    DetailPanel.open(content);
+  },
+
+  async runRegression() {
+    try {
+      Toast.info('Running', 'Starting regression tests...');
+      const result = await API.post('/api/parser/run-regression');
+      if (result.success) {
+        Toast.success('Complete', 'Regression tests completed');
+        await this.loadData();
+      } else {
+        Toast.error('Failed', result.error || 'Regression tests failed');
+      }
+    } catch (error) {
+      Toast.error('Error', `Failed to run regression: ${error.message}`);
+    }
+  },
+
+  async resolveFeedback(feedbackId) {
+    try {
+      await API.post(`/api/parser/feedback/${feedbackId}/resolve`);
+      Toast.success('Resolved', 'Feedback item marked as resolved');
+      await this.loadData();
+    } catch (error) {
+      Toast.error('Error', `Failed to resolve feedback: ${error.message}`);
+    }
+  },
+
+  async refresh() {
+    await this.loadData();
+    Toast.info('Refreshed', 'Parser data updated');
   },
 };
 
@@ -3067,6 +3724,7 @@ const App = {
     Router.register('/jobs', JobsView);
     Router.register('/services', ServicesView);
     Router.register('/skills', SkillsView);
+    Router.register('/parser', ParserView);
     Router.register('/logs', LogsView);
     Router.register('/files', FilesView);
     Router.register('/memory', MemoryView);

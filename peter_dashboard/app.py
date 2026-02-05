@@ -21,6 +21,7 @@ import subprocess
 import shlex
 import os
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -56,6 +57,7 @@ UK_TZ = ZoneInfo("Europe/London")
 ALERTS_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_ALERTS")
 
 # Services to monitor and their health check endpoints
+# These IDs MUST match the service keys in /api/status and ServicesView.serviceInfo
 MONITORED_SERVICES = {
     "hadley_api": {
         "name": "Hadley API",
@@ -67,8 +69,8 @@ MONITORED_SERVICES = {
         "check_type": "process",  # Check via service_manager
         "critical": True,
     },
-    "peterbot_mem": {
-        "name": "Peterbot Memory Worker",
+    "claude_mem": {
+        "name": "Memory Worker",
         "url": "http://localhost:37777/health",
         "critical": True,
     },
@@ -76,6 +78,12 @@ MONITORED_SERVICES = {
         "name": "Hadley Bricks",
         "url": "http://localhost:3000/api/health",
         "critical": False,  # Not critical for Peterbot operation
+    },
+    "peterbot_session": {
+        "name": "Peterbot Session",
+        "check_type": "tmux",  # Check via tmux session
+        "tmux_session": "claude-peterbot",
+        "critical": True,
     },
 }
 
@@ -89,14 +97,131 @@ _service_down_since: dict[str, datetime] = {}
 _last_alert_time: dict[str, datetime] = {}
 _monitor_task: asyncio.Task = None
 
+# =============================================================================
+# HEALTH HISTORY TRACKING - Server-side uptime tracking
+# =============================================================================
+# Persists health check results to calculate accurate uptime percentages
+
+HEALTH_HISTORY_FILE = Path(__file__).parent.parent / "data" / "health_history.json"
+HEALTH_HISTORY_MAX_AGE_HOURS = 24  # Keep 24 hours of history
+HEALTH_HISTORY_RECORD_INTERVAL = 60  # Record every 60 seconds (matches HEALTH_CHECK_INTERVAL)
+
+# In-memory health history (loaded from file on startup)
+_health_history: dict[str, list[dict]] = {}  # { service_id: [{ timestamp, status }] }
+_health_history_loaded = False
+
+
+def _load_health_history():
+    """Load health history from JSON file."""
+    global _health_history, _health_history_loaded
+
+    if _health_history_loaded:
+        return
+
+    try:
+        if HEALTH_HISTORY_FILE.exists():
+            with open(HEALTH_HISTORY_FILE, "r") as f:
+                data = json.load(f)
+                _health_history = data.get("history", {})
+                # Prune old entries on load
+                _prune_health_history()
+        else:
+            _health_history = {}
+    except Exception as e:
+        print(f"[HealthHistory] Error loading history: {e}")
+        _health_history = {}
+
+    _health_history_loaded = True
+    print(f"[HealthHistory] Loaded {sum(len(v) for v in _health_history.values())} records")
+
+
+def _save_health_history():
+    """Save health history to JSON file."""
+    try:
+        # Ensure data directory exists
+        HEALTH_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(HEALTH_HISTORY_FILE, "w") as f:
+            json.dump({
+                "last_updated": datetime.now(UK_TZ).isoformat(),
+                "history": _health_history
+            }, f, indent=2)
+    except Exception as e:
+        print(f"[HealthHistory] Error saving history: {e}")
+
+
+def _prune_health_history():
+    """Remove entries older than HEALTH_HISTORY_MAX_AGE_HOURS."""
+    from datetime import timedelta
+    cutoff = datetime.now(UK_TZ) - timedelta(hours=HEALTH_HISTORY_MAX_AGE_HOURS)
+    cutoff_ts = cutoff.timestamp() * 1000  # Convert to milliseconds
+
+    for service_id in _health_history:
+        _health_history[service_id] = [
+            entry for entry in _health_history[service_id]
+            if entry.get("timestamp", 0) > cutoff_ts
+        ]
+
+
+def _record_health_check(service_id: str, is_healthy: bool, latency_ms: int = None, error: str = None):
+    """Record a health check result."""
+    _load_health_history()
+
+    if service_id not in _health_history:
+        _health_history[service_id] = []
+
+    entry = {
+        "timestamp": int(datetime.now(UK_TZ).timestamp() * 1000),  # milliseconds
+        "status": "healthy" if is_healthy else "unhealthy",
+    }
+    if latency_ms is not None:
+        entry["latency_ms"] = latency_ms
+    if error:
+        entry["error"] = error
+
+    _health_history[service_id].append(entry)
+
+    # Prune and save periodically (every 10 checks to avoid excessive writes)
+    total_entries = sum(len(v) for v in _health_history.values())
+    if total_entries % 10 == 0:
+        _prune_health_history()
+        _save_health_history()
+
+
+def get_health_history(service_id: str = None) -> dict:
+    """Get health history for one or all services."""
+    _load_health_history()
+
+    if service_id:
+        return {service_id: _health_history.get(service_id, [])}
+    return _health_history
+
+
+def calculate_uptime(service_id: str) -> float:
+    """Calculate uptime percentage for a service based on health history."""
+    _load_health_history()
+
+    history = _health_history.get(service_id, [])
+    if not history:
+        return 100.0  # No history = assume 100% (new service)
+
+    healthy_count = sum(1 for entry in history if entry.get("status") == "healthy")
+    return round((healthy_count / len(history)) * 100, 1)
+
 
 async def _check_service_health(service_id: str, config: dict) -> bool:
     """Check if a service is healthy. Returns True if up, False if down."""
     try:
-        if config.get("check_type") == "process":
+        check_type = config.get("check_type")
+        if check_type == "process":
             # Check via service_manager for process-based services
             status = service_manager.get_service_status(service_id)
             return status.get("status") == "running"
+        elif check_type == "tmux":
+            # Check via tmux session
+            tmux_session_name = config.get("tmux_session")
+            sessions = get_tmux_sessions()
+            return any(s["name"] == tmux_session_name for s in sessions)
         else:
             # HTTP health check
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -139,6 +264,9 @@ async def _health_monitor_loop():
             for service_id, config in MONITORED_SERVICES.items():
                 is_healthy = await _check_service_health(service_id, config)
                 service_name = config["name"]
+
+                # Record health check for uptime tracking
+                _record_health_check(service_id, is_healthy)
 
                 if is_healthy:
                     # Service is up - check if it was down and send recovery alert
@@ -520,6 +648,27 @@ async def get_service_status():
     return service_manager.status_all()
 
 
+@app.get("/api/health-history")
+async def get_health_history_endpoint(service: str = None):
+    """Get health check history for services.
+
+    Returns history with timestamps and status for uptime calculation.
+    Optionally filter by service ID.
+    """
+    history = get_health_history(service)
+
+    # Calculate uptimes
+    uptimes = {}
+    for svc_id in history:
+        uptimes[svc_id] = calculate_uptime(svc_id)
+
+    return {
+        "history": history,
+        "uptimes": uptimes,
+        "max_age_hours": HEALTH_HISTORY_MAX_AGE_HOURS,
+    }
+
+
 @app.post("/api/stop/{service}")
 async def stop_service_endpoint(service: str):
     """Stop a service completely."""
@@ -797,43 +946,116 @@ def parse_memory_response(data):
     return {"observations": [], "error": "No content returned"}
 
 
+def parse_observation_ids(data):
+    """Parse observation IDs from MCP search response."""
+    import re
+    ids = []
+    if data.get("content") and len(data["content"]) > 0:
+        text = data["content"][0].get("text", "")
+        # Match IDs like: | #548 |
+        pattern = r'\| #(\d+) \|'
+        matches = re.findall(pattern, text)
+        ids = [int(m) for m in matches]
+    return ids
+
+
+def format_observation(obs, source):
+    """Format observation for frontend display."""
+    return {
+        "id": obs.get("id"),
+        "title": obs.get("title", ""),
+        "subtitle": obs.get("subtitle", ""),
+        "type": obs.get("type", "observation"),
+        "category": obs.get("category", ""),
+        "project": obs.get("project", ""),
+        "narrative": obs.get("narrative", ""),
+        "facts": obs.get("facts", "[]"),
+        "created_at": obs.get("created_at", ""),
+        "is_active": obs.get("is_active", 1),
+        "source": source
+    }
+
+
 @app.get("/api/memory/peter")
-async def get_peter_memories():
-    """Get recent memory observations from peter-mem (peterbot project)."""
+async def get_peter_memories(limit: int = 50):
+    """Get recent memory observations from peterbot project with full details."""
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"{CONFIG['claude_mem_url']}/api/timeline",
-                params={"project": "peterbot", "query": "recent"}
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # First get the list of recent observation IDs
+            search_response = await client.get(
+                f"{CONFIG['claude_mem_url']}/api/search",
+                params={"project": "peterbot", "limit": str(limit), "orderBy": "id_desc"}
             )
-            if response.status_code == 200:
-                return parse_memory_response(response.json())
-            return {"error": f"Status {response.status_code}", "observations": []}
+            if search_response.status_code != 200:
+                return {"error": f"Search status {search_response.status_code}", "observations": [], "source": "peterbot"}
+
+            # Parse IDs from search response
+            search_data = search_response.json()
+            ids = parse_observation_ids(search_data)
+
+            if not ids:
+                return {"observations": [], "count": 0, "source": "peterbot"}
+
+            # Fetch full observation details
+            details_response = await client.post(
+                f"{CONFIG['claude_mem_url']}/api/observations",
+                json={"ids": ids[:limit]}
+            )
+            if details_response.status_code == 200:
+                observations = details_response.json()
+                return {
+                    "observations": [format_observation(obs, "peterbot") for obs in observations],
+                    "count": len(observations),
+                    "source": "peterbot"
+                }
+            return {"error": f"Details status {details_response.status_code}", "observations": [], "source": "peterbot"}
     except Exception as e:
-        return {"error": str(e), "observations": []}
+        logger.error(f"Error fetching peter memories: {e}")
+        return {"error": str(e), "observations": [], "source": "peterbot"}
 
 
 @app.get("/api/memory/claude")
-async def get_claude_memories():
-    """Get recent memory observations from claude-mem (all projects)."""
+async def get_claude_memories(limit: int = 50):
+    """Get recent memory observations from all Claude Code projects."""
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             # Search without project filter to get all recent observations
-            response = await client.get(
+            search_response = await client.get(
                 f"{CONFIG['claude_mem_url']}/api/search",
-                params={"query": "recent", "limit": "30"}
+                params={"limit": str(limit), "orderBy": "id_desc"}
             )
-            if response.status_code == 200:
-                return parse_memory_response(response.json())
-            return {"error": f"Status {response.status_code}", "observations": []}
+            if search_response.status_code != 200:
+                return {"error": f"Search status {search_response.status_code}", "observations": [], "source": "claude"}
+
+            # Parse IDs from search response
+            search_data = search_response.json()
+            ids = parse_observation_ids(search_data)
+
+            if not ids:
+                return {"observations": [], "count": 0, "source": "claude"}
+
+            # Fetch full observation details
+            details_response = await client.post(
+                f"{CONFIG['claude_mem_url']}/api/observations",
+                json={"ids": ids[:limit]}
+            )
+            if details_response.status_code == 200:
+                observations = details_response.json()
+                return {
+                    "observations": [format_observation(obs, "claude") for obs in observations],
+                    "count": len(observations),
+                    "source": "claude"
+                }
+            return {"error": f"Details status {details_response.status_code}", "observations": [], "source": "claude"}
     except Exception as e:
-        return {"error": str(e), "observations": []}
+        logger.error(f"Error fetching claude memories: {e}")
+        return {"error": str(e), "observations": [], "source": "claude"}
 
 
 @app.get("/api/memory/recent")
-async def get_recent_memories():
+async def get_recent_memories(limit: int = 50):
     """Get recent memory observations from claude-mem (peterbot project)."""
-    return await get_peter_memories()
+    return await get_peter_memories(limit=limit)
 
 
 @app.get("/api/hadley/endpoints")
@@ -985,9 +1207,79 @@ async def record_heartbeat_run():
     return {"status": "error", "error": stderr}
 
 
+def parse_skill_metadata(content: str) -> dict:
+    """Parse SKILL.md content to extract metadata.
+
+    Supports two formats:
+    1. YAML frontmatter (between --- markers)
+    2. Markdown headers (## sections)
+    """
+    metadata = {
+        "description": None,
+        "scheduled": False,
+        "triggers": None,
+        "conversational": False
+    }
+
+    # Check for YAML frontmatter (between --- markers)
+    frontmatter_match = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
+    if frontmatter_match:
+        frontmatter = frontmatter_match.group(1)
+
+        # Parse description
+        desc_match = re.search(r'^description:\s*(.+)$', frontmatter, re.MULTILINE)
+        if desc_match:
+            metadata["description"] = desc_match.group(1).strip()
+
+        # Parse scheduled
+        sched_match = re.search(r'^scheduled:\s*(true|false)$', frontmatter, re.MULTILINE | re.IGNORECASE)
+        if sched_match:
+            metadata["scheduled"] = sched_match.group(1).lower() == "true"
+
+        # Parse conversational
+        conv_match = re.search(r'^conversational:\s*(true|false)$', frontmatter, re.MULTILINE | re.IGNORECASE)
+        if conv_match:
+            metadata["conversational"] = conv_match.group(1).lower() == "true"
+
+        # Parse triggers (YAML list format)
+        trigger_match = re.search(r'^trigger:\s*\n((?:\s+-\s*.+\n?)+)', frontmatter, re.MULTILINE)
+        if trigger_match:
+            triggers_text = trigger_match.group(1)
+            triggers = re.findall(r'-\s*["\']?([^"\'\n]+)["\']?', triggers_text)
+            metadata["triggers"] = [t.strip() for t in triggers if t.strip()]
+    else:
+        # No frontmatter - parse markdown style
+        # Look for ## Purpose section as description
+        purpose_match = re.search(r'##\s*Purpose\s*\n+(.+?)(?=\n##|\n\n\n|$)', content, re.DOTALL)
+        if purpose_match:
+            # Get first paragraph/sentence
+            purpose_text = purpose_match.group(1).strip()
+            first_line = purpose_text.split('\n')[0].strip()
+            metadata["description"] = first_line
+
+        # Look for ## Triggers section
+        triggers_match = re.search(r'##\s*Triggers?\s*\n+(.+?)(?=\n##|$)', content, re.DOTALL)
+        if triggers_match:
+            triggers_text = triggers_match.group(1)
+            triggers = re.findall(r'-\s*["\']?([^"\'\n,]+)["\']?', triggers_text)
+            metadata["triggers"] = [t.strip() for t in triggers if t.strip() and not t.startswith('#')]
+
+        # Look for ## Schedule section
+        schedule_match = re.search(r'##\s*Schedule', content)
+        if schedule_match:
+            metadata["scheduled"] = True
+
+        # Look for ## Conversational section
+        conv_match = re.search(r'##\s*Conversational\s*\n+\s*(Yes|True)', content, re.IGNORECASE)
+        if conv_match:
+            metadata["conversational"] = True
+
+    return metadata
+
+
 @app.get("/api/skills")
 async def list_skills():
-    """List available Peterbot skills."""
+    """List available Peterbot skills with metadata parsed from SKILL.md files."""
     skills_path = "/home/chris_hadley/peterbot/.claude/skills"
     cmd = f"find {skills_path} -maxdepth 2 -name 'SKILL.md' 2>/dev/null"
     stdout, stderr, code = run_wsl_command(cmd)
@@ -999,19 +1291,46 @@ async def list_skills():
                 # Extract skill name from path
                 parts = path.split('/')
                 name = parts[-2] if len(parts) > 1 else 'unknown'
-                skills.append({
+
+                # Read the SKILL.md file to parse metadata
+                safe_path = shlex.quote(path)
+                read_cmd = f"cat {safe_path} 2>/dev/null"
+                content_out, _, read_code = run_wsl_command(read_cmd)
+
+                skill_data = {
                     "name": name,
-                    "path": path
-                })
+                    "path": path,
+                    "description": None,
+                    "scheduled": False,
+                    "triggers": None,
+                    "conversational": False
+                }
+
+                if read_code == 0 and content_out:
+                    metadata = parse_skill_metadata(content_out)
+                    skill_data.update(metadata)
+
+                skills.append(skill_data)
+
+    # Sort by name
+    skills.sort(key=lambda s: s["name"])
 
     return {"skills": skills, "count": len(skills)}
 
 
 @app.get("/api/skill/{name}")
 async def get_skill(name: str):
-    """Get skill content by name."""
+    """Get skill content by name.
+
+    Skills are in a fixed directory structure, so we validate the name
+    and use skip_validation=True for the WSL file read.
+    """
+    # Security: Validate skill name contains only safe characters
+    if not re.match(r'^[a-zA-Z0-9_-]+$', name):
+        raise HTTPException(400, "Invalid skill name")
+
     path = f"/home/chris_hadley/peterbot/.claude/skills/{name}/SKILL.md"
-    return read_wsl_file(path, tail_lines=0)
+    return read_wsl_file(path, tail_lines=0, skip_validation=True)
 
 
 @app.post("/api/file/append/{file_type}/{file_name}")

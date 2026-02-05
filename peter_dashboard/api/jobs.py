@@ -178,6 +178,50 @@ def _parse_table_row(row: str) -> Optional[ScheduledJob]:
     )
 
 
+def _parse_days(day_spec: str) -> list[int]:
+    """Parse day specification into list of weekday numbers (0=Mon, 6=Sun).
+
+    Args:
+        day_spec: Day specification like "Mon-Wed,Fri" or "Sunday" or "Mon,Tue,Thu,Fri"
+
+    Returns:
+        List of weekday numbers
+    """
+    day_map = {
+        "mon": 0, "monday": 0,
+        "tue": 1, "tuesday": 1,
+        "wed": 2, "wednesday": 2,
+        "thu": 3, "thursday": 3,
+        "fri": 4, "friday": 4,
+        "sat": 5, "saturday": 5,
+        "sun": 6, "sunday": 6,
+    }
+
+    days = set()
+    parts = day_spec.lower().replace(" ", "").split(",")
+
+    for part in parts:
+        if "-" in part:
+            # Range like "Mon-Wed"
+            start, end = part.split("-", 1)
+            start_num = day_map.get(start)
+            end_num = day_map.get(end)
+            if start_num is not None and end_num is not None:
+                if start_num <= end_num:
+                    days.update(range(start_num, end_num + 1))
+                else:
+                    # Wrap around (e.g., Fri-Mon)
+                    days.update(range(start_num, 7))
+                    days.update(range(0, end_num + 1))
+        else:
+            # Single day
+            day_num = day_map.get(part)
+            if day_num is not None:
+                days.add(day_num)
+
+    return sorted(days)
+
+
 def get_next_run_time(schedule: str) -> Optional[datetime]:
     """Calculate the next run time for a schedule expression.
 
@@ -226,6 +270,27 @@ def get_next_run_time(schedule: str) -> Optional[datetime]:
                 else:
                     next_run = next_run.replace(month=now.month + 1)
             return next_run
+
+    # Day-specific schedule: "Mon-Wed,Fri 08:10" or "Sunday 09:10"
+    day_time_match = re.match(r"([a-zA-Z,\-]+)\s+(\d{1,2}):(\d{2})", schedule_clean)
+    if day_time_match:
+        day_spec = day_time_match.group(1)
+        hour = int(day_time_match.group(2))
+        minute = int(day_time_match.group(3))
+
+        allowed_days = _parse_days(day_spec)
+        if not allowed_days:
+            return None
+
+        # Find the next occurrence
+        for days_ahead in range(8):  # Check up to 7 days ahead
+            candidate = now + timedelta(days=days_ahead)
+            if candidate.weekday() in allowed_days:
+                next_run = candidate.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if next_run > now:
+                    return next_run
+
+        return None
 
     # Simple daily time: "07:00" or multiple times "09:00,11:00,13:00"
     if ":" in schedule_clean:
@@ -417,6 +482,24 @@ async def list_jobs():
                 (job.id,)
             ).fetchone()
 
+            # Get success rate from last 24 hours
+            yesterday = (now - timedelta(hours=24)).isoformat()
+            success_stats = conn.execute(
+                """
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successful
+                FROM job_executions
+                WHERE job_id = ? AND started_at >= ?
+                """,
+                (job.id, yesterday)
+            ).fetchone()
+
+            if success_stats and success_stats["total"] > 0:
+                success_rate_24h = round((success_stats["successful"] / success_stats["total"]) * 100, 1)
+            else:
+                success_rate_24h = None  # No data
+
             # Check if currently running
             running = conn.execute(
                 """
@@ -453,6 +536,7 @@ async def list_jobs():
                 "last_duration_ms": last_exec["duration_ms"] if last_exec else None,
                 "next_run": next_run.isoformat() if next_run else None,
                 "avg_duration_ms": int(avg_duration["avg_ms"]) if avg_duration and avg_duration["avg_ms"] else None,
+                "success_rate_24h": success_rate_24h,
             })
 
     # Count by status

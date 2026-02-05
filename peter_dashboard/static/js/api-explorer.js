@@ -129,8 +129,10 @@ const ApiExplorerView = {
         .api-params-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-color); vertical-align: top; }
         .api-param-name { font-family: monospace; font-weight: 500; }
         .api-param-required { color: #ef4444; font-size: 10px; margin-left: 4px; }
-        .api-param-type { font-size: 11px; color: var(--text-muted); background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px; }
+        .api-param-type { font-size: 11px; color: var(--text-muted); background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px; display: inline-block; margin-top: 2px; }
+        .api-params-table td .api-param-type + .api-param-type { margin-left: 4px; }
         .api-try-section { background: var(--bg-secondary); border-radius: 8px; padding: 16px; }
+        .api-response-body pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
         .api-try-input-group { margin-bottom: 12px; }
         .api-try-input-group label { display: block; font-size: 12px; font-weight: 500; margin-bottom: 4px; }
         .api-try-input-group input { width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 13px; background: var(--bg-primary); }
@@ -164,6 +166,62 @@ const ApiExplorerView = {
     }
   },
 
+  /**
+   * Resolve a $ref reference in the OpenAPI spec
+   */
+  resolveRef(ref, spec) {
+    if (!ref || !ref.startsWith('#/')) return null;
+    const parts = ref.slice(2).split('/');
+    let current = spec;
+    for (const part of parts) {
+      if (!current || typeof current !== 'object') return null;
+      current = current[part];
+    }
+    return current;
+  },
+
+  /**
+   * Recursively resolve all $ref in a schema
+   */
+  resolveSchema(schema, spec, visited) {
+    visited = visited || new Set();
+    if (!schema) return null;
+
+    // Handle $ref
+    if (schema.$ref) {
+      if (visited.has(schema.$ref)) return { type: 'object', description: '(circular reference)' };
+      visited.add(schema.$ref);
+      const resolved = this.resolveRef(schema.$ref, spec);
+      if (resolved) return this.resolveSchema(resolved, spec, visited);
+      return { type: 'unknown', description: schema.$ref.split('/').pop() };
+    }
+
+    // Handle anyOf (nullable types in Pydantic)
+    if (schema.anyOf) {
+      const nonNull = schema.anyOf.find(s => s.type !== 'null');
+      if (nonNull) {
+        const resolved = this.resolveSchema(nonNull, spec, visited);
+        return { ...resolved, nullable: true, title: schema.title, description: schema.description || resolved.description };
+      }
+    }
+
+    // Resolve nested properties
+    if (schema.type === 'object' && schema.properties) {
+      const resolvedProps = {};
+      for (const [key, value] of Object.entries(schema.properties)) {
+        resolvedProps[key] = this.resolveSchema(value, spec, visited);
+      }
+      return { ...schema, properties: resolvedProps };
+    }
+
+    // Resolve array items
+    if (schema.type === 'array' && schema.items) {
+      return { ...schema, items: this.resolveSchema(schema.items, spec, visited) };
+    }
+
+    return schema;
+  },
+
   parseOpenApiSpec(spec) {
     const endpoints = [];
     const paths = spec.paths || {};
@@ -181,11 +239,13 @@ const ApiExplorerView = {
           }));
           let requestBody = null;
           if (details.requestBody?.content?.['application/json']) {
-            requestBody = details.requestBody.content['application/json'].schema;
+            const rawSchema = details.requestBody.content['application/json'].schema;
+            requestBody = this.resolveSchema(rawSchema, spec);
           }
           let responseSchema = null;
           if (details.responses?.['200']?.content?.['application/json']) {
-            responseSchema = details.responses['200'].content['application/json'].schema;
+            const rawSchema = details.responses['200'].content['application/json'].schema;
+            responseSchema = this.resolveSchema(rawSchema, spec);
           }
           endpoints.push({ path, method: method.toUpperCase(), summary: details.summary || '', description: details.description || '', category, tags: details.tags || [], parameters, requestBody, responseSchema, operationId: details.operationId || '' });
         }
@@ -263,22 +323,217 @@ const ApiExplorerView = {
     const { method, path, summary, description, parameters, requestBody, responseSchema } = endpoint;
     const isGet = method === 'GET';
     const queryParams = parameters.filter(p => p.in === 'query');
-    let html = '<div class="api-detail-section"><div class="flex items-center gap-sm mb-sm"><span class="api-method-badge ' + method.toLowerCase() + '">' + method + '</span><code class="font-mono text-sm">' + Utils.escapeHtml(path) + '</code></div>' + (summary ? '<p class="text-sm">' + Utils.escapeHtml(summary) + '</p>' : '') + (description && description !== summary ? '<p class="text-sm text-muted mt-sm">' + Utils.escapeHtml(description) + '</p>' : '') + '</div>';
-    if (parameters.length > 0) {
-      html += '<div class="api-detail-section"><h4>Parameters</h4><table class="api-params-table"><thead><tr><th>Name</th><th>Type</th><th>In</th><th>Description</th></tr></thead><tbody>' + parameters.map(function(p) { return '<tr><td><span class="api-param-name">' + Utils.escapeHtml(p.name) + '</span>' + (p.required ? '<span class="api-param-required">*required</span>' : '') + '</td><td><span class="api-param-type">' + Utils.escapeHtml(p.type) + '</span></td><td><span class="text-muted text-sm">' + p.in + '</span></td><td>' + (p.description ? Utils.escapeHtml(p.description) : '<span class="text-muted">-</span>') + (p.default !== undefined ? '<br><span class="text-muted text-sm">Default: ' + p.default + '</span>' : '') + (p.enum ? '<br><span class="text-muted text-sm">Options: ' + p.enum.join(', ') + '</span>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    const pathParams = parameters.filter(p => p.in === 'path');
+
+    // Header section
+    let html = '<div class="api-detail-section">' +
+      '<div class="flex items-center gap-sm mb-sm">' +
+      '<span class="api-method-badge ' + method.toLowerCase() + '">' + method + '</span>' +
+      '<code class="font-mono text-sm">' + Utils.escapeHtml(path) + '</code></div>' +
+      (summary ? '<p class="text-sm">' + Utils.escapeHtml(summary) + '</p>' : '') +
+      (description && description !== summary ? '<p class="text-sm text-muted mt-sm">' + Utils.escapeHtml(description) + '</p>' : '') +
+      '</div>';
+
+    // Path parameters
+    if (pathParams.length > 0) {
+      html += '<div class="api-detail-section"><h4>Path Parameters</h4>' +
+        '<table class="api-params-table"><thead><tr><th>Name</th><th>Type</th><th>Description</th></tr></thead><tbody>' +
+        pathParams.map(function(p) {
+          return '<tr><td><span class="api-param-name">' + Utils.escapeHtml(p.name) + '</span>' +
+            '<span class="api-param-required">*required</span></td>' +
+            '<td><span class="api-param-type">' + Utils.escapeHtml(p.type) + '</span></td>' +
+            '<td>' + (p.description ? Utils.escapeHtml(p.description) : '<span class="text-muted">-</span>') + '</td></tr>';
+        }).join('') +
+        '</tbody></table></div>';
     }
+
+    // Query parameters
+    if (queryParams.length > 0) {
+      html += '<div class="api-detail-section"><h4>Query Parameters</h4>' +
+        '<table class="api-params-table"><thead><tr><th>Name</th><th>Type</th><th>Description</th></tr></thead><tbody>' +
+        queryParams.map(function(p) {
+          return '<tr><td><span class="api-param-name">' + Utils.escapeHtml(p.name) + '</span>' +
+            (p.required ? '<span class="api-param-required">*required</span>' : '') + '</td>' +
+            '<td><span class="api-param-type">' + Utils.escapeHtml(p.type) + '</span></td>' +
+            '<td>' + (p.description ? Utils.escapeHtml(p.description) : '<span class="text-muted">-</span>') +
+            (p.default !== undefined ? '<br><span class="text-muted text-sm">Default: ' + p.default + '</span>' : '') +
+            (p.enum ? '<br><span class="api-param-type">' + p.enum.join(' | ') + '</span>' : '') + '</td></tr>';
+        }).join('') +
+        '</tbody></table></div>';
+    }
+
+    // Request Body Schema (POST/PUT/PATCH)
     if (requestBody && ['POST', 'PUT', 'PATCH'].includes(method)) {
-      html += '<div class="api-detail-section"><h4>Request Body</h4><div class="api-response-body">' + this.formatSchema(requestBody) + '</div></div>';
+      html += '<div class="api-detail-section"><h4>Request Body Schema</h4>';
+      if (requestBody.properties) {
+        html += this.formatSchemaAsTable(requestBody);
+      } else {
+        html += '<div class="api-response-body">' + this.formatSchema(requestBody) + '</div>';
+      }
+      html += '</div>';
+
+      // Request Body Example
+      const exampleBody = this.generateExampleJson(requestBody);
+      if (exampleBody) {
+        html += '<div class="api-detail-section"><h4>Example Request Body</h4>' +
+          '<div class="api-response-body" style="position: relative;">' +
+          '<button class="btn btn-sm btn-ghost" onclick="ApiExplorerView.copyExample(\'request\')" ' +
+          'style="position: absolute; top: 8px; right: 8px;" title="Copy example">' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+          '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>' +
+          '<pre id="example-request-body" style="margin:0;">' + Utils.escapeHtml(JSON.stringify(exampleBody, null, 2)) + '</pre></div></div>';
+      }
     }
-    if (responseSchema) {
-      html += '<div class="api-detail-section"><h4>Response Schema</h4><div class="api-response-body">' + this.formatSchema(responseSchema) + '</div></div>';
+
+    // Response Schema
+    if (responseSchema && Object.keys(responseSchema).length > 0) {
+      html += '<div class="api-detail-section"><h4>Response Schema (200 OK)</h4>';
+      if (responseSchema.properties) {
+        html += this.formatSchemaAsTable(responseSchema);
+      } else if (responseSchema.type === 'array' && responseSchema.items && responseSchema.items.properties) {
+        html += '<div class="text-sm text-muted mb-sm">Array of:</div>' + this.formatSchemaAsTable(responseSchema.items);
+      } else {
+        html += '<div class="api-response-body">' + this.formatSchema(responseSchema) + '</div>';
+      }
+      html += '</div>';
+
+      // Response Example
+      const exampleResponse = this.generateExampleJson(responseSchema);
+      if (exampleResponse) {
+        html += '<div class="api-detail-section"><h4>Example Response</h4>' +
+          '<div class="api-response-body" style="position: relative;">' +
+          '<button class="btn btn-sm btn-ghost" onclick="ApiExplorerView.copyExample(\'response\')" ' +
+          'style="position: absolute; top: 8px; right: 8px;" title="Copy example">' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+          '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>' +
+          '<pre id="example-response-body" style="margin:0;">' + Utils.escapeHtml(JSON.stringify(exampleResponse, null, 2)) + '</pre></div></div>';
+      }
     }
+
+    // Try It Out section (GET only)
     if (isGet) {
-      html += '<div class="api-detail-section"><h4>Try It Out</h4><div class="api-warning-box">' + Icons.alertCircle + '<div><strong>Safety Notice:</strong> This will make a real API request to the Hadley API. Only GET endpoints are available for testing. Results may include personal data.</div></div><div class="api-try-section">' + (queryParams.length > 0 ? '<div class="mb-md"><div class="text-sm font-medium mb-sm">Query Parameters</div>' + queryParams.map(function(p) { return '<div class="api-try-input-group"><label>' + Utils.escapeHtml(p.name) + (p.required ? '<span class="text-error">*</span>' : '') + ' <span class="text-muted text-xs">(' + p.type + ')</span></label><input type="text" id="param-' + p.name + '" placeholder="' + (p.default !== undefined ? p.default : (p.description || '')) + '" ' + (p.default !== undefined ? 'value="' + p.default + '"' : '') + '></div>'; }).join('') + '</div>' : '') + '<button class="btn btn-primary" onclick="ApiExplorerView.executeRequest()">' + Icons.play + ' Send Request</button><div id="api-response-container" class="api-response-section" style="display:none;"><div class="api-response-header"><div class="api-response-status"><span class="api-response-status-code" id="response-status"></span><span class="api-response-time" id="response-time"></span></div><button class="btn btn-sm btn-secondary" onclick="ApiExplorerView.copyResponse()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy</button></div><div class="api-response-body" id="response-body"></div></div></div></div>';
+      html += '<div class="api-detail-section"><h4>Try It Out</h4>' +
+        '<div class="api-warning-box">' + Icons.alertCircle +
+        '<div><strong>Safety Notice:</strong> This will make a real API request to the Hadley API. Only GET endpoints are available for testing. Results may include personal data.</div></div>' +
+        '<div class="api-try-section">';
+
+      if (queryParams.length > 0) {
+        html += '<div class="mb-md"><div class="text-sm font-medium mb-sm">Query Parameters</div>' +
+          queryParams.map(function(p) {
+            // Generate a helpful placeholder/default value
+            let placeholder = p.default !== undefined ? String(p.default) : (p.description || p.name);
+            let defaultVal = '';
+            if (p.default !== undefined) {
+              defaultVal = String(p.default);
+            } else if (p.enum && p.enum.length > 0) {
+              defaultVal = p.enum[0];
+            }
+            return '<div class="api-try-input-group"><label>' + Utils.escapeHtml(p.name) +
+              (p.required ? '<span class="text-error">*</span>' : '') +
+              ' <span class="text-muted text-xs">(' + p.type + ')</span></label>' +
+              '<input type="text" id="param-' + p.name + '" placeholder="' + Utils.escapeHtml(placeholder) + '"' +
+              (defaultVal ? ' value="' + Utils.escapeHtml(defaultVal) + '"' : '') + '></div>';
+          }).join('') + '</div>';
+      }
+
+      html += '<button class="btn btn-primary" onclick="ApiExplorerView.executeRequest()">' + Icons.play + ' Send Request</button>' +
+        '<div id="api-response-container" class="api-response-section" style="display:none;">' +
+        '<div class="api-response-header"><div class="api-response-status">' +
+        '<span class="api-response-status-code" id="response-status"></span>' +
+        '<span class="api-response-time" id="response-time"></span></div>' +
+        '<button class="btn btn-sm btn-secondary" onclick="ApiExplorerView.copyResponse()">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+        '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy</button></div>' +
+        '<div class="api-response-body" id="response-body"></div></div></div></div>';
     } else {
-      html += '<div class="api-detail-section"><h4>Testing</h4><div class="api-warning-box">' + Icons.alertCircle + '<div><strong>Note:</strong> ' + method + ' requests cannot be tested in the browser for safety. Use the "Copy cURL" button to test with a terminal.</div></div></div>';
+      // Non-GET endpoint testing section
+      html += '<div class="api-detail-section"><h4>Testing</h4>' +
+        '<div class="api-warning-box">' + Icons.alertCircle +
+        '<div><strong>Note:</strong> ' + method + ' requests cannot be tested in the browser for safety. Use the "Copy cURL" button to test with a terminal.</div></div></div>';
     }
+
     document.getElementById('detail-content').innerHTML = html;
+  },
+
+  /**
+   * Copy example JSON to clipboard
+   */
+  copyExample(type) {
+    const elementId = type === 'request' ? 'example-request-body' : 'example-response-body';
+    const el = document.getElementById(elementId);
+    if (el) {
+      navigator.clipboard.writeText(el.textContent)
+        .then(function() { Toast.success('Copied', 'Example copied to clipboard'); })
+        .catch(function() { Toast.error('Error', 'Failed to copy'); });
+    }
+  },
+
+  /**
+   * Format schema as a readable table with field info
+   */
+  formatSchemaAsTable(schema) {
+    if (!schema || !schema.properties) {
+      return '<div class="text-muted">No schema available</div>';
+    }
+
+    const required = schema.required || [];
+    const rows = Object.entries(schema.properties).map(([key, prop]) => {
+      const isRequired = required.includes(key);
+      const typeStr = this.getTypeString(prop);
+      const desc = prop.description || prop.title || '';
+      const nullable = prop.nullable ? ' <span class="text-muted">(optional)</span>' : '';
+      const enumVals = prop.enum ? '<br><span class="api-param-type">' + prop.enum.join(' | ') + '</span>' : '';
+
+      return '<tr>' +
+        '<td><span class="api-param-name">' + Utils.escapeHtml(key) + '</span>' +
+        (isRequired ? '<span class="api-param-required">*required</span>' : '') + '</td>' +
+        '<td><span class="api-param-type">' + Utils.escapeHtml(typeStr) + '</span>' + nullable + enumVals + '</td>' +
+        '<td>' + (desc ? Utils.escapeHtml(desc) : '<span class="text-muted">-</span>') + '</td>' +
+        '</tr>';
+    }).join('');
+
+    return '<table class="api-params-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  },
+
+  /**
+   * Get a human-readable type string from a schema property
+   */
+  getTypeString(prop) {
+    if (!prop) return 'any';
+    if (prop.type === 'array' && prop.items) {
+      return this.getTypeString(prop.items) + '[]';
+    }
+    if (prop.type === 'object' && prop.additionalProperties) {
+      return 'object';
+    }
+    let t = prop.type || 'any';
+    if (prop.format) t += ' (' + prop.format + ')';
+    return t;
+  },
+
+  /**
+   * Generate example JSON from schema
+   */
+  generateExampleJson(schema) {
+    if (!schema) return null;
+
+    if (schema.type === 'object' && schema.properties) {
+      const obj = {};
+      const required = schema.required || [];
+      for (const [key, value] of Object.entries(schema.properties)) {
+        // Include required fields and a sampling of optional fields
+        if (required.includes(key) || Object.keys(schema.properties).length <= 6) {
+          obj[key] = this.generateSampleValue(value);
+        }
+      }
+      return obj;
+    }
+
+    if (schema.type === 'array' && schema.items) {
+      return [this.generateExampleJson(schema.items)];
+    }
+
+    return this.generateSampleValue(schema);
   },
 
   formatSchema(schema, indent) {
@@ -385,13 +640,74 @@ const ApiExplorerView = {
     if (schema.example !== undefined) return schema.example;
     if (schema.default !== undefined) return schema.default;
     if (schema.enum) return schema.enum[0];
+
+    // Handle nullable types (anyOf with null)
+    if (schema.anyOf) {
+      const nonNull = schema.anyOf.find(s => s.type !== 'null');
+      if (nonNull) return this.generateSampleValue(nonNull);
+    }
+
+    // Generate contextual example based on field name/title
+    const fieldName = (schema.title || '').toLowerCase();
+    const fieldDesc = (schema.description || '').toLowerCase();
+
     switch (schema.type) {
-      case 'string': if (schema.format === 'date') return '2026-01-01'; if (schema.format === 'date-time') return '2026-01-01T10:00:00Z'; if (schema.format === 'email') return 'example@email.com'; return 'string';
-      case 'integer': case 'number': return 0;
-      case 'boolean': return true;
-      case 'array': return schema.items ? [this.generateSampleValue(schema.items)] : [];
-      case 'object': return this.generateSampleBody(schema);
-      default: return null;
+      case 'string':
+        // Format-based examples
+        if (schema.format === 'date') return '2026-02-05';
+        if (schema.format === 'date-time') return '2026-02-05T10:00:00Z';
+        if (schema.format === 'email') return 'user@example.com';
+        if (schema.format === 'uri' || schema.format === 'url') return 'https://example.com';
+
+        // Name-based examples for common fields
+        if (fieldName.includes('title') || fieldName.includes('name')) return 'Example Title';
+        if (fieldName.includes('description')) return 'A brief description';
+        if (fieldName.includes('task') || fieldName.includes('message')) return 'Complete the task';
+        if (fieldName.includes('id')) return 'abc123';
+        if (fieldName.includes('email')) return 'user@example.com';
+        if (fieldName.includes('url') || fieldName.includes('link')) return 'https://example.com';
+        if (fieldName.includes('date')) return '2026-02-05';
+        if (fieldName.includes('session')) return 'sess_12345';
+        if (fieldName.includes('action')) return 'navigate';
+        if (fieldName.includes('source')) return 'Vinted';
+        if (fieldName.includes('reference')) return 'REF-001';
+        if (fieldName.includes('method') || fieldName.includes('payment')) return 'PayPal';
+        if (fieldName.includes('priority')) return 'high';
+
+        return 'string';
+
+      case 'integer':
+        if (fieldName.includes('id') || fieldName.includes('user') || fieldName.includes('channel')) return 123456789;
+        if (fieldName.includes('count') || fieldName.includes('limit')) return 10;
+        if (fieldName.includes('page')) return 1;
+        return 1;
+
+      case 'number':
+        if (fieldName.includes('cost') || fieldName.includes('price') || fieldName.includes('amount')) return 29.99;
+        if (fieldName.includes('lat')) return 51.5074;
+        if (fieldName.includes('lon') || fieldName.includes('lng')) return -0.1278;
+        return 0;
+
+      case 'boolean':
+        return true;
+
+      case 'array':
+        if (schema.items) {
+          // For tags/items arrays, return 2 sample items
+          if (fieldName.includes('tag')) return ['tag1', 'tag2'];
+          return [this.generateSampleValue(schema.items)];
+        }
+        return [];
+
+      case 'object':
+        if (schema.additionalProperties) {
+          // Generic object with additionalProperties
+          return { key: 'value' };
+        }
+        return this.generateSampleBody(schema);
+
+      default:
+        return null;
     }
   },
 
