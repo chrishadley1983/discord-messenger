@@ -202,6 +202,37 @@ def _find_process_by_pattern(pattern: str) -> list[int]:
     return pids
 
 
+def _get_process_start_time(pid: int) -> Optional[str]:
+    """Get the start time of a process as ISO timestamp."""
+    if not pid:
+        return None
+    try:
+        # Use WMIC to get process creation date
+        result = subprocess.run(
+            ["wmic", "process", "where", f"processid={pid}", "get", "creationdate"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=0x08000000
+        )
+        for line in result.stdout.strip().split('\n'):
+            line = line.strip()
+            # WMIC returns date like: 20260205115200.123456+000
+            if line and line[0].isdigit() and len(line) >= 14:
+                # Parse WMIC datetime format: YYYYMMDDHHmmss.ffffff+zzz
+                year = line[0:4]
+                month = line[4:6]
+                day = line[6:8]
+                hour = line[8:10]
+                minute = line[10:12]
+                second = line[12:14]
+                # Return as ISO format
+                return f"{year}-{month}-{day}T{hour}:{minute}:{second}"
+    except Exception:
+        pass
+    return None
+
+
 def _is_port_in_use(port: int) -> bool:
     """Check if a port is in use."""
     try:
@@ -246,6 +277,7 @@ def get_service_status(service: str) -> dict:
                 "status": nssm_status,
                 "managed_by": "nssm",
                 "nssm_service": nssm_name,
+                "started_at": _get_process_start_time(nssm_pid),
             }
 
     # Fall back to PID file tracking
@@ -259,6 +291,7 @@ def get_service_status(service: str) -> dict:
         "port": config.port,
         "port_in_use": _is_port_in_use(config.port) if config.port else None,
         "managed_by": "pid_file",
+        "started_at": _get_process_start_time(pid) if pid else None,
     }
 
     # Determine overall status

@@ -643,6 +643,10 @@ async def get_system_status():
     # Check Hadley Bricks status
     hb_http_status = await check_http_service("http://localhost:3000/", timeout=3.0)
 
+    # Helper to get last restart - prefer actual process start time, fall back to tracked time
+    def get_last_restart(service_key):
+        return svc_status.get(service_key, {}).get("started_at") or _last_restart_time.get(service_key)
+
     return {
         "timestamp": datetime.now().isoformat(),
         "services": {
@@ -652,7 +656,7 @@ async def get_system_status():
                 "pid": svc_status.get("hadley_api", {}).get("pid"),
                 "port": 8100,
                 "process_status": svc_status.get("hadley_api", {}).get("status", "unknown"),
-                "last_restart": _last_restart_time.get("hadley_api")
+                "last_restart": get_last_restart("hadley_api")
             },
             "hadley_bricks": {
                 "status": hb_http_status.get("status", "down"),
@@ -660,14 +664,14 @@ async def get_system_status():
                 "pid": svc_status.get("hadley_bricks", {}).get("pid"),
                 "port": 3000,
                 "process_status": svc_status.get("hadley_bricks", {}).get("status", "unknown"),
-                "last_restart": _last_restart_time.get("hadley_bricks")
+                "last_restart": get_last_restart("hadley_bricks")
             },
             "claude_mem": {**mem_status, "last_restart": _last_restart_time.get("claude_mem")},
             "discord_bot": {
                 "status": "up" if svc_status.get("discord_bot", {}).get("status") == "running" else "down",
                 "pid": svc_status.get("discord_bot", {}).get("pid"),
                 "process_status": svc_status.get("discord_bot", {}).get("status", "unknown"),
-                "last_restart": _last_restart_time.get("discord_bot")
+                "last_restart": get_last_restart("discord_bot")
             },
             "peterbot_session": {
                 "status": "up" if peterbot_session else "down",
