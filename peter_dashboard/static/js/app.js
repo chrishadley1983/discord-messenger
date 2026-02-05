@@ -1000,6 +1000,7 @@ const DashboardView = {
       if (svc.port) details.push({ label: 'Port', value: svc.port });
       if (svc.pid) details.push({ label: 'PID', value: svc.pid });
       if (svc.latency_ms) details.push({ label: 'Latency', value: `${svc.latency_ms}ms` });
+      if (svc.last_restart) details.push({ label: 'Last Restart', value: Utils.formatRelativeTime(svc.last_restart) });
 
       return Components.serviceCard({
         name: Format.serviceName(key),
@@ -3910,5 +3911,5 @@ window.SkillsView = SkillsView;
 window.LogsView = LogsView;
 window.FilesView = FilesView;
 window.MemoryView = MemoryView;
-window.ApiExplorerView = ApiExplorerView;
+// ApiExplorerView is defined in api-explorer.js
 window.SettingsView = SettingsView;
