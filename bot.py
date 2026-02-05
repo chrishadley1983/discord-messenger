@@ -59,7 +59,6 @@ from domains.second_brain.passive import (
 
 # Import standalone jobs (legacy - kept for manual triggers during migration)
 from jobs import (
-    register_morning_briefing,
     register_balance_monitor,
     register_school_run,
     register_nutrition_morning,
@@ -129,7 +128,6 @@ async def on_ready():
         logger.info(f"Peterbot scheduler loaded {job_count} jobs from SCHEDULE.md")
     else:
         # Legacy: Register standalone jobs (remove after Phase 7b migration)
-        register_morning_briefing(scheduler, bot)
         register_balance_monitor(scheduler, bot)
         register_school_run(scheduler, bot)
         register_withings_sync(scheduler)  # Sync weight data before morning message
