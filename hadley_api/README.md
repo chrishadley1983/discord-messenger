@@ -194,10 +194,18 @@ Unified task management system with 4 list types: personal_todo, peter_queue, id
 - `DELETE /notion/ideas/{idea_id}` - Delete idea
 
 ### Reminders
-- `GET /reminders?user_id=<id>` - List pending reminders
-- `POST /reminders` - Create reminder (body: {task, run_at, user_id, channel_id})
-- `PATCH /reminders/{id}` - Update reminder
-- `DELETE /reminders/{id}` - Delete reminder
+**Read:**
+- `GET /reminders?user_id=<id>` — List pending (unfired) reminders, sorted by run_at
+
+**Write:**
+- `POST /reminders` — Create reminder (body: `{task, run_at, user_id, channel_id}`)
+  - `run_at` must be ISO 8601 and in the future
+  - Returns the created reminder object
+- `PATCH /reminders/{id}` — Update reminder (body: `{task?, run_at?}`)
+  - Only updates provided fields; `run_at` must be in the future
+- `DELETE /reminders/{id}` — Cancel/delete a reminder
+
+**Note:** The Discord bot's polling loop picks up new reminders every 60 seconds, so API-created reminders will be scheduled automatically without a bot restart.
 
 ### Weather
 - `GET /weather/current` - Current weather

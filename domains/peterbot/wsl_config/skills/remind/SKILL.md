@@ -9,6 +9,7 @@ trigger:
   - "my reminders"
   - "update reminder"
   - "delete reminder"
+  - "/remind"
 scheduled: false
 conversational: true
 channel: "#peterbot"
@@ -21,14 +22,18 @@ channel: "#peterbot"
 Manage one-off reminders for Chris. Reminders are stored in Supabase and delivered
 by the Discord bot at the scheduled time.
 
+**Important**: Only create reminders when Chris explicitly asks for a reminder.
+Messages about diary events, calendar entries, or tasks are NOT reminders — route
+those to the appropriate skill (calendar, tasks, etc.).
+
 ## API Endpoints
 
 Use the Hadley API at `http://172.19.64.1:8100`:
 
-- `GET /reminders?user_id=<id>` - List pending reminders
-- `POST /reminders` - Create reminder (body: `{task, run_at, user_id, channel_id}`)
-- `PATCH /reminders/<id>` - Update reminder
-- `DELETE /reminders/<id>` - Cancel reminder
+- `GET /reminders?user_id=<id>` — List pending reminders
+- `POST /reminders` — Create reminder (body: `{task, run_at, user_id, channel_id}`)
+- `PATCH /reminders/<id>` — Update reminder (body: `{task?, run_at?}`)
+- `DELETE /reminders/<id>` — Cancel reminder
 
 **User/Channel IDs for Chris:**
 - `user_id`: 141574217869243200
@@ -38,17 +43,28 @@ Use the Hadley API at `http://172.19.64.1:8100`:
 
 ### Creating Reminders
 
-1. **Parse the request** - Extract time, date, and task from natural language
-2. **Smart confirmation:**
-   - **Clear request** (specific time + recognizable task): Create immediately, confirm after
-   - **Uncertain request** (missing time, vague task): Ask for clarification first
-3. **Call POST /reminders** with parsed data
+1. **Parse the request** — Extract time, date, and task from natural language
+2. **ALWAYS confirm before creating** — Show what you understood and ask for approval:
+   ```
+   I'll set this reminder:
+   - **When:** Thu 12 Feb 18:00 UK
+   - **Task:** Check traffic to Brickstop
+
+   Shall I go ahead?
+   ```
+3. **Only after Chris confirms** → Call `POST /reminders` with parsed data
 4. **Respond** with confirmation
 
 ### Listing Reminders
 
 1. Call `GET /reminders?user_id=141574217869243200`
 2. Format response showing date/time and task for each
+
+### Updating Reminders
+
+1. List reminders so Chris can identify which one
+2. Confirm the change before applying
+3. Call `PATCH /reminders/<id>` with updated fields
 
 ### Cancelling Reminders
 
@@ -71,34 +87,33 @@ Always use UK timezone (Europe/London).
 
 ## Output Formats
 
-### Clear Request (create immediately):
+### Confirm before creating:
 ```
-✅ **Reminder Set**
+I'll set this reminder:
+- **When:** Sun 9 Feb 09:00 UK
+- **Task:** Check traffic to Brickstop
 
-**When:** Sun 9 Feb 09:00 UK
-**Task:** Check traffic to Brickstop
+Shall I go ahead?
 ```
 
-### Uncertain Request (ask first):
+### After creation confirmed:
 ```
-I'd like to set a reminder for you. Can you tell me:
-- **When?** (e.g., "tomorrow at 9am", "Monday 2pm")
-- **What?** (the task or message)
+Reminder set for Sun 9 Feb 09:00 UK — Check traffic to Brickstop
 ```
 
 ### List Reminders:
 ```
 **Your Reminders:**
 
-• Sun 9 Feb 09:00 — Check traffic to Brickstop
-• Mon 10 Feb 08:00 — Submit tax return
+- Sun 9 Feb 09:00 — Check traffic to Brickstop
+- Mon 10 Feb 08:00 — Submit tax return
 
 To cancel: "cancel reminder [task description]"
 ```
 
 ### Cancelled:
 ```
-✅ Cancelled reminder: Check traffic to Brickstop
+Cancelled reminder: Check traffic to Brickstop
 ```
 
 ### No Reminders:
@@ -106,21 +121,26 @@ To cancel: "cancel reminder [task description]"
 No pending reminders. Say "remind me at [time] to [task]" to set one.
 ```
 
-## Proactive Suggestions
+## Distinguishing Reminders from Other Requests
 
-Peter CAN suggest setting reminders when appropriate:
-```
-Would you like me to set a reminder for that? Just say "remind me at [time]"
-```
+**IS a reminder request:**
+- "Remind me at 9am to check traffic"
+- "Set a reminder for Monday"
+- "/remind 2pm take meds"
 
-But MUST wait for explicit confirmation before creating.
+**Is NOT a reminder request (route to correct skill):**
+- "Add dinner to my diary for Thursday" → calendar skill
+- "Put X on my to-do list" → task skill
+- "Book a meeting for 3pm" → calendar skill
+
+When in doubt, ask Chris: "Would you like this as a reminder, or added to your calendar/tasks?"
 
 ## Rules
 
 1. Always use UK timezone for display and storage
-2. For clear requests, create immediately - don't ask "is this correct?"
+2. **ALWAYS confirm before creating** — never auto-create from ambiguous messages
 3. For uncertain requests, ask for missing information
-4. Never create a reminder for proactive suggestions without user confirmation
+4. Never create a reminder without Chris's explicit approval
 5. When listing, sort by run_at (soonest first)
 6. Include cancel instructions when listing reminders
 7. Use short date format: "Sun 9 Feb 09:00"
