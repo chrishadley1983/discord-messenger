@@ -31,6 +31,10 @@ Chris can add items here for Peter to work on in the background.
 
 ### Done
 
+- [x] [MEMORY] Save M&S Slow Cooked range protein tier list — Created `ms-slow-cooked-research.md` in auto-memory with S/A/C tier rankings, macros per 100g, and half-pack portions. Added reference to MEMORY.md. (2026-02-05)
+
+- [x] [SKILL] Document Peter Tasks endpoints — Already in PLANNING.md. Added cross-reference to UTILITIES.md with endpoints, trigger phrases, and note to use Peter Tasks (not HEARTBEAT.md) for task tracking. Updated auto-memory. (2026-02-05)
+
 - [x] [RESEARCH] Clawdbot/Openclaw use cases - Compiled 50 use cases across 9 categories (email, calendar, developer, files, research, finance, smart home, health, social media). Full doc at docs/OPENCLAW_USE_CASES_REPORT.md. Emailed to Chris. (2026-02-05)
 
 - [x] [BUILD] Daily recipe recommendations skill - Created `skills/daily-recipes/SKILL.md` with full spec: searches Reddit, X, YouTube, web for 5 high-protein recipes matching nutrition targets. Shows macros, prep time, direct links. Added to manifest.json. **Needs Chris to add to SCHEDULE.md** for 06:30 daily runs. (2026-02-04)

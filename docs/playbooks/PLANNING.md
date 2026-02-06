@@ -94,15 +94,21 @@ Base URL: `http://172.19.64.1:8100`
 | List calendars | `/calendar/calendars` | GET |
 | Check busy | `/calendar/busy?email=...&date=...` | GET |
 
-### Tasks & Notes
+### Peter Tasks (ptasks)
 
 | Query | Endpoint | Method |
 |-------|----------|--------|
-| Notion todos | `/notion/todos` | GET |
-| Notion ideas | `/notion/ideas` | GET |
-| List tasks | `/tasks/list` | GET |
-| Create task | `/tasks/create?title=Call+dentist` | POST |
-| Complete task | `/tasks/complete?task_id=...` | POST |
+| List tasks | `/ptasks?list_type=personal_todo` | GET |
+| Task counts | `/ptasks/counts` | GET |
+| Create task | `/ptasks` (body: `{list_type, title, priority?, description?}`) | POST |
+| Update task | `/ptasks/{task_id}` | PUT |
+| Change status | `/ptasks/{task_id}/status` (body: `{status}`) | POST |
+| Get task | `/ptasks/{task_id}` | GET |
+| Add comment | `/ptasks/{task_id}/comments` (body: `{content}`) | POST |
+| Heartbeat plan | `/ptasks/heartbeat/plan` | GET |
+
+**List types:** `personal_todo`, `peter_queue`, `idea`, `research`
+**Priorities:** `critical`, `high`, `medium`, `low`, `someday`
 
 ## Trigger Phrases
 
@@ -118,7 +124,9 @@ Base URL: `http://172.19.64.1:8100`
 - "Invite Sarah to the meeting" → `/calendar/invite`
 - "What calendars do I have?" → `/calendar/calendars`
 - "Is Sarah free tomorrow?" → `/calendar/busy?email=...`
-- "What's on my todo list?" → `/notion/todos`
-- "What are my tasks?" → `/tasks/list`
-- "Add task: call dentist" → `/tasks/create?title=...`
-- "Mark that task as done" → `/tasks/complete?task_id=...`
+- "What's on my todo list?" → `/ptasks?list_type=personal_todo`
+- "What are my tasks?" → `/ptasks/counts` then `/ptasks?list_type=...`
+- "Add task: call dentist" → POST `/ptasks` with `{list_type: "personal_todo", title: "Call dentist"}`
+- "Mark that task as done" → POST `/ptasks/{id}/status` with `{status: "done"}`
+- "Log a bug" / "Add to Peter's queue" → POST `/ptasks` with `{list_type: "peter_queue", title: "..."}`
+- "I have an idea" → POST `/ptasks` with `{list_type: "idea", title: "..."}`

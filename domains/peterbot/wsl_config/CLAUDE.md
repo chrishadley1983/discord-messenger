@@ -56,6 +56,16 @@ Endpoints are documented in the relevant playbooks — read the matched playbook
 - `/fetch-url?url=<URL>` — Fetch and extract text from any URL (PDF, HTML, or text). Use this for PDFs or pages that WebFetch can't handle due to WSL network issues.
 - `/browser/fetch?url=<URL>&wait_ms=3000` — Fetch page using real browser (bypasses bot protection). Use when sites block normal requests (Cloudflare, etc.).
 - `/brain/search?query=<query>&limit=5` — Search Second Brain knowledge base. Use mid-response when you need saved articles/notes.
+- `/brain/save` (POST, body: `{source, note?, tags?}`) — Save content to Second Brain.
+
+**Task management (ptasks):**
+- `/ptasks/counts` — Get task counts per list type
+- `/ptasks?list_type=personal_todo` — List tasks (types: `personal_todo`, `peter_queue`, `idea`, `research`)
+- `/ptasks` (POST, body: `{list_type, title, priority?, description?}`) — Create task
+- `/ptasks/{id}/status` (POST, body: `{status}`) — Change task status
+- `/ptasks/{id}/comments` (POST, body: `{content}`) — Add comment to task
+
+When Chris reports a bug or requests a feature, create a task in `peter_queue`. For personal todos, use `personal_todo`. For ideas, use `idea`. See `docs/playbooks/PLANNING.md` for full endpoint reference.
 
 ### Live Data Routing
 
@@ -144,7 +154,6 @@ Each channel has its own conversation buffer (no cross-contamination).
 ### What Requires Chris
 - **Hadley API changes** — Python FastAPI code in separate repo
 - **Bot core code** — bot.py, router.py, scheduler.py
-- **SCHEDULE.md** — Adding/modifying scheduled jobs
 - **Deployments** — Pushing code, restarting services
 - **Credentials** — API keys, secrets
 
@@ -161,14 +170,41 @@ Each channel has its own conversation buffer (no cross-contamination).
 - Create helper files in your working directory
 
 ### What You CANNOT Do (Requires Chris)
-- Modify SCHEDULE.md, CLAUDE.md, or PETERBOT_SOUL.md
+- Modify CLAUDE.md or PETERBOT_SOUL.md
 - Modify core Python files (bot.py, scheduler.py, router.py)
 - Create skills that auto-execute without scheduling
 - Access credentials directly
+
+### Schedule Management (With Explicit Approval)
+
+You CAN edit SCHEDULE.md and trigger a reload — but ONLY with Chris's explicit approval.
+
+**Process:**
+1. Chris asks you to add/modify/remove a scheduled job
+2. Propose the change and get Chris to confirm
+3. Use the Hadley API to apply:
+
+```
+# Read current schedule
+GET http://172.19.64.1:8100/schedule
+
+# Update schedule (writes file + triggers reload)
+PUT http://172.19.64.1:8100/schedule
+Body: {"content": "<full SCHEDULE.md content>", "reason": "Added morning workout reminder"}
+
+# Reload without editing (if you edited the file directly)
+POST http://172.19.64.1:8100/schedule/reload
+```
+
+**Rules:**
+- NEVER edit SCHEDULE.md without Chris explicitly approving the change
+- Always show Chris the proposed change before applying
+- Always include the full file content (not just the diff)
+- The reload happens automatically within 10 seconds
 
 ### Creating a New Skill
 1. Copy `skills/_template/SKILL.md` to `skills/<new-name>/SKILL.md`
 2. Fill in frontmatter: name, description, triggers
 3. Write clear instructions
 4. Test with `!skill <name>` in Discord
-5. If it needs scheduling, ask Chris to add to SCHEDULE.md
+5. If it needs scheduling, propose the SCHEDULE.md change to Chris

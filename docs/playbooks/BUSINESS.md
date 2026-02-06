@@ -78,28 +78,56 @@ When processing business data, flag if you notice:
 
 ---
 
-## Hadley API Endpoints
+## Hadley API — HB Proxy Endpoints
 
 Base URL: `http://172.19.64.1:8100`
 
-| Query | Endpoint | Method |
-|-------|----------|--------|
-| P&L report | `/hb/pnl?preset=this_month` or `?start_date=...&end_date=...` | GET |
-| Inventory overview | `/hb/inventory` | GET |
-| Inventory aging | `/hb/inventory/aging` | GET |
-| Daily activity | `/hb/daily?preset=today` or `?date=2026-01-15` | GET |
-| Orders | `/hb/orders?status=Paid,Pending` | GET |
-| Platform comparison | `/hb/platform?preset=last_month` | GET |
-| Purchase ROI analysis | `/hb/purchase-analysis` | GET |
-| Set lookup | `/hb/set/{set_number}` | GET |
-| Stock check | `/hb/stock/{set_number}` | GET |
-| Pick list | `/hb/pick-list` or `?platform=amazon` | GET |
-| Arbitrage deals | `/hb/arbitrage?limit=10` | GET |
-| Tasks | `/hb/tasks` | GET |
-| Upcoming pickups | `/hb/pickups` | GET |
-| Calculator | `/calculate?expr=...` | GET |
+All `/hb/*` endpoints proxy to the Hadley Bricks app (localhost:3000/api/*).
+Auth is handled automatically — just call the endpoints.
 
-**HB Presets:** `today`, `yesterday`, `this_week`, `last_week`, `this_month`, `last_month`, `this_year`, `last_year`
+### Read Endpoints
+
+| Query | Endpoint | Method | Key Params |
+|-------|----------|--------|------------|
+| Orders | `/hb/orders` | GET | `page`, `pageSize`, `platform`, `status`, `startDate`, `endDate` |
+| Order stats | `/hb/orders/stats` | GET | `platform` |
+| Order status summary | `/hb/orders/status-summary` | GET | `platform`, `days` (7/30/90/all) |
+| eBay orders | `/hb/orders/ebay` | GET | |
+| Amazon orders | `/hb/orders/amazon` | GET | |
+| Dispatch deadlines | `/hb/orders/dispatch-deadlines` | GET | |
+| Inventory | `/hb/inventory` | GET | `page`, `pageSize`, `status`, `condition`, `platform`, `search`, cost/date ranges |
+| Inventory summary | `/hb/inventory/summary` | GET | `excludeSold`, `platform` |
+| Inventory listing counts | `/hb/inventory/listing-counts` | GET | |
+| Purchases | `/hb/purchases` | GET | `page`, `pageSize`, `source`, `dateFrom`, `dateTo`, `search` |
+| Purchase search | `/hb/purchases/search` | GET | |
+| P&L report | `/hb/reports/profit-loss` | GET | `preset` or `startDate`+`endDate` |
+| Daily activity | `/hb/reports/daily-activity` | GET | `preset`, `granularity` (daily/monthly) |
+| Inventory aging | `/hb/reports/inventory-aging` | GET | |
+| Inventory valuation | `/hb/reports/inventory-valuation` | GET | `condition`, `category` |
+| Purchase ROI | `/hb/reports/purchase-analysis` | GET | |
+| Pick list (eBay) | `/hb/picking-list/ebay` | GET | `format` (json/pdf) |
+| Pick list (Amazon) | `/hb/picking-list/amazon` | GET | `format` (json/pdf) |
+| Set lookup | `/hb/brickset/lookup?query={set_number}` | GET | |
+| Set pricing | `/hb/brickset/pricing?setNumber={num}` | GET | |
+| Stock check | `/hb/brickset/inventory-stock?setNumber={num}` | GET | |
+| Arbitrage deals | `/hb/arbitrage` | GET | |
+| Arbitrage summary | `/hb/arbitrage/summary` | GET | |
+| Tasks today | `/hb/workflow/tasks/today` | GET | |
+| Upcoming pickups | `/hb/pickups/upcoming` | GET | |
+
+### Write Endpoints
+
+| Action | Endpoint | Method | Body |
+|--------|----------|--------|------|
+| Add purchase | `/hb/purchases` | POST | `{purchase_date, short_description, cost, source?, payment_method?}` |
+| Add inventory item | `/hb/inventory` | POST | `{set_number, item_name?, condition?, cost?, purchase_id?, storage_location?}` |
+| Bulk add inventory | `/hb/service/inventory` | POST | `{items: [{set_number, name, condition, cost, purchase_id, ...}]}` |
+| Service add purchase | `/hb/service/purchases` | POST | `{source, cost, payment_method, purchase_date, ...}` |
+| Update order status | `/hb/orders/{id}/status` | POST | `{status}` |
+
+### Presets (for report endpoints)
+
+`today`, `yesterday`, `this_week`, `last_week`, `this_month`, `last_month`, `this_quarter`, `last_quarter`, `this_year`, `last_year`, `last_30_days`, `last_90_days`, `custom` (with startDate+endDate)
 
 ## HB Skills Reference
 

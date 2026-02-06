@@ -7,7 +7,7 @@ READ THIS for any food logging, nutrition check-in, or dietary coaching interact
 - Current targets: `/nutrition/goals` (calories, protein, carbs, fat, water, steps)
 - Today's intake: `/nutrition/today`
 - Today's meals: `/nutrition/today/meals`
-- Water logged: `/nutrition/water/today`
+- Water entries: `/nutrition/water/entries` (with IDs for deleting)
 - Steps: `/nutrition/steps`
 - Weight + history: `/nutrition/weight`, `/nutrition/weight/history`
 - Favourites: `/nutrition/favourites`
@@ -72,11 +72,14 @@ Base URL: `http://172.19.64.1:8100`
 |-------|----------|--------|
 | Log a meal | `/nutrition/log-meal?meal_type=lunch&description=...&calories=...&protein_g=...&carbs_g=...&fat_g=...` | POST |
 | Log water | `/nutrition/log-water?ml=500` | POST |
-| Delete a meal | `/nutrition/meal?meal_id=<uuid>` | DELETE |
+| Delete a meal/food | `/nutrition/meal?meal_id=<uuid>` | DELETE |
 | Get water entries | `/nutrition/water/entries` | GET |
 | Delete water entry | `/nutrition/water?entry_id=<uuid>` | DELETE |
+| Reset all water today | `/nutrition/water/reset` | POST |
 | Today's summary | `/nutrition/today` | GET |
 | Today's meals | `/nutrition/today/meals` | GET |
+| Any date summary | `/nutrition/date?date=YYYY-MM-DD` | GET |
+| Any date meals | `/nutrition/date/meals?date=YYYY-MM-DD` | GET |
 | Week summary | `/nutrition/week` | GET |
 | Get goals | `/nutrition/goals` | GET |
 | Update goals | `/nutrition/goals` | PATCH |
@@ -109,3 +112,8 @@ Use these endpoints when the user says:
 - "my steps" → `/nutrition/steps`
 - "my weight" → `/nutrition/weight`
 - "my favourite meals" → `/nutrition/favourites`
+- "reset water" / "clear water" → `/nutrition/water/reset`
+- "delete water entry" → `/nutrition/water/entries` then `/nutrition/water?entry_id=<uuid>`
+- "delete food/meal" → `/nutrition/today/meals` then `/nutrition/meal?meal_id=<uuid>`
+- "what did I eat on Monday/yesterday/2026-02-03?" → `/nutrition/date/meals?date=YYYY-MM-DD`
+- "how did I do on [date]?" → `/nutrition/date?date=YYYY-MM-DD`

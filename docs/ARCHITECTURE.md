@@ -6,7 +6,11 @@ This document provides a comprehensive overview of the Peterbot system architect
 
 ## 1. System Overview
 
-Peterbot is an AI-powered personal assistant running as a Discord bot on Windows, with Claude Code executing in WSL2 via tmux sessions.
+Peterbot is an AI-powered personal assistant running as a Discord bot on Windows, with Claude Code executing in WSL2.
+
+### Router V2 (Active Default — Feb 2026)
+
+Uses `claude -p --output-format stream-json --verbose` — each message spawns an independent CLI process. No tmux, no session lock, no screen-scraping.
 
 ```
 +------------------+      +------------------+      +------------------+
@@ -14,11 +18,11 @@ Peterbot is an AI-powered personal assistant running as a Discord bot on Windows
 |                  |      |  (Windows)       |      |  (Windows:8100)  |
 +------------------+      +--------+---------+      +------------------+
                                    |
-                                   | WSL subprocess
+                                   | WSL subprocess (per-request)
                                    v
                          +------------------+
-                         |  tmux session    |
-                         |  claude-peterbot |
+                         |  claude -p       |
+                         |  --stream-json   |
                          |  (WSL2)          |
                          +--------+---------+
                                   |
@@ -29,6 +33,15 @@ Peterbot is an AI-powered personal assistant running as a Discord bot on Windows
                          +------------------+
 ```
 
+### Router V1 (Legacy Fallback)
+
+Uses persistent tmux session with screen-scraping. Revert by setting `PETERBOT_ROUTER_V2=0`.
+Old files (router.py, parser.py, sanitiser.py) are kept in-tree for this fallback.
+
+```
+Discord Bot → tmux session (claude-peterbot) → screen capture → parser.py → sanitiser.py
+```
+
 ### Services Running
 
 | Service | Port | Platform | Description |
@@ -37,7 +50,7 @@ Peterbot is an AI-powered personal assistant running as a Discord bot on Windows
 | Hadley API | 8100 | Windows | FastAPI proxy for Gmail, Calendar, Notion |
 | Peter Dashboard | 5000 | Windows | Flask web UI for monitoring |
 | Memory Worker | 37777 | Windows | claude-mem persistent memory |
-| Claude Code | - | WSL2 tmux | AI responses via tmux session |
+| Claude Code | - | WSL2 CLI | AI responses via `claude -p` (v2) or tmux (v1 fallback) |
 | Hadley Bricks | 3000 | (External) | LEGO inventory management API |
 
 ---
@@ -50,7 +63,8 @@ Peterbot is an AI-powered personal assistant running as a Discord bot on Windows
 |-----------|--------------|----------|-------|
 | Bot code | `C:\Users\Chris Hadley\Discord-Messenger\` | N/A | Runs on Windows |
 | Peterbot config | `domains\peterbot\wsl_config\` | `/home/chris_hadley/peterbot/` | Symlinked to Windows |
-| Claude Code session | N/A | tmux session `claude-peterbot` | Runs in WSL |
+| Claude Code (v2) | N/A | `claude -p` per-request | Independent process, no session |
+| Claude Code (v1) | N/A | tmux session `claude-peterbot` | Legacy fallback only |
 | Hadley API | `hadley_api/` | N/A | FastAPI on Windows |
 | Dashboard | `peter_dashboard/` | N/A | FastAPI on Windows |
 | Skills | `domains\peterbot\wsl_config\skills\` | `~/peterbot/skills/` | Via symlink |
@@ -63,12 +77,13 @@ Discord-Messenger/
 |-- config.py                   # Global configuration (API keys, channels)
 |-- domains/
 |   |-- peterbot/
-|   |   |-- router.py           # Message routing, tmux communication
-|   |   |-- scheduler.py        # APScheduler job management
+|   |   |-- router_v2.py        # [ACTIVE] CLI --print mode routing (no tmux)
+|   |   |-- router.py           # [FALLBACK] Legacy tmux screen-scraping router
+|   |   |-- scheduler.py        # APScheduler job management (uses v2 or v1)
 |   |   |-- data_fetchers.py    # Pre-fetch data for skills
 |   |   |-- memory.py           # Memory context injection
-|   |   |-- config.py           # Peterbot-specific config
-|   |   |-- parser.py           # Response extraction from tmux
+|   |   |-- config.py           # Peterbot-specific config + USE_ROUTER_V2 flag
+|   |   |-- parser.py           # [FALLBACK] Response extraction from tmux
 |   |   |-- response/           # Response pipeline (sanitize, format, chunk)
 |   |   |-- reminders/          # One-off reminder handling
 |   |   `-- wsl_config/         # <-- SYMLINKED TO WSL
@@ -101,7 +116,9 @@ Discord-Messenger/
 
 ## 3. Message Flow (Conversation)
 
-When a user sends a message to a Peterbot channel:
+### V2 Flow (Active Default)
+
+Uses `claude -p --output-format stream-json`. No session lock, no tmux, no screen-scraping.
 
 ```
 1. Discord Message
@@ -112,53 +129,57 @@ When a user sends a message to a Peterbot channel:
    - Channel routing (PETERBOT_CHANNEL_IDS)
        |
        v
-3. peterbot/router.py handle_message()
+3. peterbot/router_v2.py handle_message()
    - Add message to per-channel buffer
    - Fetch memory context (async, graceful degradation)
    - Fetch Second Brain knowledge (async)
-   - Acquire session lock (_session_lock)
+   - Build full context string
        |
        v
-4. Write context.md file (via WSL bash)
-   - Contains: memory, recent buffer, channel info, user message
+4. Spawn: wsl bash -c "cd ~/peterbot && claude -p --output-format stream-json ..."
+   - Context piped via stdin (no temp file)
+   - CLAUDE.md loaded automatically (working dir ~/peterbot)
        |
        v
-5. Send to tmux session (claude-peterbot)
-   _tmux("send-keys", ..., "Read context.md and respond", "Enter")
+5. Stream NDJSON events from stdout
+   - "system/init" → MCP servers connected
+   - "assistant" with tool_use → post interim "🔍 Searching..."
+   - "result" → extract clean result text
        |
        v
-6. Poll for response (wait_for_response)
-   - Capture screen via tmux capture-pane
-   - Detect spinner chars for "thinking" status
-   - Post interim updates if taking too long
-       |
-       v
-7. Extract response (parser.py)
-   - Diff screen_before vs screen_after
-   - Extract Claude's actual response
-       |
-       v
-8. Response Pipeline (response/pipeline.py)
-   - Sanitize (remove tool output noise)
+6. Response Pipeline (response/pipeline.py)
+   - Sanitise: SKIPPED (pre_sanitised=True, JSON output is clean)
    - Classify (report/alert/chat/etc.)
    - Format (Discord markdown)
    - Chunk (2000 char limit)
        |
        v
-9. Post to Discord channel
-   - Multiple chunks if needed
-   - Embed attachments if any
+7. Post to Discord channel
        |
        v
-10. Memory capture (async, fire-and-forget)
-    - Save message pair for future retrieval
+8. Memory capture (async, fire-and-forget)
 ```
 
-### Key Components in Flow
+### Key Differences from V1
 
-- **Session Lock**: Only one operation (conversation OR scheduled job) can use the tmux session at a time
-- **Context File**: Large prompts written to `context.md` to avoid tmux paste issues
-- **Channel Isolation**: `/clear` command sent on channel switch to prevent cross-contamination
+| Aspect | V2 (Active) | V1 (Fallback) |
+|--------|-------------|---------------|
+| Execution | Independent process per request | Shared tmux session |
+| Concurrency | Unlimited parallel requests | Session lock, one at a time |
+| Response capture | JSON `result` field | Screen diff + 50+ regex parser |
+| Sanitisation | Skipped (clean output) | Required (CC artifacts in screen) |
+| Interim updates | Tool names from stream events | Spinner char detection |
+| Channel isolation | Automatic (independent process) | `/clear` on channel switch |
+| Temp files | None (stdin pipe) | context.md written to WSL |
+
+### V1 Flow (Legacy Fallback)
+
+Set `PETERBOT_ROUTER_V2=0` to revert. Uses tmux screen-scraping via router.py + parser.py + sanitiser.py.
+
+```
+handle_message() → session lock → write context.md → tmux send-keys →
+poll screen → parser extract → sanitiser clean → pipeline → Discord
+```
 
 ---
 
@@ -198,24 +219,22 @@ Scheduled jobs follow a different flow, using pre-fetched data:
    - "ONLY output the formatted response"
        |
        v
-7. Acquire session lock
-   - /clear before each scheduled job
+7. Send to Claude Code
+   - V2: invoke_claude_cli() — independent process, no lock
+   - V1: session lock → /clear → tmux send-keys → poll → parse
        |
        v
-8. Send to Claude Code (same as conversation)
-       |
-       v
-9. Extract and validate response
+8. Validate response
    - Check for NO_REPLY (suppress output)
-   - Check for garbage patterns
+   - Check for garbage patterns (v1 only — v2 output is clean)
        |
        v
-10. Post to configured channel
-    - Process through Response Pipeline
-    - Optional WhatsApp via Twilio
+9. Post to configured channel
+   - Process through Response Pipeline (pre_sanitised=True for v2)
+   - Optional WhatsApp via Twilio
        |
        v
-11. Capture to memory (session: scheduled-<skill>)
+10. Capture to memory (session: scheduled-<skill>)
 ```
 
 ### Job Registration Sources
@@ -399,11 +418,11 @@ Or test manually:
 - WSL symlink means they're the same files
 - Check symlink is correct: `ls -la ~/peterbot`
 
-### 3. Missing `/clear` Between Sessions
+### 3. Missing `/clear` Between Sessions (V1 only)
 
 **Problem**: Claude Code retains context from previous conversation/job.
 
-**Solution**: The router automatically sends `/clear` on channel switch. For scheduled jobs, `/clear` is sent before each job.
+**Solution**: The v1 router automatically sends `/clear` on channel switch. **Not applicable to v2** — each CLI call is a fresh process with no retained context.
 
 ### 4. Uncommitted Changes
 
@@ -411,11 +430,17 @@ Or test manually:
 
 **Solution**: All `wsl_config/` files are git-tracked. Commit changes regularly.
 
-### 5. Context File Conflicts
+### 5. Context File Conflicts (V1 only)
 
 **Problem**: Multiple operations writing to same `context.md`.
 
-**Solution**: Session lock (`_session_lock`) ensures only one operation at a time. Scheduled jobs use unique context filenames.
+**Solution**: V1 uses session lock (`_session_lock`). **Not applicable to v2** — context is piped via stdin, no temp files.
+
+### 8. Reverting to V1 (tmux) Router
+
+**Problem**: V2 CLI router has issues and you need to fall back.
+
+**Solution**: Set env var `PETERBOT_ROUTER_V2=0` and restart bot. Old router.py, parser.py, and sanitiser.py are still in-tree and will activate. The tmux session `claude-peterbot` will be created on first message.
 
 ### 6. Quiet Hours Bypass
 
@@ -446,13 +471,14 @@ Or test manually:
                            |                   |
                            v                   v
                     +------+------+    +-------+--------+
-                    | tmux        |    | Google APIs    |
-                    | (WSL)       |    | Notion, etc.   |
+                    | claude -p   |    | Google APIs    |
+                    | (WSL, v2)   |    | Notion, etc.   |
                     +-------------+    +----------------+
                            |
                            v
                     +-------------+
                     | Claude Code |
+                    | + MCP tools |
                     +-------------+
 ```
 
@@ -468,11 +494,73 @@ Or test manually:
 - Memory Worker: `http://localhost:37777/health`
 - Hadley API: `http://localhost:8100/health`
 - Dashboard: `http://localhost:5000/api/status`
-- tmux session: `tmux has-session -t claude-peterbot`
+- Claude CLI (v2): `wsl bash -c "claude --version"` (should return version)
+- tmux session (v1 only): `tmux has-session -t claude-peterbot`
 
 ---
 
-## 10. Configuration Reference
+## 10. Data Stores & Capture Flow
+
+### Databases
+
+| Database | Path | Purpose |
+|----------|------|---------|
+| `peter_dashboard/job_history.db` | Windows | Job execution history — `job_executions` table with start time, status, duration, output |
+| `data/parser_fixtures.db` | Windows | Parser captures & fixtures — `captures` table with screen_before/after, parser_output, pipeline_output; `fixtures` table for regression testing |
+| `data/captures.db` | Windows | Second Brain pending captures — `pending_captures` table for async memory ingestion |
+| `~/.claude-mem/claude-mem.db` | Windows | Peterbot-mem conversation memories |
+
+### Capture Flow (Response Lifecycle)
+
+**V2 (Active):**
+```
+Message/Job → claude -p (WSL) → NDJSON stream → result field (clean text)
+    ↓
+response/pipeline.py: process(response, pre_sanitised=True) → chunks for Discord
+    ↓
+Discord channel.send()
+```
+
+**V1 (Fallback):**
+```
+Message/Job → Claude Code (tmux) → screen_before + screen_after captured
+    ↓
+parser.py: extract_new_response(screen_before, screen_after)
+    ↓
+response/pipeline.py: process(response) → sanitise → chunks for Discord
+    ↓
+Discord channel.send()
+```
+
+**Where captures are stored:**
+
+| Source | Raw Log | DB Captures | Job History |
+|--------|---------|-------------|-------------|
+| User messages (router_v2.py) | N/A (no screen capture) | N/A | N/A |
+| User messages (router.py, v1) | `~/peterbot/raw_output.log` | `data/parser_fixtures.db` | N/A |
+| Scheduled jobs (scheduler.py) | N/A | `data/parser_fixtures.db` (v1 only) | `peter_dashboard/job_history.db` |
+
+**Key files in flow:**
+- `domains/peterbot/router_v2.py` — [ACTIVE] CLI --print mode, NDJSON stream parsing
+- `domains/peterbot/router.py` — [FALLBACK] tmux screen-scraping
+- `domains/peterbot/scheduler.py` — Job execution (uses v2 or v1 based on flag)
+- `domains/peterbot/parser.py` — [FALLBACK] Response extraction from screen diffs
+- `domains/peterbot/capture_parser.py` — `ParserCaptureStore` for parser quality tracking (v1 only)
+- `domains/peterbot/response/pipeline.py` — Formatting, chunking (sanitisation skipped for v2)
+
+### Parser Improvement Pipeline (V1 Only)
+
+Nightly at 02:00 UK, the `parser-improve` skill reviews 24h captures from `data/parser_fixtures.db`:
+1. Counts empty responses, ANSI leaks, echo issues, user reactions
+2. Checks fixture regression pass rates
+3. Runs leakage audit for undetected patterns
+4. Recommends parser stage to improve
+
+**Note**: This pipeline is irrelevant when v2 is active, since there is no screen-scraping or parsing.
+
+---
+
+## 11. Configuration Reference
 
 ### Environment Variables
 
@@ -480,6 +568,7 @@ Or test manually:
 |----------|---------|---------|
 | `DISCORD_TOKEN` | Discord bot token | `MTIz...` |
 | `PETERBOT_CHANNEL_ID` | Primary channel ID | `1234567890` |
+| `PETERBOT_ROUTER_V2` | Router version (`1`=CLI, `0`=tmux). Default: `1` | `1` |
 | `PETERBOT_SESSION_PATH` | WSL path to peterbot dir | `/home/chris_hadley/peterbot` |
 | `PETERBOT_MEM_URL` | Memory worker URL | `http://localhost:37777` |
 | `HADLEY_BRICKS_API_KEY` | HB inventory API key | `sk-...` |
@@ -498,9 +587,24 @@ Or test manually:
 
 ---
 
-## 11. Debugging Tips
+## 12. Debugging Tips
 
-### View tmux Session
+### Check Which Router is Active
+
+The bot logs which router it's using on startup:
+```
+Peterbot: Using router v2 (Claude CLI --print mode)
+```
+
+### Test CLI Directly (V2)
+
+```bash
+# In WSL — test Claude CLI works
+cd ~/peterbot
+echo "Say hello" | claude -p --output-format stream-json --verbose --model opus --permission-mode bypassPermissions --no-session-persistence
+```
+
+### View tmux Session (V1 Fallback Only)
 
 ```bash
 # In WSL
@@ -509,16 +613,18 @@ tmux attach -t claude-peterbot
 
 Press `Ctrl+B, D` to detach without killing.
 
-### Check Recent Context
+### Revert to V1
 
 ```bash
-cat ~/peterbot/context.md
+# Set env var and restart bot
+set PETERBOT_ROUTER_V2=0
+# Then restart bot.py via NSSM or manually
 ```
 
 ### View Raw Captures
 
 ```bash
-# Recent response captures for debugging
+# Recent response captures for debugging (v1 only)
 tail -f ~/peterbot/raw_captures.log
 ```
 
@@ -542,14 +648,28 @@ tail -f ~/peterbot/raw_captures.log
 
 ---
 
-## 12. Architecture Decisions
+## 13. Architecture Decisions
 
-### Why tmux Instead of Direct API?
+### Why CLI --print Instead of tmux? (V2 Migration, Feb 2026)
+
+The original tmux approach required 50+ regex patterns across parser.py (813 lines) and sanitiser.py (978 lines) to screen-scrape responses. The `claude -p --output-format stream-json` mode gives us:
+
+1. **Clean JSON output**: `result` field contains the final response — no parsing needed
+2. **No session lock**: Each call is an independent process, enabling concurrent requests
+3. **Better interim updates**: Stream events tell us exactly what tools are being called
+4. **No tmux at all**: Eliminates screen capture, line wrapping, ANSI stripping, scroll buffer issues
+5. **Same capabilities**: Full Claude Code tools, MCP servers, file access, web search
+
+**Revert path**: Set `PETERBOT_ROUTER_V2=0`. Old router.py, parser.py, sanitiser.py remain in-tree.
+
+### Why tmux? (V1 Legacy — Superseded)
 
 1. **Full Claude Code capabilities**: Tools, file access, web search
 2. **Persistent session**: Maintains context across messages
 3. **Permission mode**: `--permission-mode dontAsk` for autonomous operation
 4. **MCP tools**: Access to brave search, memory, etc.
+
+**Downsides** (why we migrated): Session lock contention, fragile screen-scraping, 50+ regex patterns, tmux line wrapping issues.
 
 ### Why Symlink Instead of Copy?
 
@@ -574,4 +694,4 @@ tail -f ~/peterbot/raw_captures.log
 
 ---
 
-*Last updated: 2026-02-05*
+*Last updated: 2026-02-06 — Router V2 (CLI --print mode) now default*

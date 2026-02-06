@@ -32,6 +32,16 @@
     "description": "Daily recipe recommendations matching health targets",
     "channel": null
   },
+  "daily-thoughts": {
+    "triggers": [
+      "daily thoughts email",
+      "send daily thoughts"
+    ],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Sends end-of-day email digest of captured thoughts throughout the day",
+    "channel": null
+  },
   "football-scores": {
     "triggers": [
       "football scores",

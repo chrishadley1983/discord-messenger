@@ -1,11 +1,13 @@
 """Embedding generation for Second Brain.
 
 Uses multiple fallback strategies:
-1. Supabase Edge Function (if deployed)
+1. Supabase Edge Function (deployed, runs gte-small natively)
 2. Supabase RPC with ai extension (if enabled)
-3. HuggingFace Inference API (free, no key needed)
+3. HuggingFace Inference API (requires HF_TOKEN env var)
 4. Zero vector (last resort - search won't work well)
 """
+
+import os
 
 import httpx
 
@@ -14,8 +16,9 @@ from logger import logger
 from .config import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
 
 
-# HuggingFace Inference API endpoint for gte-small
-HF_INFERENCE_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/thenlper/gte-small"
+# HuggingFace Inference API (requires auth since 2026)
+HF_INFERENCE_URL = "https://router.huggingface.co/hf-inference/models/thenlper/gte-small"
+HF_TOKEN = os.getenv("HF_TOKEN")
 
 
 async def generate_embedding(text: str) -> list[float]:
@@ -97,10 +100,14 @@ async def _embed_via_rpc(text: str) -> list[float] | None:
 
 
 async def _embed_via_huggingface(text: str) -> list[float] | None:
-    """Generate embedding via HuggingFace Inference API (free)."""
+    """Generate embedding via HuggingFace Inference API (requires HF_TOKEN)."""
+    if not HF_TOKEN:
+        return None
     async with httpx.AsyncClient() as client:
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
         response = await client.post(
             HF_INFERENCE_URL,
+            headers=headers,
             json={"inputs": text, "options": {"wait_for_model": True}},
             timeout=60,  # HF can be slow on cold start
         )
@@ -112,6 +119,7 @@ async def _embed_via_huggingface(text: str) -> list[float] | None:
             await asyncio.sleep(5)
             response = await client.post(
                 HF_INFERENCE_URL,
+                headers=headers,
                 json={"inputs": text, "options": {"wait_for_model": True}},
                 timeout=60,
             )
@@ -154,12 +162,16 @@ async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
 
 async def _embed_batch_huggingface(texts: list[str]) -> list[list[float]] | None:
     """Generate embeddings for batch via HuggingFace."""
+    if not HF_TOKEN:
+        return None
     # Truncate texts
     texts = [t[:8000] if len(t) > 8000 else t for t in texts]
 
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     async with httpx.AsyncClient() as client:
         response = await client.post(
             HF_INFERENCE_URL,
+            headers=headers,
             json={"inputs": texts, "options": {"wait_for_model": True}},
             timeout=120,  # Longer timeout for batch
         )
@@ -169,6 +181,7 @@ async def _embed_batch_huggingface(texts: list[str]) -> list[list[float]] | None
             await asyncio.sleep(5)
             response = await client.post(
                 HF_INFERENCE_URL,
+                headers=headers,
                 json={"inputs": texts, "options": {"wait_for_model": True}},
                 timeout=120,
             )
