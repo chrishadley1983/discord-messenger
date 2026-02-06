@@ -4,8 +4,8 @@ Handles OAuth complexity and exposes simple REST endpoints.
 Run with: uvicorn hadley_api.main:app --port 8100
 """
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, Response
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional
@@ -18,6 +18,12 @@ app = FastAPI(
     description="Local API proxy for Peter's real-time queries",
     version="1.0.0"
 )
+
+# Register sub-routers (load_dotenv before import so env vars are available)
+from dotenv import load_dotenv
+load_dotenv()
+from hadley_api.task_routes import router as task_router
+app.include_router(task_router)
 
 UK_TZ = ZoneInfo("Europe/London")
 
@@ -5288,6 +5294,108 @@ async def nutrition_delete_meal(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/nutrition/water/entries")
+async def nutrition_water_entries():
+    """Get today's water entries with IDs (for viewing/deleting individual entries)."""
+    from domains.nutrition.services.supabase_service import get_today_water_entries
+
+    try:
+        entries = await get_today_water_entries()
+        total_ml = sum(e.get("water_ml", 0) for e in entries)
+        return {
+            "count": len(entries),
+            "total_ml": total_ml,
+            "entries": entries,
+            "fetched_at": datetime.now(UK_TZ).isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/nutrition/water")
+async def nutrition_delete_water(
+    entry_id: str = Query(..., description="UUID of the water entry to delete")
+):
+    """Delete a single water entry by ID."""
+    from domains.nutrition.services.supabase_service import delete_meal
+
+    try:
+        result = await delete_meal(entry_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/nutrition/water/reset")
+async def nutrition_water_reset():
+    """Delete ALL water entries for today (bulk reset). Use with care."""
+    from domains.nutrition.services.supabase_service import delete_today_water
+
+    try:
+        result = await delete_today_water()
+        return {
+            **result,
+            "reset_at": datetime.now(UK_TZ).isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/nutrition/date")
+async def nutrition_by_date(
+    date: str = Query(..., description="Date in YYYY-MM-DD format", regex=r"^\d{4}-\d{2}-\d{2}$")
+):
+    """Get nutrition totals for a specific date."""
+    from domains.nutrition.services.supabase_service import get_nutrition_totals
+    from domains.nutrition.services.goals_service import get_goals
+
+    try:
+        totals, goals = await asyncio.gather(
+            get_nutrition_totals(date),
+            get_goals()
+        )
+        targets = goals.get("daily_targets", {})
+        progress = {}
+        if targets:
+            for key in ["calories", "protein_g", "carbs_g", "fat_g", "water_ml"]:
+                target = targets.get(key, 0)
+                if target:
+                    progress[key] = round((totals.get(key, 0) / target) * 100)
+
+        return {
+            "date": date,
+            "totals": totals,
+            "targets": targets,
+            "progress": progress,
+            "fetched_at": datetime.now(UK_TZ).isoformat()
+        }
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/nutrition/date/meals")
+async def nutrition_date_meals(
+    date: str = Query(..., description="Date in YYYY-MM-DD format", regex=r"^\d{4}-\d{2}-\d{2}$")
+):
+    """Get list of meals logged on a specific date."""
+    from domains.nutrition.services.supabase_service import get_meals_by_date
+
+    try:
+        meals = await get_meals_by_date(date)
+        return {
+            "date": date,
+            "count": len(meals),
+            "meals": meals,
+            "fetched_at": datetime.now(UK_TZ).isoformat()
+        }
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/nutrition/today")
 async def nutrition_today():
     """Get today's nutrition totals and progress vs targets."""
@@ -5514,6 +5622,242 @@ async def nutrition_delete_favourite(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Second Brain (Knowledge Base) Endpoints
+# ============================================================
+
+@app.get("/brain/search")
+async def brain_search(
+    query: str = Query(..., description="Search query"),
+    limit: int = Query(default=5, le=20),
+    min_similarity: float = Query(default=0.75, ge=0.0, le=1.0),
+):
+    """Semantic search across Second Brain knowledge base."""
+    from domains.second_brain import semantic_search
+
+    try:
+        results = await semantic_search(
+            query=query,
+            limit=limit,
+            min_similarity=min_similarity,
+        )
+        return {
+            "query": query,
+            "count": len(results),
+            "results": [
+                {
+                    "id": r.item.id,
+                    "title": r.item.title,
+                    "summary": r.item.summary,
+                    "source": r.item.source,
+                    "topics": r.item.topics,
+                    "similarity": round(r.best_similarity, 3),
+                    "weighted_score": round(r.weighted_score, 3),
+                    "excerpts": r.relevant_excerpts[:3],
+                    "content_type": r.item.content_type.value,
+                    "created_at": str(r.item.created_at) if r.item.created_at else None,
+                }
+                for r in results
+            ],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/brain/save")
+async def brain_save(
+    source: str = Query(..., description="URL or text content to save"),
+    note: Optional[str] = Query(default=None, description="Optional user note"),
+    tags: Optional[str] = Query(default=None, description="Comma-separated tags"),
+):
+    """Save content to Second Brain."""
+    from domains.second_brain import process_capture
+    from domains.second_brain.types import CaptureType
+
+    try:
+        user_tags = [t.strip() for t in tags.split(",")] if tags else None
+        item = await process_capture(
+            source=source,
+            capture_type=CaptureType.EXPLICIT,
+            user_note=note,
+            user_tags=user_tags,
+        )
+        if not item:
+            raise HTTPException(status_code=422, detail="Failed to process content")
+        return {
+            "success": True,
+            "id": item.id,
+            "title": item.title,
+            "summary": item.summary,
+            "topics": item.topics,
+            "word_count": item.word_count,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/brain/stats")
+async def brain_stats():
+    """Get Second Brain statistics."""
+    from domains.second_brain import get_total_active_count, get_topics_with_counts, get_recent_items
+
+    try:
+        total = await get_total_active_count()
+        topics = await get_topics_with_counts()
+        recent = await get_recent_items(limit=5)
+        return {
+            "total_items": total,
+            "topics": [{"topic": t, "count": c} for t, c in topics[:20]],
+            "recent": [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "content_type": r.content_type.value,
+                    "created_at": str(r.created_at) if r.created_at else None,
+                }
+                for r in recent
+            ],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Schedule Management
+# ============================================================
+
+SCHEDULE_PATH = Path(__file__).parent.parent / "domains" / "peterbot" / "wsl_config" / "SCHEDULE.md"
+SCHEDULE_RELOAD_TRIGGER = Path(__file__).parent.parent / "data" / "schedule_reload.trigger"
+
+
+@app.get("/schedule")
+async def get_schedule():
+    """Read current SCHEDULE.md content."""
+    if not SCHEDULE_PATH.exists():
+        raise HTTPException(status_code=404, detail="SCHEDULE.md not found")
+    content = SCHEDULE_PATH.read_text(encoding="utf-8")
+    return {"content": content, "path": str(SCHEDULE_PATH)}
+
+
+from pydantic import BaseModel
+
+
+class ScheduleUpdate(BaseModel):
+    content: str
+    reason: str = ""
+
+
+@app.put("/schedule")
+async def update_schedule(body: ScheduleUpdate):
+    """Update SCHEDULE.md content and trigger reload.
+
+    Peter calls this after getting explicit user approval.
+    Creates a backup before writing.
+    """
+    if not body.content.strip():
+        raise HTTPException(status_code=400, detail="Content cannot be empty")
+
+    # Validate it looks like a valid SCHEDULE.md (has the table header)
+    if "| Job |" not in body.content or "| Skill |" not in body.content:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid SCHEDULE.md format — must contain job table with | Job | Skill | columns"
+        )
+
+    # Backup current version
+    if SCHEDULE_PATH.exists():
+        backup_path = SCHEDULE_PATH.with_suffix(f".md.bak")
+        backup_path.write_text(SCHEDULE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+
+    # Write new content
+    SCHEDULE_PATH.write_text(body.content, encoding="utf-8")
+
+    # Trigger reload
+    SCHEDULE_RELOAD_TRIGGER.parent.mkdir(parents=True, exist_ok=True)
+    SCHEDULE_RELOAD_TRIGGER.write_text(
+        f"{datetime.now(UK_TZ).isoformat()}|{body.reason}",
+        encoding="utf-8"
+    )
+
+    return {
+        "status": "updated",
+        "message": "SCHEDULE.md updated and reload triggered",
+        "reason": body.reason,
+    }
+
+
+@app.post("/schedule/reload")
+async def reload_schedule():
+    """Trigger a schedule reload without editing the file."""
+    SCHEDULE_RELOAD_TRIGGER.parent.mkdir(parents=True, exist_ok=True)
+    SCHEDULE_RELOAD_TRIGGER.write_text(
+        f"{datetime.now(UK_TZ).isoformat()}|manual_reload",
+        encoding="utf-8"
+    )
+    return {"status": "reload_triggered", "message": "Schedule reload will apply within 10 seconds"}
+
+
+# ============================================================
+# Hadley Bricks Proxy - forwards /hb/* to HB app on port 3000
+# ============================================================
+
+HB_BASE_URL = os.environ.get("HADLEY_BRICKS_LOCAL_URL", "http://localhost:3000")
+HB_API_KEY = os.environ.get("HADLEY_BRICKS_API_KEY", "")
+
+
+@app.api_route("/hb/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+async def hb_proxy(request: Request, path: str):
+    """Proxy all /hb/* requests to Hadley Bricks app on localhost:3000/api/*.
+
+    Injects the service API key so Peter can call HB endpoints without
+    managing auth himself. Supports all HTTP methods.
+    """
+    import httpx
+
+    target_url = f"{HB_BASE_URL}/api/{path}"
+
+    # Forward query params
+    if request.url.query:
+        target_url += f"?{request.url.query}"
+
+    # Build headers — inject API key, forward content-type
+    headers = {"x-api-key": HB_API_KEY}
+    if request.headers.get("content-type"):
+        headers["content-type"] = request.headers["content-type"]
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Read body for non-GET requests
+            body = None
+            if request.method != "GET":
+                body = await request.body()
+
+            response = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=headers,
+                content=body,
+            )
+
+        # Return the HB response as-is
+        return Response(
+            content=response.content,
+            status_code=response.status_code,
+            media_type=response.headers.get("content-type", "application/json"),
+        )
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="Hadley Bricks app is not running (port 3000). Check HadleyBricks NSSM service."
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Hadley Bricks request timed out")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"HB proxy error: {str(e)}")
 
 
 if __name__ == "__main__":

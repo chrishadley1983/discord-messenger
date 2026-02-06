@@ -237,18 +237,45 @@ Unified task management system with 4 list types: personal_todo, peter_queue, id
 ### Nutrition
 - `POST /nutrition/log-meal` - Log meal
 - `POST /nutrition/log-water` - Log water
-- `GET /nutrition/today` - Today's nutrition
-- `GET /nutrition/week` - Weekly nutrition
+- `DELETE /nutrition/meal?meal_id=<uuid>` - Delete meal/food entry
+- `GET /nutrition/water/entries` - Today's water entries with IDs
+- `DELETE /nutrition/water?entry_id=<uuid>` - Delete single water entry
+- `POST /nutrition/water/reset` - Bulk delete today's water entries
+- `GET /nutrition/today` - Today's totals and progress
+- `GET /nutrition/today/meals` - Today's meal list
+- `GET /nutrition/date?date=YYYY-MM-DD` - Totals for any date
+- `GET /nutrition/date/meals?date=YYYY-MM-DD` - Meals for any date
+- `GET /nutrition/week` - Weekly summary
 - `GET /nutrition/goals` - Nutrition goals
 - `PATCH /nutrition/goals` - Update goals
+- `GET /nutrition/steps` - Today's steps (Garmin)
+- `GET /nutrition/weight` - Latest weight (Withings)
+- `GET /nutrition/weight/history?days=30` - Weight history
+- `GET /nutrition/favourites` - List meal favourites
+- `GET /nutrition/favourite?name=...` - Get favourite
+- `POST /nutrition/favourite` - Save favourite
+- `DELETE /nutrition/favourite?name=...` - Delete favourite
 
 ### Hadley Bricks (HB)
-- `GET /hb/pnl` - P&L report
-- `GET /hb/inventory` - Inventory list
+
+Catch-all proxy: `/hb/{path}` → `localhost:3000/api/{path}` (injects API key automatically).
+
+**Key endpoints:**
 - `GET /hb/orders` - Recent orders
-- `GET /hb/set/{set_number}` - Set lookup
-- `GET /hb/tasks` - Tasks
+- `GET /hb/orders/{id}` - Order details
+- `GET /hb/orders/stats` - Order statistics
+- `GET /hb/orders/status-summary` - Status summary
+- `GET /hb/orders/dispatch-deadlines` - Dispatch deadlines
+- `GET /hb/orders/ebay` - eBay orders
+- `GET /hb/orders/amazon` - Amazon orders
+- `GET /hb/inventory` - Inventory list
+- `GET /hb/inventory/summary` - Inventory summary
+- `GET /hb/inventory/listing-counts` - Listing counts
+- `GET /hb/reports/profit-loss` - P&L report
+- `GET /hb/purchases/search` - Search purchases
 - `GET /hb/pickups` - Scheduled pickups
+
+**Note:** Any HB API route with `validateAuth()` works via this proxy. Routes using session-only auth will return Unauthorized.
 
 ### WhatsApp
 - `POST /whatsapp/send?to=<number>&message=<text>` - Send message
@@ -281,6 +308,11 @@ Allowlisted: amazon.co.uk, ebay.co.uk, premierinn.com
 5. GET /browser/text?session_id=... (get results)
 6. POST /browser/session/end {session_id: "...", save_state: false}
 ```
+
+### Schedule Management
+- `GET /schedule` - Read current SCHEDULE.md content
+- `PUT /schedule` - Update SCHEDULE.md and trigger reload (body: `{content, reason}`)
+- `POST /schedule/reload` - Trigger schedule reload without editing
 
 ## Environment Variables
 

@@ -193,6 +193,87 @@ async def get_today_meals() -> list:
         raise
 
 
+async def get_today_water_entries() -> list:
+    """Get today's water entries with IDs (for listing/deleting individual entries)."""
+    try:
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            raise ValueError("Supabase credentials not configured")
+
+        today = datetime.now().date().isoformat()
+        tomorrow = (datetime.now().date() + timedelta(days=1)).isoformat()
+
+        filter_str = f"and=(logged_at.gte.{today}T00:00:00,logged_at.lt.{tomorrow}T00:00:00)"
+        url = f"{_get_rest_url()}/nutrition_logs?select=id,water_ml,description,logged_at&{filter_str}&meal_type=eq.water&order=logged_at"
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=_get_headers(), timeout=30)
+            response.raise_for_status()
+            data = response.json()
+
+        logger.info(f"Retrieved {len(data)} water entries for today")
+        return data
+    except Exception as e:
+        logger.error(f"Failed to get today's water entries: {e}")
+        raise
+
+
+async def delete_today_water() -> dict:
+    """Delete all water entries for today (bulk reset)."""
+    try:
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            raise ValueError("Supabase credentials not configured")
+
+        today = datetime.now().date().isoformat()
+        tomorrow = (datetime.now().date() + timedelta(days=1)).isoformat()
+
+        filter_str = f"and=(logged_at.gte.{today}T00:00:00,logged_at.lt.{tomorrow}T00:00:00)"
+        url = f"{_get_rest_url()}/nutrition_logs?{filter_str}&meal_type=eq.water"
+
+        # Use Prefer: return=representation to get deleted rows
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(url, headers=_get_headers(), timeout=30)
+            response.raise_for_status()
+            deleted = response.json()
+
+        count = len(deleted) if isinstance(deleted, list) else 0
+        logger.info(f"Deleted {count} water entries for today")
+        return {"success": True, "deleted_count": count}
+    except Exception as e:
+        logger.error(f"Failed to reset today's water: {e}")
+        raise
+
+
+async def get_meals_by_date(date: str) -> list:
+    """Get meals (excluding water) for a specific date.
+
+    Args:
+        date: Date string in YYYY-MM-DD format.
+
+    Returns:
+        list of meal records
+    """
+    try:
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            raise ValueError("Supabase credentials not configured")
+
+        target_date = datetime.fromisoformat(date).date()
+        next_date = target_date + timedelta(days=1)
+
+        filter_str = f"and=(logged_at.gte.{target_date.isoformat()}T00:00:00,logged_at.lt.{next_date.isoformat()}T00:00:00)"
+        url = f"{_get_rest_url()}/nutrition_logs?select=*&{filter_str}&meal_type=neq.water&order=logged_at"
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=_get_headers(), timeout=30)
+            response.raise_for_status()
+            data = response.json()
+
+        logger.info(f"Retrieved {len(data)} meals for {target_date}")
+        return data
+    except Exception as e:
+        logger.error(f"Failed to get meals for {date}: {e}")
+        raise
+
+
 async def get_nutrition_totals(date: str = None) -> dict:
     """Get nutrition totals for a specific date.
 
