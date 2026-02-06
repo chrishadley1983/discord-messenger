@@ -42,7 +42,7 @@ UI_PATTERNS = {
     'prompt_marker': re.compile(r'^[>❯]\s*'),
 
     # Status spinners and indicators
-    'status_spinner': re.compile(r'^[✻✓✗⏵✶▘⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]'),
+    'status_spinner': re.compile(r'^[✻✢✽✓✗⏵✶▘⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]'),
 
     # Nested output marker
     'nested_marker': re.compile(r'^⎿'),
@@ -104,6 +104,12 @@ TOOL_PATTERNS = {
         r'MultiTool|NotebookEdit|ListFiles|AskUser|TodoRead|TodoWrite)\s*\(', re.I
     ),
 
+    # MCP tool invocations (mcp__provider__method format)
+    'mcp_tool_call': re.compile(r'mcp__[a-z0-9_-]+__[a-z0-9_-]+', re.I),
+
+    # MCP tool provider labels ("brave-search - Brave Web Search (MCP)" format)
+    'mcp_provider': re.compile(r'^[\w-]+\s+-\s+[\w\s]+\(MCP\)', re.I),
+
     # Tool loading messages
     'tool_loaded': re.compile(r'loaded skill|skill loaded', re.I),
 
@@ -112,6 +118,9 @@ TOOL_PATTERNS = {
 
     # Tool call continuation fragments
     'tool_fragment': re.compile(r'^[a-z_]+\s*=\s*["\']'),  # param="value" fragments
+
+    # URL-encoded API fragments (from MCP tool parameters)
+    'url_encoded_fragment': re.compile(r'%[0-9A-F]{2}.*%[0-9A-F]{2}', re.I),
 }
 
 # JSON/API Noise - Partial API responses and JSON fragments
@@ -189,6 +198,39 @@ CONTEXT_PATTERNS = {
     'prompt_bleed': re.compile(r'respond to (the )?user|latest message', re.I),
 }
 
+# Search/Fetch Noise - Always filtered (even in TECHNICAL mode)
+# These are orphaned fragments from tool blocks that escape _strip_tool_blocks
+# when tmux line wrapping breaks the ● marker detection
+SEARCH_NOISE_PATTERNS = {
+    # Search API metadata fields (from SearXNG/Brave tool params)
+    'search_metadata': re.compile(
+        r'^\s*(safesearch|freshness|time_range|count|page_no|categories)\s*:', re.I
+    ),
+
+    # Bare URL path fragments - hyphenated slug with extension, no spaces
+    # e.g., "ooked-chilli-pulled-pork", "spur-news-073000721.html"
+    'url_path_fragment': re.compile(
+        r'^[a-z0-9][a-z0-9-]{10,}(?:\.html?|\.php|\.aspx)?\s*$', re.I
+    ),
+
+    # URL with path but no protocol (truncated from wrapped line)
+    # e.g., "www.bbc.co.uk/sport/football/..." or "example.com/path/to/page"
+    'bare_url': re.compile(
+        r'^(?:www\.)?[\w.-]+\.(?:com|co\.uk|org|net|io|gov|edu|ac\.uk)/\S+$', re.I
+    ),
+
+    # Search result numbering with URL (from result list output)
+    # e.g., "1. https://example.com/page"
+    'numbered_url': re.compile(r'^\d+\.\s*https?://\S+\s*$'),
+
+    # Orphaned query parameters (from wrapped search calls)
+    # e.g., 'query: "slow cooked...' or 'q=pulled+pork'
+    'orphaned_query': re.compile(r'^(query|q)\s*[:=]\s*["\']', re.I),
+
+    # Standalone quoted URL (from JSON result objects)
+    'quoted_url_line': re.compile(r'^\s*"https?://[^"]+"\s*,?\s*$'),
+}
+
 # Compaction/Interview - Special Claude Code modes
 SPECIAL_PATTERNS = {
     # Compaction notice
@@ -261,6 +303,12 @@ def should_skip_line(line: str, stripped: str, mode: ParseMode, stats: dict) -> 
             stats[f'context:{name}'] = stats.get(f'context:{name}', 0) + 1
             return True
 
+    # Always filter: Search/fetch noise (orphaned fragments from tool blocks)
+    for name, pattern in SEARCH_NOISE_PATTERNS.items():
+        if pattern.search(stripped) or pattern.search(clean_stripped):
+            stats[f'search:{name}'] = stats.get(f'search:{name}', 0) + 1
+            return True
+
     # Mode-dependent: JSON noise
     if mode != ParseMode.TECHNICAL:
         for name, pattern in JSON_PATTERNS.items():
@@ -330,8 +378,8 @@ def find_response_boundaries(lines: list[str]) -> tuple[int, int]:
     # Find the FIRST prompt (user input) - this marks start of response
     for i, line in enumerate(lines):
         stripped = line.strip()
-        # Our specific context prompt takes priority
-        if 'Read context.md and respond' in line:
+        # Our specific context prompt takes priority (supports dynamic filenames)
+        if 'Read context' in line and 'and respond' in line:
             start_idx = i + 1
             break
         # User prompt: > or ❯ with some content (not just the symbol)
@@ -492,10 +540,11 @@ def find_new_content_start(before_lines: list[str], after_lines: list[str]) -> i
     Returns:
         Index in after_lines where new content starts
     """
-    # Strategy: Find where the "Read context.md and respond" prompt appears in after
+    # Strategy: Find where the "Read context*.md and respond" prompt appears in after
     # Everything after that is the new response
+    # Note: Scheduler uses dynamic filenames like "context_5ee37dcd.md"
     for i, line in enumerate(after_lines):
-        if 'Read context.md and respond' in line:
+        if 'Read context' in line and 'and respond' in line:
             return i + 1
 
     # Fallback: Find last prompt marker (> or ❯) that has content after it
@@ -525,6 +574,171 @@ def find_new_content_start(before_lines: list[str], after_lines: list[str]) -> i
         return max(0, len(after_lines) - common_suffix_len - 50)  # Include buffer
 
     return 0
+
+
+# Tool block detection patterns (for multi-line block filtering)
+_TOOL_BLOCK_STARTERS = re.compile(
+    r'^●\s*('
+    r'Read\s+\d+\s+file|'                    # ● Read 1 file (ctrl+o...)
+    r'Bash\s*\(|'                              # ● Bash(command...)
+    r'Fetch\s*\(|'                             # ● Fetch(https://...)
+    r'Web\s*Search|Web\s*Fetch|'               # ● WebSearch(...) / WebFetch(...)
+    r'Read\s*\(|Write\s*\(|Edit\s*\(|'         # ● Read/Write/Edit(...)
+    r'Grep\s*\(|Glob\s*\(|'                    # ● Grep/Glob(...)
+    r'[\w-]+\s+-\s+[\w\s_]+\(MCP\)|'           # ● searxng - web_search (MCP)
+    r'mcp__'                                    # ● mcp__provider__method
+    r')', re.I
+)
+
+_TOOL_RESULT_LINE = re.compile(r'^\s*⎿')
+_INTERRUPTED_LINE = re.compile(r'Interrupted|What should Claude do', re.I)
+_EXPAND_LINE = re.compile(r'ctrl\+o|lines?\s*\(ctrl', re.I)
+_TIMING_LINE = re.compile(
+    r'^(✻|✢|✽)\s*\w+.*\d+\s*(seconds?|s\b|ms\b|m\s+\d+s)',
+    re.I
+)
+_RECEIVED_LINE = re.compile(r'Received\s+[\d.]+[KMG]?B', re.I)
+
+
+def _strip_tool_blocks(lines: list[str]) -> list[str]:
+    """Strip tool output blocks from response lines.
+
+    Claude Code shows tool calls as multi-line blocks:
+        ● searxng - web_search (MCP)(query: "long search
+                                    query that wraps
+                                    across lines")
+          ⎿ Title: Result title
+            Description: Long description that
+            also wraps across lines
+            … +182 lines (ctrl+o to expand)
+
+    Per-line filtering can't handle the wrapped continuation lines because
+    they look like ordinary text. This function identifies tool blocks by
+    their structure and removes them entirely, preserving only actual
+    response text (● blocks that don't match tool patterns).
+    """
+    result = []
+    in_tool_block = False
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Check if this line starts a tool block
+        if _TOOL_BLOCK_STARTERS.search(stripped):
+            in_tool_block = True
+            i += 1
+            continue
+
+        # Check for timing lines (✻ Brewed for 1m 35s)
+        if _TIMING_LINE.search(stripped):
+            in_tool_block = False  # Timing ends a block
+            i += 1
+            continue
+
+        # Inside a tool block: skip tool results, continuations, and indented lines
+        if in_tool_block:
+            # Tool result lines (⎿)
+            if _TOOL_RESULT_LINE.search(line):
+                i += 1
+                continue
+            # Interrupted messages
+            if _INTERRUPTED_LINE.search(stripped):
+                i += 1
+                continue
+            # "ctrl+o to expand" lines
+            if _EXPAND_LINE.search(stripped):
+                i += 1
+                continue
+            # Received size lines
+            if _RECEIVED_LINE.search(stripped):
+                i += 1
+                continue
+            # Continuation: indented lines or lines ending with ") that are part of query
+            if stripped.endswith('")') or stripped.endswith("')"):
+                i += 1
+                continue
+            # Heavily indented continuation (4+ leading spaces beyond normal)
+            if len(line) - len(line.lstrip()) >= 4 and not stripped.startswith('●'):
+                i += 1
+                continue
+            # New ● block that IS a response (not a tool) — end the tool block
+            if stripped.startswith('●'):
+                if _TOOL_BLOCK_STARTERS.search(stripped):
+                    i += 1
+                    continue
+                else:
+                    in_tool_block = False
+                    # Fall through to add this line
+            # Blank line while in tool block
+            elif not stripped:
+                i += 1
+                continue
+            else:
+                # Non-indented, non-blank line without ● — might be end of block
+                in_tool_block = False
+                # Fall through to add this line
+
+        # Not in a tool block — keep the line
+        result.append(line)
+        i += 1
+
+    return result
+
+
+# Common emoji headers that mark the start of a formatted response
+_EMOJI_HEADER = re.compile(
+    r'^[\U0001f300-\U0001f9ff\u2600-\u27bf\u2700-\u27bf]'  # starts with emoji
+)
+
+# Reasoning/planning patterns that indicate preamble (not actual response)
+_REASONING_PATTERNS = [
+    re.compile(r'^The date is \d{4}', re.I),
+    re.compile(r'^(Evening|Morning|Afternoon) message:', re.I),
+    re.compile(r'^(Relaxed|Casual|Firm|Gentle|Urgent) tone', re.I),
+    re.compile(r"^(Now )?(Let me|I need to|I should|I'll|Looking at) ", re.I),
+    re.compile(r'^(Both|All \w+) context files? (are|is) (identical|the same|duplicate)', re.I),
+    re.compile(r'^(Now let me handle|Already responded|No additional output)', re.I),
+    re.compile(r'^This is the same .* request I just responded to', re.I),
+    re.compile(r'^-?\s*(Calories|Protein|Carbs|Fat|Water|Steps):\s*[\d,.]+ / [\d,.]+ = \d+%\s*→', re.I),
+    re.compile(r'^All checks pass', re.I),
+    re.compile(r'^[}\]]\s*$'),  # lone closing braces from tool blocks
+]
+
+
+def _strip_reasoning_preamble(text: str) -> str:
+    """Strip Claude's reasoning/planning text that appears before the formatted response.
+
+    Claude sometimes "thinks out loud" before producing the actual output:
+    - Raw data echo: "Calories: 1,787 / 2,100 = 85% → ⚠️"
+    - Planning notes: "The date is 2026-02-05. Evening message: water low..."
+    - Meta comments: "Both context files are identical. Let me run the check."
+
+    We detect the first emoji-headed line as the response start and strip
+    everything before it IF there are reasoning patterns in the preamble.
+    """
+    lines = text.split('\n')
+
+    # Find the first emoji-header line (actual response start)
+    emoji_start = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped and _EMOJI_HEADER.match(stripped):
+            emoji_start = i
+            break
+
+    if emoji_start is None or emoji_start == 0:
+        return text  # No emoji header or already at start
+
+    # Check if the preamble contains reasoning patterns
+    preamble = '\n'.join(lines[:emoji_start])
+    has_reasoning = any(p.search(preamble) for p in _REASONING_PATTERNS)
+
+    if has_reasoning:
+        return '\n'.join(lines[emoji_start:])
+
+    return text
 
 
 def parse_response(
@@ -562,6 +776,11 @@ def parse_response(
     start_idx, end_idx = find_response_boundaries(work_lines)
     response_lines = work_lines[start_idx:end_idx]
 
+    # Pre-filter: Strip tool output blocks (● tool calls + ⎿ results + continuations)
+    # Claude Code shows tool calls as multi-line blocks that wrap in tmux.
+    # Per-line filtering misses the wrapped continuation lines.
+    response_lines = _strip_tool_blocks(response_lines)
+
     # Filter lines based on mode
     kept_lines = []
     for line in response_lines:
@@ -581,7 +800,7 @@ def parse_response(
     # Join and final cleanup
     content = '\n'.join(deduped).strip()
     content = collapse_blank_lines(content)
-    content = ensure_paragraph_spacing(content)
+    content = _strip_reasoning_preamble(content)
 
     return ParseResult(
         content=content,

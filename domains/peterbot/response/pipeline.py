@@ -104,13 +104,15 @@ FORMATTERS = {
 
 def process(
     raw_cc_output: str,
-    context: Optional[dict] = None
+    context: Optional[dict] = None,
+    pre_sanitised: bool = False,
 ) -> ProcessedResponse:
     """Process raw Claude Code output through the full pipeline.
 
     Args:
         raw_cc_output: Raw string output from Claude Code
         context: Optional context dict with user_prompt, channel, etc.
+        pre_sanitised: If True, skip Stage 1 sanitisation (input already clean from JSON)
 
     Returns:
         ProcessedResponse with formatted content ready for Discord
@@ -137,14 +139,18 @@ def process(
             was_bypassed=True
         )
 
-    # Stage 1: Sanitise
-    sanitiser_result = sanitise(raw_cc_output, track_rules=True)
-    if isinstance(sanitiser_result, SanitiserResult):
-        sanitised = sanitiser_result.content
-        sanitiser_log = sanitiser_result.rules_applied
+    # Stage 1: Sanitise (skipped when input comes from clean JSON output)
+    if pre_sanitised:
+        sanitised = raw_cc_output
+        sanitiser_log = ['skipped:json_output']
     else:
-        sanitised = sanitiser_result
-        sanitiser_log = []
+        sanitiser_result = sanitise(raw_cc_output, track_rules=True)
+        if isinstance(sanitiser_result, SanitiserResult):
+            sanitised = sanitiser_result.content
+            sanitiser_log = sanitiser_result.rules_applied
+        else:
+            sanitised = sanitiser_result
+            sanitiser_log = []
 
     # Stage 2: Classify
     signals = extract_signals(sanitised)
