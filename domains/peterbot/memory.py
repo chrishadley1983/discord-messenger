@@ -152,6 +152,7 @@ def build_full_context(
     channel_id: int,
     channel_name: str = "",
     knowledge_context: str = "",
+    attachment_urls: list[dict] | None = None,
 ) -> str:
     """Build full context combining memory, recent buffer, and current message.
 
@@ -161,6 +162,7 @@ def build_full_context(
         channel_id: Discord channel ID for per-channel buffer
         channel_name: Discord channel name (e.g., "#food-log")
         knowledge_context: Optional Second Brain knowledge context
+        attachment_urls: Optional list of attachment dicts with url, filename, content_type, size
 
     Returns:
         Combined context string
@@ -202,6 +204,22 @@ def build_full_context(
     # Add current message
     parts.append("## Current Message")
     parts.append(message)
+
+    # Add attachments if present
+    if attachment_urls:
+        parts.append("")
+        parts.append("## Attachments")
+        for att in attachment_urls:
+            is_image = att.get("content_type", "").startswith("image/")
+            if is_image:
+                # Prefer local path (pre-downloaded) over CDN URL
+                path = att.get("local_path") or att["url"]
+                parts.append(f"- **Image:** `{att['filename']}` — Use the Read tool on this path to view: {path}")
+            else:
+                parts.append(f"- **File:** `{att['filename']}` ({att.get('content_type', 'unknown')}) — {att['url']}")
+        if any(att.get("content_type", "").startswith("image/") for att in attachment_urls):
+            parts.append("")
+            parts.append("**IMPORTANT:** The user sent image(s). Use the Read tool with the path above to see the image content. This is essential for food logging, screenshots, and visual content.")
 
     return "\n".join(parts)
 

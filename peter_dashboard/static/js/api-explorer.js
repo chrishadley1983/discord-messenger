@@ -154,7 +154,7 @@ const ApiExplorerView = {
 
   async loadEndpoints() {
     try {
-      const response = await fetch('http://localhost:8100/openapi.json');
+      const response = await fetch('/api/hadley/proxy/openapi.json');
       if (!response.ok) throw new Error('Failed to fetch OpenAPI spec: ' + response.status);
       this.openApiSpec = await response.json();
       this.endpoints = this.parseOpenApiSpec(this.openApiSpec);
@@ -563,7 +563,7 @@ const ApiExplorerView = {
     if (!this.currentEndpoint || this.currentEndpoint.method !== 'GET') return;
     const { path, parameters } = this.currentEndpoint;
     const queryParams = parameters.filter(p => p.in === 'query');
-    let url = 'http://localhost:8100' + path;
+    let url = '/api/hadley/proxy' + path;
     const params = new URLSearchParams();
     queryParams.forEach(function(p) { const inp = document.getElementById('param-' + p.name); if (inp && inp.value) params.append(p.name, inp.value); });
     const qs = params.toString();
@@ -607,7 +607,7 @@ const ApiExplorerView = {
     if (!this.currentEndpoint) return;
     const { method, path, parameters, requestBody } = this.currentEndpoint;
     const queryParams = parameters.filter(p => p.in === 'query');
-    let url = 'http://localhost:8100' + path;
+    let url = '/api/hadley/proxy' + path;
     if (method === 'GET' && queryParams.length > 0) {
       const params = [];
       queryParams.forEach(function(p) {

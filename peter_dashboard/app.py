@@ -34,7 +34,7 @@ try:
 except ImportError:
     import service_manager  # When running directly with uvicorn
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -43,6 +43,9 @@ from slowapi.errors import RateLimitExceeded
 import httpx
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # UK timezone for timestamps
 UK_TZ = ZoneInfo("Europe/London")
@@ -76,7 +79,8 @@ MONITORED_SERVICES = {
     },
     "hadley_bricks": {
         "name": "Hadley Bricks",
-        "url": "http://localhost:3000/",  # Root returns 307 redirect when healthy
+        "url": "http://localhost:3000/",
+        "check_type": "http_any",  # Accept any HTTP response (no health endpoint)
         "critical": False,  # Not critical for Peterbot operation
     },
     "peterbot_session": {
@@ -252,10 +256,14 @@ async def _check_service_health(service_id: str, config: dict) -> bool:
             tmux_session_name = config.get("tmux_session")
             sessions = get_tmux_sessions()
             return any(s["name"] == tmux_session_name for s in sessions)
+        elif check_type == "http_any":
+            # Accept any HTTP response — just check if port is open
+            async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
+                await client.get(config["url"])
+                return True  # Any response = service is up
         else:
             # HTTP health check - accept 2xx and 3xx as healthy
-            # (e.g., Hadley Bricks returns 307 redirect when healthy)
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
                 response = await client.get(config["url"])
                 return 200 <= response.status_code < 400
     except Exception:
@@ -506,15 +514,21 @@ def get_tmux_sessions() -> list[dict]:
     return sessions
 
 
-async def check_http_service(url: str, timeout: float = 2.0) -> dict:
-    """Check if an HTTP service is responding."""
+async def check_http_service(url: str, timeout: float = 2.0, accept_any: bool = False) -> dict:
+    """Check if an HTTP service is responding.
+
+    By default accepts any 2xx or 3xx status code as 'up'.
+    With accept_any=True, any HTTP response counts as 'up' (for services without health endpoints).
+    Does NOT follow redirects.
+    """
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             start = datetime.now()
             response = await client.get(url)
             latency = (datetime.now() - start).total_seconds() * 1000
+            status = "up" if (accept_any or 200 <= response.status_code < 400) else "down"
             return {
-                "status": "up",
+                "status": status,
                 "code": response.status_code,
                 "latency_ms": round(latency, 2)
             }
@@ -642,7 +656,7 @@ async def get_system_status():
     peterbot_session = next((s for s in sessions if s["name"] == "claude-peterbot"), None)
 
     # Check Hadley Bricks status
-    hb_http_status = await check_http_service("http://localhost:3000/", timeout=3.0)
+    hb_http_status = await check_http_service("http://localhost:3000/", timeout=3.0, accept_any=True)
 
     # Helper to get last restart - prefer actual process start time, fall back to tracked time
     def get_last_restart(service_key):
@@ -713,6 +727,20 @@ async def get_health_history_endpoint(service: str = None):
         "uptimes": uptimes,
         "max_age_hours": HEALTH_HISTORY_MAX_AGE_HOURS,
     }
+
+
+@app.post("/api/health-history/clear/{service}")
+async def clear_health_history_endpoint(service: str):
+    """Clear health history for a service (e.g. after fixing a broken health check)."""
+    _load_health_history()
+
+    if service not in MONITORED_SERVICES:
+        raise HTTPException(400, f"Unknown service: {service}")
+
+    _health_history[service] = []
+    _save_health_history()
+
+    return {"status": "cleared", "service": service}
 
 
 @app.post("/api/stop/{service}")
@@ -1107,6 +1135,140 @@ async def get_claude_memories(limit: int = 50):
 async def get_recent_memories(limit: int = 50):
     """Get recent memory observations from claude-mem (peterbot project)."""
     return await get_peter_memories(limit=limit)
+
+
+@app.get("/api/costs")
+async def get_cli_costs(days: int = 7):
+    """Get CLI cost log entries for the dashboard.
+
+    Reads from data/cli_costs.jsonl and returns parsed entries
+    with summary statistics.
+    """
+    cost_log = Path(__file__).parent.parent / "data" / "cli_costs.jsonl"
+
+    if not cost_log.exists():
+        return {"entries": [], "summary": {}, "days": days}
+
+    entries = []
+    try:
+        with open(cost_log, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    entries.append(entry)
+                except json.JSONDecodeError:
+                    continue
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read cost log: {e}")
+
+    # Filter to requested days
+    if days > 0:
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        entries = [e for e in entries if e.get("timestamp", "") >= cutoff]
+
+    # Sort newest first
+    entries.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+
+    # Build summary
+    total_usd = sum(e.get("cost_usd", 0) for e in entries)
+    total_gbp = sum(e.get("cost_gbp", 0) for e in entries)
+    total_calls = len(entries)
+    conv_calls = sum(1 for e in entries if e.get("source") == "conversation")
+    sched_calls = sum(1 for e in entries if e.get("source", "").startswith("scheduled"))
+    avg_duration = (
+        sum(e.get("duration_ms", 0) for e in entries) / total_calls
+        if total_calls > 0 else 0
+    )
+
+    # Per-model breakdown
+    by_model = {}
+    for e in entries:
+        model = e.get("model", "unknown")
+        if model not in by_model:
+            by_model[model] = {"calls": 0, "cost_usd": 0, "cost_gbp": 0}
+        by_model[model]["calls"] += 1
+        by_model[model]["cost_usd"] += e.get("cost_usd", 0)
+        by_model[model]["cost_gbp"] += e.get("cost_gbp", 0)
+
+    # Per-day breakdown
+    by_day = {}
+    for e in entries:
+        day = e.get("timestamp", "")[:10]
+        if day not in by_day:
+            by_day[day] = {"calls": 0, "cost_usd": 0, "cost_gbp": 0}
+        by_day[day]["calls"] += 1
+        by_day[day]["cost_usd"] += e.get("cost_usd", 0)
+        by_day[day]["cost_gbp"] += e.get("cost_gbp", 0)
+
+    summary = {
+        "total_usd": round(total_usd, 4),
+        "total_gbp": round(total_gbp, 4),
+        "total_calls": total_calls,
+        "conversation_calls": conv_calls,
+        "scheduled_calls": sched_calls,
+        "avg_duration_ms": round(avg_duration, 0),
+        "by_model": {k: {kk: round(vv, 4) if isinstance(vv, float) else vv for kk, vv in v.items()} for k, v in by_model.items()},
+        "by_day": {k: {kk: round(vv, 4) if isinstance(vv, float) else vv for kk, vv in v.items()} for k, v in sorted(by_day.items())},
+    }
+
+    # Channel ID to friendly name mapping
+    channel_map = {
+        "1415741789758816369": "peter-chat",
+        "1465294449038069912": "food-log",
+        "1465277483866788037": "ai-briefings",
+        "1465761699582972142": "api-costs",
+        "1466522078462083325": "traffic",
+        "1467553740570755105": "heartbeat",
+    }
+
+    return {"entries": entries, "summary": summary, "days": days, "channel_map": channel_map}
+
+
+@app.get("/api/hadley/openapi")
+async def get_hadley_openapi():
+    """Proxy the raw OpenAPI spec from Hadley API (avoids CORS issues)."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{CONFIG['hadley_api_url']}/openapi.json")
+            if response.status_code == 200:
+                return response.json()
+            raise HTTPException(status_code=response.status_code, detail="Failed to fetch OpenAPI spec")
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Hadley API is not reachable")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Hadley API timed out")
+
+
+@app.api_route("/api/hadley/proxy/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+async def hadley_proxy(path: str, request: Request):
+    """Proxy requests to Hadley API (avoids CORS for API Explorer)."""
+    try:
+        target_url = f"{CONFIG['hadley_api_url']}/{path}"
+        query_string = str(request.url.query)
+        if query_string:
+            target_url += f"?{query_string}"
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            body = await request.body()
+            response = await client.request(
+                method=request.method,
+                url=target_url,
+                content=body if body else None,
+                headers={"Content-Type": request.headers.get("Content-Type", "application/json")},
+            )
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers={"Content-Type": response.headers.get("Content-Type", "application/json")},
+            )
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Hadley API is not reachable")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Hadley API timed out")
 
 
 @app.get("/api/hadley/endpoints")

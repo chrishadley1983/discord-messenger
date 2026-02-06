@@ -2183,3 +2183,76 @@ h4 { font-size: var(--text-base); }
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+.spinner-sm {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+/* Restart Progress Modal */
+.restart-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.restart-progress-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.restart-row-active {
+  background: var(--bg-secondary);
+}
+
+.restart-svc-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.restart-svc-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.restart-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  flex-shrink: 0;
+}
+
+.restart-status-pending {
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+
+.restart-status-active {
+  color: var(--accent);
+}
+
+.restart-status-success {
+  color: var(--status-success);
+}
+
+.restart-status-failed {
+  color: var(--status-error);
+}
+
+.restart-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}

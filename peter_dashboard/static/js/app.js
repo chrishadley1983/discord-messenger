@@ -43,6 +43,10 @@ const State = {
     logLevel: 'all',
     searchQuery: '',
 
+    // Sorting
+    sortKey: null,
+    sortDirection: 'asc',
+
     // Pagination
     currentPage: 1,
     pageSize: 25,
@@ -508,14 +512,19 @@ const Components = {
           <table class="data-table">
             <thead>
               <tr>
-                ${columns.map(col => `
-                  <th class="${col.sortable ? 'sortable' : ''}"
+                ${columns.map(col => {
+                  const sortKey = State.get('sortKey');
+                  const sortDir = State.get('sortDirection');
+                  const isActive = col.sortable && sortKey === col.key;
+                  const arrow = isActive ? (sortDir === 'asc' ? ' \u25B2' : ' \u25BC') : '';
+                  return `
+                  <th class="${col.sortable ? 'sortable' : ''} ${isActive ? 'sort-active' : ''}"
                       ${col.sortable ? `onclick="DataTable.sort('${tableId}', '${col.key}')"` : ''}
-                      style="${col.width ? `width: ${col.width}` : ''}">
-                    ${col.label}
-                    ${col.sortable ? `<span class="sort-icon">${Icons.sort}</span>` : ''}
-                  </th>
-                `).join('')}
+                      style="${col.width ? `width: ${col.width}` : ''}; ${col.sortable ? 'cursor: pointer; user-select: none;' : ''}">
+                    ${col.label}${arrow}
+                    ${col.sortable && !isActive ? `<span class="sort-icon">${Icons.sort}</span>` : ''}
+                  </th>`;
+                }).join('')}
               </tr>
             </thead>
             <tbody>
@@ -638,8 +647,42 @@ const DataTable = {
   },
 
   sort(tableId, key) {
-    console.log('Sort by:', key);
-    // Implementation would sort the data and re-render
+    const currentKey = State.get('sortKey');
+    const currentDir = State.get('sortDirection');
+    // Toggle direction if same key, otherwise default to ascending
+    const direction = (currentKey === key && currentDir === 'asc') ? 'desc' : 'asc';
+    State.set({ sortKey: key, sortDirection: direction });
+    if (Router.currentView && Router.currentView.refresh) {
+      Router.currentView.refresh();
+    }
+  },
+
+  applySorting(data) {
+    const key = State.get('sortKey');
+    const dir = State.get('sortDirection');
+    if (!key) return data;
+
+    return [...data].sort((a, b) => {
+      let aVal = a[key];
+      let bVal = b[key];
+
+      // Handle nulls/undefined — push to bottom
+      if (aVal == null && bVal == null) return 0;
+      if (aVal == null) return 1;
+      if (bVal == null) return -1;
+
+      // Numeric comparison for known numeric fields
+      if (typeof aVal === 'number' && typeof bVal === 'number') {
+        return dir === 'asc' ? aVal - bVal : bVal - aVal;
+      }
+
+      // String comparison (case-insensitive)
+      aVal = String(aVal).toLowerCase();
+      bVal = String(bVal).toLowerCase();
+      if (aVal < bVal) return dir === 'asc' ? -1 : 1;
+      if (aVal > bVal) return dir === 'asc' ? 1 : -1;
+      return 0;
+    });
   },
 
   prevPage(tableId) {
@@ -1141,6 +1184,9 @@ const JobsView = {
         (j.skill || '').toLowerCase().includes(search)
       );
     }
+
+    // Apply sorting
+    filteredJobs = DataTable.applySorting(filteredJobs);
 
     const columns = [
       { key: 'status', label: 'Status', width: '100px', sortable: true,
@@ -2301,14 +2347,73 @@ const ServicesView = {
   },
 
   async restartAll() {
-    Modal.close();
+    const services = [
+      { key: 'hadley_api', name: 'Hadley API', icon: Icons.server },
+      { key: 'discord_bot', name: 'Discord Bot', icon: Icons.messageCircle },
+      { key: 'hadley_bricks', name: 'Hadley Bricks', icon: Icons.box },
+      { key: 'peterbot_session', name: 'Peterbot Session', icon: Icons.terminal },
+      { key: 'claude_mem', name: 'Memory Worker', icon: Icons.brain },
+    ];
 
-    try {
-      await API.post('/api/restart-all');
-      Toast.success('Restarting', 'All services are restarting');
-      setTimeout(() => this.loadData(), 3000);
-    } catch (error) {
-      Toast.error('Error', `Failed to restart: ${error.message}`);
+    // Replace modal content with progress view
+    const modalBody = document.querySelector('.modal-body');
+    const modalFooter = document.querySelector('.modal-footer');
+    const modalTitle = document.querySelector('.modal-title');
+    if (modalTitle) modalTitle.textContent = 'Restarting Services';
+    if (modalFooter) modalFooter.innerHTML = '';
+
+    modalBody.innerHTML = `
+      <div class="restart-progress">
+        ${services.map(svc => `
+          <div class="restart-progress-row" id="restart-row-${svc.key}">
+            <span class="restart-svc-icon">${svc.icon}</span>
+            <span class="restart-svc-name">${svc.name}</span>
+            <span class="restart-status restart-status-pending" id="restart-status-${svc.key}">
+              ${Icons.clock}
+            </span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const svc of services) {
+      const statusEl = document.getElementById(`restart-status-${svc.key}`);
+      const rowEl = document.getElementById(`restart-row-${svc.key}`);
+      if (!statusEl || !rowEl) continue;
+
+      // Set to active/spinning
+      statusEl.className = 'restart-status restart-status-active';
+      statusEl.innerHTML = '<div class="spinner spinner-sm"></div>';
+      rowEl.classList.add('restart-row-active');
+
+      try {
+        await API.post(`/api/restart/${svc.key}`);
+        statusEl.className = 'restart-status restart-status-success';
+        statusEl.innerHTML = Icons.checkCircle;
+        successCount++;
+      } catch (error) {
+        statusEl.className = 'restart-status restart-status-failed';
+        statusEl.innerHTML = Icons.error;
+        failCount++;
+      }
+      rowEl.classList.remove('restart-row-active');
+    }
+
+    // Show summary footer
+    if (modalFooter) {
+      const summaryClass = failCount === 0 ? 'text-success' : 'text-error';
+      const summaryText = failCount === 0
+        ? `All ${successCount} services restarted successfully`
+        : `${successCount} succeeded, ${failCount} failed`;
+      modalFooter.innerHTML = `
+        <div class="restart-summary">
+          <span class="${summaryClass}">${summaryText}</span>
+          <button class="btn btn-primary" onclick="Modal.close(); ServicesView.loadData();">Done</button>
+        </div>
+      `;
     }
   },
 
@@ -3738,6 +3843,276 @@ const Format = {
 };
 
 
+/**
+ * Costs View - CLI cost tracking and analysis
+ */
+const CostsView = {
+  title: 'CLI Costs',
+  _data: null,
+  _days: 7,
+
+  async render(container) {
+    container.innerHTML = `
+      <div class="animate-fade-in">
+        <div class="flex items-center justify-between mb-lg">
+          <div class="flex items-center gap-sm">
+            <select id="costs-days-filter" class="form-input" style="width: auto;">
+              <option value="1">Last 24h</option>
+              <option value="7" selected>Last 7 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="0">All time</option>
+            </select>
+          </div>
+          <button class="btn btn-sm btn-secondary" onclick="CostsView.refresh()">
+            ${Icons.refresh} Refresh
+          </button>
+        </div>
+
+        <div class="grid grid-cols-4 gap-md mb-lg" id="costs-stats">
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+        </div>
+
+        <div class="grid grid-cols-2 gap-md mb-lg">
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Cost by Day</h3>
+            </div>
+            <div class="card-body" id="costs-by-day">
+              ${Components.skeleton('table', 5)}
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Cost by Model</h3>
+            </div>
+            <div class="card-body" id="costs-by-model">
+              ${Components.skeleton('table', 3)}
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Call Log</h3>
+          </div>
+          <div class="card-body" id="costs-table">
+            ${Components.skeleton('table', 10)}
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('costs-days-filter').addEventListener('change', (e) => {
+      this._days = parseInt(e.target.value);
+      this.refresh();
+    });
+
+    await this.loadData();
+  },
+
+  async refresh() {
+    await this.loadData();
+  },
+
+  async loadData() {
+    try {
+      const data = await API.get(`/api/costs?days=${this._days}`);
+      this._data = data;
+      this._channelMap = data.channel_map || {};
+      this.renderStats(data.summary);
+      this.renderByDay(data.summary.by_day || {});
+      this.renderByModel(data.summary.by_model || {});
+      this.renderTable(data.entries || []);
+    } catch (error) {
+      console.error('Failed to load cost data:', error);
+      Toast.error('Error', 'Failed to load cost data');
+    }
+  },
+
+  _resolveChannel(raw) {
+    // "Channel 1465294449038069912" → "food-log" or "#api-costs" → "api-costs"
+    if (!raw) return '-';
+    const idMatch = raw.match(/(\d{17,20})/);
+    if (idMatch && this._channelMap && this._channelMap[idMatch[1]]) {
+      return this._channelMap[idMatch[1]];
+    }
+    return raw.replace('Channel ', '#').replace(/^#peter-/, '').replace(/^#/, '');
+  },
+
+  renderStats(summary) {
+    const el = document.getElementById('costs-stats');
+    if (!el) return;
+
+    el.innerHTML = `
+      ${Components.statsCard({
+        icon: Icons.activity,
+        value: '\u00A3' + (summary.total_gbp || 0).toFixed(2),
+        label: 'Total Cost (GBP)',
+        variant: 'info'
+      })}
+      ${Components.statsCard({
+        icon: Icons.checkCircle,
+        value: summary.total_calls || 0,
+        label: 'Total Calls',
+        variant: 'success'
+      })}
+      ${Components.statsCard({
+        icon: Icons.clock,
+        value: summary.avg_duration_ms ? (summary.avg_duration_ms / 1000).toFixed(1) + 's' : '-',
+        label: 'Avg Duration',
+        variant: 'info'
+      })}
+      ${Components.statsCard({
+        icon: Icons.alertCircle,
+        value: '$' + (summary.total_usd || 0).toFixed(2),
+        label: 'Total Cost (USD)',
+        variant: 'warning'
+      })}
+    `;
+  },
+
+  renderByDay(byDay) {
+    const el = document.getElementById('costs-by-day');
+    if (!el) return;
+
+    const days = Object.entries(byDay);
+    if (days.length === 0) {
+      el.innerHTML = '<p class="text-muted text-center p-md">No data</p>';
+      return;
+    }
+
+    const rows = days.map(([day, d]) => `
+      <tr>
+        <td class="font-mono text-sm">${day}</td>
+        <td class="text-right">${d.calls}</td>
+        <td class="text-right font-mono">\u00A3${d.cost_gbp.toFixed(2)}</td>
+        <td class="text-right font-mono text-muted">$${d.cost_usd.toFixed(2)}</td>
+      </tr>
+    `).join('');
+
+    el.innerHTML = `
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th class="text-right">Calls</th>
+            <th class="text-right">GBP</th>
+            <th class="text-right">USD</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  },
+
+  renderByModel(byModel) {
+    const el = document.getElementById('costs-by-model');
+    if (!el) return;
+
+    const models = Object.entries(byModel);
+    if (models.length === 0) {
+      el.innerHTML = '<p class="text-muted text-center p-md">No data</p>';
+      return;
+    }
+
+    const rows = models.map(([model, d]) => {
+      const shortModel = model.replace('claude-', '').replace(/-\d{8}$/, '');
+      return `
+        <tr>
+          <td><span class="status status-running">${Utils.escapeHtml(shortModel)}</span></td>
+          <td class="text-right">${d.calls}</td>
+          <td class="text-right font-mono">\u00A3${d.cost_gbp.toFixed(2)}</td>
+          <td class="text-right font-mono text-muted">$${d.cost_usd.toFixed(2)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    el.innerHTML = `
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th class="text-right">Calls</th>
+            <th class="text-right">GBP</th>
+            <th class="text-right">USD</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  },
+
+  renderTable(entries) {
+    const el = document.getElementById('costs-table');
+    if (!el) return;
+
+    if (entries.length === 0) {
+      el.innerHTML = '<p class="text-muted text-center p-md">No cost data recorded yet</p>';
+      return;
+    }
+
+    const rows = entries.map(e => {
+      const time = Format.datetime(e.timestamp);
+      const source = e.source || '-';
+      // Shorten "scheduled:balance-monitor" → "sched:balance"
+      const sourceShort = source.startsWith('scheduled:')
+        ? source.replace('scheduled:', 'sched:').replace('-monitor', '')
+        : source;
+      const sourceClass = source === 'conversation' ? 'status-running' : 'status-pending';
+      const channel = this._resolveChannel(e.channel);
+      const model = (e.model || 'unknown').replace('claude-', '').replace(/-\d{8,}$/, '');
+      const duration = e.duration_ms ? (e.duration_ms / 1000).toFixed(1) + 's' : '-';
+      const tools = (e.tools_used || []);
+      const uniqueTools = [...new Set(tools)];
+      const toolStr = uniqueTools.length > 0
+        ? uniqueTools.slice(0, 3).join(', ') + (uniqueTools.length > 3 ? ` +${uniqueTools.length - 3}` : '')
+        : '-';
+      const msg = Utils.escapeHtml((e.message || '').substring(0, 40));
+      const costUsd = (e.cost_usd || 0);
+      const costGbp = (e.cost_gbp || 0);
+      const costClass = costUsd === 0 ? 'text-muted' : costUsd > 0.20 ? 'text-warning' : '';
+
+      return `
+        <tr>
+          <td class="text-sm text-muted" style="white-space: nowrap;">${time}</td>
+          <td class="text-sm"><span class="status ${sourceClass}">${Utils.escapeHtml(sourceShort)}</span></td>
+          <td class="text-sm">${Utils.escapeHtml(channel)}</td>
+          <td class="text-sm font-mono">${Utils.escapeHtml(model)}</td>
+          <td class="text-right font-mono ${costClass}" style="padding-right: 12px;">\u00A3${costGbp.toFixed(3)}</td>
+          <td class="text-right text-sm text-muted" style="padding-left: 12px;">${duration}</td>
+          <td class="text-sm text-muted">${toolStr}</td>
+          <td class="text-sm text-muted" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${Utils.escapeHtml(e.message || '')}">${msg}</td>
+        </tr>
+      `;
+    }).join('');
+
+    el.innerHTML = `
+      <div style="overflow-x: auto;">
+        <table class="table" style="table-layout: auto; width: 100%;">
+          <thead>
+            <tr>
+              <th style="white-space: nowrap;">Time</th>
+              <th>Source</th>
+              <th>Channel</th>
+              <th>Model</th>
+              <th class="text-right" style="padding-right: 12px;">Cost</th>
+              <th class="text-right" style="padding-left: 12px;">Duration</th>
+              <th>Tools</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  },
+};
+
+
 // =============================================================================
 // 8. INITIALIZATION
 // =============================================================================
@@ -3764,6 +4139,7 @@ const App = {
     if (typeof ApiExplorerView !== 'undefined') {
       Router.register('/api-explorer', ApiExplorerView);
     }
+    Router.register('/costs', CostsView);
     Router.register('/settings', SettingsView);
 
     // Initialize router
@@ -3859,6 +4235,8 @@ const App = {
         Router.navigate('/files');
       } else if (shortcutBuffer === 'gm') {
         Router.navigate('/memory');
+      } else if (shortcutBuffer === 'gc') {
+        Router.navigate('/costs');
       }
 
       shortcutTimeout = setTimeout(() => {
@@ -3913,5 +4291,6 @@ window.SkillsView = SkillsView;
 window.LogsView = LogsView;
 window.FilesView = FilesView;
 window.MemoryView = MemoryView;
+window.CostsView = CostsView;
 // ApiExplorerView is defined in api-explorer.js
 window.SettingsView = SettingsView;

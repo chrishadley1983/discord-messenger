@@ -20,6 +20,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from logger import logger
 from .response.pipeline import process as process_response
+from .config import USE_ROUTER_V2
 
 # Import job history recording functions
 try:
@@ -103,6 +104,9 @@ class PeterbotScheduler:
         self._job_queue: list[JobConfig] = []
         self._job_lock = asyncio.Lock()
 
+        # Trigger file for API-initiated reloads
+        self._reload_trigger_path = Path(__file__).parent.parent.parent / "data" / "schedule_reload.trigger"
+
     def set_data_fetchers(self, fetchers: dict[str, Callable]):
         """Set data fetcher functions for skills."""
         self.data_fetchers = fetchers
@@ -155,6 +159,29 @@ class PeterbotScheduler:
 
         # Load fresh schedule
         return self.load_schedule()
+
+    def start_reload_watcher(self):
+        """Register a periodic check for API-triggered reload requests."""
+        self.scheduler.add_job(
+            self._check_reload_trigger,
+            IntervalTrigger(seconds=10),
+            id="__reload_watcher",
+            max_instances=1,
+            replace_existing=True,
+        )
+        logger.info("Schedule reload watcher started (checks every 10s)")
+
+    async def _check_reload_trigger(self):
+        """Check for trigger file from Hadley API and reload if found."""
+        if self._reload_trigger_path.exists():
+            try:
+                reason = self._reload_trigger_path.read_text(encoding="utf-8").strip()
+                self._reload_trigger_path.unlink()
+                logger.info(f"Schedule reload triggered via API: {reason}")
+                job_count = self.reload_schedule()
+                logger.info(f"Schedule reloaded: {job_count} jobs registered")
+            except Exception as e:
+                logger.error(f"Failed to process reload trigger: {e}")
 
     def _parse_schedule_md(self, content: str) -> list[JobConfig]:
         """Parse SCHEDULE.md content into job configs.
@@ -249,7 +276,8 @@ class PeterbotScheduler:
             trigger,
             args=[job],
             id=job_id,
-            replace_existing=True
+            replace_existing=True,
+            max_instances=1,
         )
 
         self._job_ids.append(job_id)
@@ -500,18 +528,24 @@ class PeterbotScheduler:
 
             # 4. Send to Claude Code with timeout
             try:
-                response = await asyncio.wait_for(
-                    self._send_to_claude_code(context),
-                    timeout=self.JOB_TIMEOUT_SECONDS
-                )
+                if USE_ROUTER_V2:
+                    # V2: Independent CLI process — no tmux, no session lock
+                    # Timeout is handled inside invoke_claude_cli
+                    response = await self._send_to_claude_code_v2(context, job=job)
+                else:
+                    response = await asyncio.wait_for(
+                        self._send_to_claude_code(context),
+                        timeout=self.JOB_TIMEOUT_SECONDS
+                    )
             except asyncio.TimeoutError:
                 duration = time.time() - start_time
                 logger.error(f"Job {job.name} timed out after {duration:.1f}s")
 
-                # Send Ctrl+C to cancel stuck operation
-                from domains.claude_code.tools import _tmux
-                from .config import PETERBOT_SESSION
-                _tmux("send-keys", "-t", PETERBOT_SESSION, "C-c")
+                if not USE_ROUTER_V2:
+                    # Only needed for tmux — send Ctrl+C to cancel stuck operation
+                    from domains.claude_code.tools import _tmux
+                    from .config import PETERBOT_SESSION
+                    _tmux("send-keys", "-t", PETERBOT_SESSION, "C-c")
 
                 self.last_job_status[job.skill] = False
                 if health_tracker:
@@ -789,7 +823,12 @@ class PeterbotScheduler:
             if not await wait_for_clear():
                 logger.warning("Clear may not have completed for scheduled job, proceeding anyway")
 
-            # Capture before state
+            # Clear tmux scroll-back buffer to prevent old content from contaminating
+            # screen captures. /clear resets Claude Code's conversation but tmux retains
+            # scroll-back history which get_session_screen(-S -60) would pick up.
+            _tmux("clear-history", "-t", PETERBOT_SESSION)
+
+            # Capture before state (now clean - no scroll-back contamination)
             screen_before = get_session_screen()
 
             # Write context to UNIQUE file (prevents cross-contamination with conversations)
@@ -859,10 +898,68 @@ class PeterbotScheduler:
             # Cleanup original context file (prevents accumulation)
             cleanup_context_file(context_filepath)
 
-        # CRITICAL: Reset channel tracking after scheduled job
-        # This forces the next conversation to issue /clear (channel switch detection)
-        router_module._last_channel_id = None
-        logger.debug("Released session lock for scheduled job, reset _last_channel_id")
+            # Store parser capture for nightly parser-improve analysis
+            try:
+                from .capture_parser import ParserCaptureStore
+                _capture_store = ParserCaptureStore()
+                _capture_store.capture(
+                    channel_id="scheduled",
+                    channel_name="scheduled-job",
+                    screen_before=screen_before,
+                    screen_after=raw_response,
+                    parser_output=response,
+                    pipeline_output=response,
+                    is_scheduled=True,
+                )
+            except Exception as e:
+                logger.debug(f"Parser capture store failed (non-critical): {e}")
+
+            # CRITICAL: Reset channel tracking INSIDE the lock before releasing
+            # This forces the next conversation to issue /clear (channel switch detection)
+            # Must be inside _session_lock to prevent race with user messages
+            router_module._last_channel_id = None
+            logger.debug("Reset _last_channel_id, releasing session lock for scheduled job")
+        return response
+
+    async def _send_to_claude_code_v2(self, context: str, job: JobConfig = None, retry_on_empty: bool = True) -> str:
+        """Send context to Claude CLI and get response. No tmux, no session lock.
+
+        Uses router_v2.invoke_claude_cli() for independent process execution.
+
+        Args:
+            context: Full context string to send
+            job: Optional job config for cost logging
+            retry_on_empty: If True, retry once if response is empty
+
+        Returns:
+            Response string, or empty string on failure
+        """
+        from .router_v2 import invoke_claude_cli
+
+        skill_name = job.skill if job else "unknown"
+        channel = job.channel if job else ""
+
+        response = await invoke_claude_cli(
+            context=context,
+            append_prompt="Execute the skill instructions. Produce output for Discord.",
+            timeout=self.JOB_TIMEOUT_SECONDS,
+            cost_source=f"scheduled:{skill_name}",
+            cost_channel=channel,
+            cost_message=f"[Skill: {skill_name}]",
+        )
+
+        # Retry once if empty (not an error message)
+        if not response.strip() and retry_on_empty:
+            logger.warning(f"Empty response from CLI, retrying...")
+            response = await invoke_claude_cli(
+                context=context,
+                append_prompt="Execute the skill instructions. Produce output for Discord.",
+                timeout=self.JOB_TIMEOUT_SECONDS,
+                cost_source=f"scheduled:{skill_name}:retry",
+                cost_channel=channel,
+                cost_message=f"[Skill: {skill_name} RETRY]",
+            )
+
         return response
 
     async def _post_to_channel(self, job: JobConfig, message: str, files: list = None):
@@ -956,7 +1053,12 @@ class PeterbotScheduler:
                 return
 
         # Process through Response Pipeline (sanitise → classify → format → chunk)
-        processed = process_response(message, {'user_prompt': f'[Scheduled: {job.skill}]'})
+        # When using v2, output is clean JSON — skip sanitiser
+        processed = process_response(
+            message,
+            {'user_prompt': f'[Scheduled: {job.skill}]'},
+            pre_sanitised=USE_ROUTER_V2,
+        )
 
         # Build Discord file attachments
         discord_files = []
@@ -1112,7 +1214,10 @@ class PeterbotScheduler:
             context = self._build_skill_context_manual(job, skill_content, data)
 
             # 4. Send to Claude Code
-            response = await self._send_to_claude_code(context)
+            if USE_ROUTER_V2:
+                response = await self._send_to_claude_code_v2(context, job=job)
+            else:
+                response = await self._send_to_claude_code(context)
 
             # 5. Get target channel
             channel = self.bot.get_channel(channel_id)
@@ -1137,7 +1242,11 @@ class PeterbotScheduler:
                 header = f"**[Phase 7 Skill: {job.skill}]**\n\n"
 
                 # Process through Response Pipeline
-                processed = process_response(response, {'user_prompt': f'[Manual: {job.skill}]'})
+                processed = process_response(
+                    response,
+                    {'user_prompt': f'[Manual: {job.skill}]'},
+                    pre_sanitised=USE_ROUTER_V2,
+                )
 
                 # Prepare file attachments
                 discord_files = []
