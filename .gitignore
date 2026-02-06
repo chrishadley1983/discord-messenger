@@ -53,10 +53,32 @@ Thumbs.db
 .coverage
 htmlcov/
 
-# Data files (session state, project registry, secrets)
-data/claude_sessions.json
-data/projects.json
-data/anthropic_session.json
+# Data files (runtime data, session state, secrets)
+data/
+
+# Dashboard runtime
+peter_dashboard/.pids/
+peter_dashboard/job_history.db
+
+# Temp/artifacts
+*.lock
+nul
+dashboard_output.html
+openapi_check.json
+ring_token.json
+
+# Screenshots (unless intentional)
+Screenshots/
+
+# Browser automation profiles
+browser_agent/
+
+# Scratchpad/temp artifacts (Claude Code scratchpad leaks)
+C[:]/
+configure_service_account.ps1
+docs/bookmarks_*.html
+docs/phase8b-smart-home.zip
+docs/task-dashboard.jsx
 
 # Draft/temp files (implemented in peterbot-mem)
 *-temp.json
