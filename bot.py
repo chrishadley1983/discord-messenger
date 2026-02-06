@@ -56,7 +56,6 @@ from domains.peterbot.data_fetchers import SKILL_DATA_FETCHERS
 # Import reminders handler (one-off reminders)
 from domains.peterbot.reminders.handler import (
     reload_reminders_on_startup,
-    handle_reminder_intent,
     start_reminder_polling
 )
 
@@ -353,18 +352,6 @@ async def on_message(message):
     # Works in multiple channels (peterbot, ai-briefings, etc.)
     if message.channel.id in PETERBOT_CHANNEL_IDS:
         async with message.channel.typing():
-            # Check for reminder intents first (handled locally, not via Claude Code)
-            reminder_response = await handle_reminder_intent(
-                message.content,
-                message.author.id,
-                message.channel.id,
-                scheduler,
-                bot
-            )
-            if reminder_response:
-                await message.channel.send(reminder_response)
-                return
-
             # Check if buffer needs populating from Discord history (e.g., after restart)
             if is_buffer_empty(message.channel.id):
                 logger.info(f"Buffer empty for channel {message.channel.id}, fetching Discord history")

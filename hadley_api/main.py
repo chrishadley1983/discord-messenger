@@ -5802,6 +5802,189 @@ async def reload_schedule():
 
 
 # ============================================================
+# Reminders CRUD
+# ============================================================
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+
+
+def _supabase_headers():
+    """Headers for Supabase REST API."""
+    return {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation"
+    }
+
+
+class ReminderCreate(BaseModel):
+    task: str
+    run_at: str  # ISO 8601 datetime string
+    user_id: int
+    channel_id: int
+
+
+class ReminderUpdate(BaseModel):
+    task: Optional[str] = None
+    run_at: Optional[str] = None  # ISO 8601 datetime string
+
+
+@app.get("/reminders")
+async def list_reminders(user_id: int = Query(..., description="Discord user ID")):
+    """List pending (unfired) reminders for a user, sorted by run_at."""
+    import httpx
+
+    if not SUPABASE_URL:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/reminders"
+                f"?user_id=eq.{user_id}&fired_at=is.null&select=*&order=run_at",
+                headers=_supabase_headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch reminders: {e}")
+
+
+@app.post("/reminders")
+async def create_reminder(body: ReminderCreate):
+    """Create a new reminder. Validates time is in the future."""
+    import httpx
+    import uuid
+
+    if not SUPABASE_URL:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    # Validate run_at is parseable and in the future
+    try:
+        from dateutil.parser import parse as parse_dt
+        run_at = parse_dt(body.run_at)
+        if run_at.tzinfo is None:
+            run_at = run_at.replace(tzinfo=UK_TZ)
+        now = datetime.now(UK_TZ)
+        if run_at <= now:
+            raise HTTPException(status_code=400, detail=f"run_at must be in the future (got {run_at.isoformat()}, now is {now.isoformat()})")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid run_at format: {e}")
+
+    if not body.task.strip():
+        raise HTTPException(status_code=400, detail="task cannot be empty")
+
+    reminder_id = f"remind_{uuid.uuid4().hex[:8]}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{SUPABASE_URL}/rest/v1/reminders",
+                headers=_supabase_headers(),
+                json={
+                    "id": reminder_id,
+                    "user_id": body.user_id,
+                    "channel_id": body.channel_id,
+                    "task": body.task.strip(),
+                    "run_at": run_at.isoformat(),
+                },
+            )
+            resp.raise_for_status()
+            created = resp.json()
+            return created[0] if isinstance(created, list) and created else created
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create reminder: {e}")
+
+
+@app.patch("/reminders/{reminder_id}")
+async def update_reminder(reminder_id: str, body: ReminderUpdate):
+    """Update task and/or run_at on a pending reminder."""
+    import httpx
+
+    if not SUPABASE_URL:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    updates = {}
+    if body.task is not None:
+        if not body.task.strip():
+            raise HTTPException(status_code=400, detail="task cannot be empty")
+        updates["task"] = body.task.strip()
+
+    if body.run_at is not None:
+        try:
+            from dateutil.parser import parse as parse_dt
+            run_at = parse_dt(body.run_at)
+            if run_at.tzinfo is None:
+                run_at = run_at.replace(tzinfo=UK_TZ)
+            if run_at <= datetime.now(UK_TZ):
+                raise HTTPException(status_code=400, detail="run_at must be in the future")
+            updates["run_at"] = run_at.isoformat()
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid run_at format: {e}")
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update (provide task and/or run_at)")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.patch(
+                f"{SUPABASE_URL}/rest/v1/reminders?id=eq.{reminder_id}&fired_at=is.null",
+                headers=_supabase_headers(),
+                json=updates,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            if not result:
+                raise HTTPException(status_code=404, detail="Reminder not found or already fired")
+            return result[0] if isinstance(result, list) and result else result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update reminder: {e}")
+
+
+@app.delete("/reminders/{reminder_id}")
+async def delete_reminder(reminder_id: str):
+    """Cancel/delete a pending reminder."""
+    import httpx
+
+    if not SUPABASE_URL:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # First check it exists
+            check = await client.get(
+                f"{SUPABASE_URL}/rest/v1/reminders?id=eq.{reminder_id}&select=id",
+                headers=_supabase_headers(),
+            )
+            check.raise_for_status()
+            if not check.json():
+                raise HTTPException(status_code=404, detail="Reminder not found")
+
+            resp = await client.delete(
+                f"{SUPABASE_URL}/rest/v1/reminders?id=eq.{reminder_id}",
+                headers=_supabase_headers(),
+            )
+            resp.raise_for_status()
+            return {"status": "deleted", "id": reminder_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete reminder: {e}")
+
+
+# ============================================================
 # Hadley Bricks Proxy - forwards /hb/* to HB app on port 3000
 # ============================================================
 
