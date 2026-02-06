@@ -5,6 +5,7 @@ Routes messages to domain handlers based on channel.
 """
 
 import asyncio
+import os
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -29,12 +30,20 @@ from domains.claude_code import (
 )
 
 # Import Peterbot domain (special routing - Claude Code with memory)
-from domains.peterbot import (
-    handle_message as handle_peterbot,
-    on_startup as peterbot_startup,
-    CHANNEL_ID as PETERBOT_CHANNEL
-)
-from domains.peterbot.config import PETERBOT_CHANNEL_IDS
+# Router v2 uses Claude CLI --print mode (no tmux); controlled by PETERBOT_ROUTER_V2 env var
+from domains.peterbot.config import PETERBOT_CHANNEL_IDS, USE_ROUTER_V2
+
+if USE_ROUTER_V2:
+    from domains.peterbot.router_v2 import handle_message as handle_peterbot
+    from domains.peterbot.router_v2 import on_startup as peterbot_startup
+    logger.info("Peterbot: Using router v2 (Claude CLI --print mode)")
+else:
+    from domains.peterbot import (
+        handle_message as handle_peterbot,
+        on_startup as peterbot_startup,
+    )
+
+from domains.peterbot import CHANNEL_ID as PETERBOT_CHANNEL
 from domains.peterbot.memory import is_buffer_empty, populate_buffer_from_history
 
 # Import Response Processing Pipeline (Stage 1-5 processing)
@@ -91,12 +100,24 @@ MESSAGE_DEDUP_SECONDS = 5
 # Set to True to use new SCHEDULE.md-based scheduler, False for legacy jobs
 USE_PETERBOT_SCHEDULER = True  # Phase 7b complete - skills created
 peterbot_scheduler = None  # Initialized in on_ready
+_ready_initialized = False  # Guard against multiple on_ready calls
 
 
 @bot.event
 async def on_ready():
-    """Called when bot is connected and ready."""
+    """Called when bot is connected and ready.
+
+    Note: Discord.py may call this multiple times on gateway reconnects.
+    The _ready_initialized guard prevents duplicate scheduler/domain setup.
+    """
+    global _ready_initialized
     logger.info(f"Logged in as {bot.user}")
+
+    if _ready_initialized:
+        logger.info("on_ready called again (reconnect) - skipping initialization")
+        return
+
+    _ready_initialized = True
 
     # Sync slash commands with Discord
     try:
@@ -126,6 +147,8 @@ async def on_ready():
         # Phase 7: Use SCHEDULE.md-based jobs via Claude Code
         job_count = peterbot_scheduler.load_schedule()
         logger.info(f"Peterbot scheduler loaded {job_count} jobs from SCHEDULE.md")
+        # Watch for API-triggered reloads (Hadley API writes trigger file)
+        peterbot_scheduler.start_reload_watcher()
     else:
         # Legacy: Register standalone jobs (remove after Phase 7b migration)
         register_balance_monitor(scheduler, bot)
@@ -180,14 +203,29 @@ async def fetch_peterbot_history(channel, limit: int = 10) -> list[dict]:
 
     try:
         async for msg in channel.history(limit=limit + 1):  # +1 to skip current
-            # Skip empty messages
-            if not msg.content:
+            # Skip messages with no content and no attachments
+            if not msg.content and not msg.attachments:
                 continue
 
             role = "assistant" if msg.author.bot else "user"
+            content = msg.content or ""
+
+            # Append attachment info for user messages
+            if not msg.author.bot and msg.attachments:
+                att_lines = []
+                for att in msg.attachments:
+                    is_image = att.content_type and att.content_type.startswith("image/")
+                    label = "Image" if is_image else "File"
+                    att_lines.append(f"[{label}: {att.filename}]({att.url})")
+                if att_lines:
+                    content = (content + "\n" if content else "") + "\n".join(att_lines)
+
+            if not content:
+                continue
+
             messages.append({
                 "role": role,
-                "content": msg.content
+                "content": content
             })
 
         # Reverse to chronological (oldest first) and skip the current message
@@ -344,17 +382,33 @@ async def on_message(message):
                 """Post busy notification when Peter is handling another request."""
                 await message.channel.send(text)
 
+            # Extract attachment URLs (images, files)
+            attachment_urls = []
+            for att in message.attachments:
+                attachment_urls.append({
+                    "url": att.url,
+                    "filename": att.filename,
+                    "content_type": att.content_type or "",
+                    "size": att.size,
+                })
+
             # Normal peterbot routing to Claude Code (with interim updates)
             raw_response = await handle_peterbot(
                 message.content,
                 message.author.id,
                 message.channel.id,
                 interim_callback=post_interim,
-                busy_callback=post_busy
+                busy_callback=post_busy,
+                attachment_urls=attachment_urls if attachment_urls else None
             )
 
             # Process through Response Pipeline (sanitise → classify → format → chunk)
-            processed = process_response(raw_response, {'user_prompt': message.content})
+            # When using v2, output is clean JSON — skip sanitiser
+            processed = process_response(
+                raw_response,
+                {'user_prompt': message.content},
+                pre_sanitised=USE_ROUTER_V2,
+            )
 
             # Send chunks (pipeline handles Discord 2000 char limit)
             for i, chunk in enumerate(processed.chunks):
@@ -738,7 +792,55 @@ async def cmd_knowledge(interaction: discord.Interaction):
 @bot.event
 async def on_error(event, *args, **kwargs):
     """Handle errors."""
+    import traceback
     logger.error(f"Bot error in {event}: {args}")
+    logger.error(traceback.format_exc())
+
+
+def _kill_orphaned_bots():
+    """Kill any orphaned bot.py processes from previous restarts.
+
+    NSSM restarts can leave zombie bot.py processes (especially via PythonManager chains).
+    Each orphan runs its own scheduler, causing duplicate job execution.
+    """
+    import subprocess
+    import signal
+    from pathlib import Path
+
+    my_pid = os.getpid()
+    killed = 0
+    try:
+        result = subprocess.run(
+            ["wmic", "process", "where",
+             "name like 'python%' and commandline like '%bot.py%'",
+             "get", "processid", "/format:csv"],
+            capture_output=True, text=True, timeout=10
+        )
+        for line in result.stdout.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(",")
+            # CSV format: Node,ProcessId
+            pid_str = parts[-1].strip()
+            if pid_str.isdigit():
+                pid = int(pid_str)
+                if pid != my_pid:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                        killed += 1
+                        logger.warning(f"Killed orphaned bot.py process PID {pid}")
+                    except (ProcessLookupError, PermissionError):
+                        pass
+    except Exception as e:
+        logger.debug(f"Orphan cleanup skipped: {e}")
+
+    # Update lockfile with our PID
+    lock_path = Path(__file__).parent / "bot.lock"
+    lock_path.write_text(str(my_pid))
+
+    if killed:
+        logger.info(f"Cleaned up {killed} orphaned bot process(es)")
 
 
 def main():
@@ -747,6 +849,7 @@ def main():
         logger.error("DISCORD_TOKEN not set")
         return
 
+    _kill_orphaned_bots()
     logger.info("Starting Discord Assistant...")
     bot.run(DISCORD_TOKEN)
 

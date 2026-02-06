@@ -1,7 +1,10 @@
-"""Peterbot message routing with memory context injection.
+"""Peterbot message routing with memory context injection — V1 LEGACY FALLBACK.
+
+SUPERSEDED by router_v2.py (Claude CLI --print mode) as of Feb 2026.
+This file is kept as a fallback. Activate by setting PETERBOT_ROUTER_V2=0.
 
 Routes peterbot messages through Claude Code (tmux) with memory context,
-unlike the dumb tunnel used by claude-code channel.
+using screen-scraping via parser.py and sanitiser.py.
 """
 
 import asyncio
@@ -211,7 +214,7 @@ def cleanup_context_file(filepath: str) -> bool:
 
 def get_session_screen(lines: int = 60) -> str:
     """Get screen from dedicated peterbot session."""
-    result = _tmux("capture-pane", "-t", PETERBOT_SESSION, "-p", "-S", f"-{lines}")
+    result = _tmux("capture-pane", "-t", PETERBOT_SESSION, "-p", "-J", "-S", f"-{lines}")
     return strip_ansi(result.stdout.strip())
 
 
@@ -220,7 +223,8 @@ async def handle_message(
     user_id: int,
     channel_id: int,
     interim_callback: Optional[Callable[[str], Awaitable[None]]] = None,
-    busy_callback: Optional[Callable[[str], Awaitable[None]]] = None
+    busy_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+    attachment_urls: Optional[list[dict]] = None,
 ) -> str:
     """Process peterbot message with memory context.
 
@@ -230,6 +234,7 @@ async def handle_message(
         channel_id: Discord channel ID for per-channel buffer
         interim_callback: Optional async function to post interim "working on it" messages
         busy_callback: Optional async function to notify when Peter is busy with another task
+        attachment_urls: Optional list of attachment dicts with url, filename, content_type, size
 
     Returns:
         Claude Code's response to send back to Discord
@@ -268,7 +273,8 @@ async def handle_message(
         memory_context,
         channel_id,
         channel_name,
-        knowledge_context=knowledge_context
+        knowledge_context=knowledge_context,
+        attachment_urls=attachment_urls,
     )
 
     # 4-7. CRITICAL SECTION - acquire lock to prevent concurrent tmux access
@@ -331,6 +337,22 @@ async def handle_message(
 
     # 7b. Log raw capture for debugging (async, non-blocking)
     log_raw_capture(message, screen_before, raw_response, response)
+
+    # 7c. Store parser capture for nightly parser-improve analysis
+    try:
+        from .capture_parser import ParserCaptureStore
+        _capture_store = ParserCaptureStore()
+        _capture_store.capture(
+            channel_id=str(channel_id),
+            channel_name=channel_name,
+            screen_before=screen_before,
+            screen_after=raw_response,
+            parser_output=response,
+            pipeline_output=response,
+            is_scheduled=False,
+        )
+    except Exception as e:
+        logger.debug(f"Parser capture store failed (non-critical): {e}")
 
     # 8. Add response to buffer (per-channel)
     memory.add_to_buffer("assistant", response, channel_id)
