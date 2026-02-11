@@ -895,6 +895,8 @@ const Icons = {
   box: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>',
   messageCircle: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>',
   zap: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+  star: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
+  plus: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
   toggleOn: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="1" y="6" width="22" height="12" rx="6" fill="#22c55e"/><circle cx="17" cy="12" r="4" fill="white"/></svg>',
   toggleOff: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="1" y="6" width="22" height="12" rx="6" fill="#94a3b8"/><circle cx="7" cy="12" r="4" fill="white"/></svg>',
 
@@ -1117,11 +1119,23 @@ const DashboardView = {
 
 
 /**
- * Jobs View - Schedule monitor with data table
+ * Jobs View - Calendar + List with schedule parsing
  */
 const JobsView = {
   title: 'Jobs',
   jobs: [],
+
+  // Day mapping for schedule parsing
+  DAY_MAP: {
+    sun: 0, sunday: 0,
+    mon: 1, monday: 1,
+    tue: 2, tuesday: 2,
+    wed: 3, wednesday: 3,
+    thu: 4, thursday: 4,
+    fri: 5, friday: 5,
+    sat: 6, saturday: 6,
+  },
+  DAY_NAMES: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
 
   async render(container) {
     container.innerHTML = `
@@ -1129,19 +1143,17 @@ const JobsView = {
         <div class="flex justify-between items-center mb-lg">
           <div>
             <h2>Scheduled Jobs</h2>
-            <p class="text-secondary">Monitor and manage scheduled tasks</p>
+            <p class="text-secondary">Peter's automated routines</p>
           </div>
           <button class="btn btn-primary" onclick="JobsView.refresh()">
             ${Icons.refresh} Refresh
           </button>
         </div>
-
-        <div id="jobs-table">
+        <div id="jobs-content">
           ${Components.skeleton('table', 10)}
         </div>
       </div>
     `;
-
     await this.loadData();
   },
 
@@ -1150,10 +1162,10 @@ const JobsView = {
       const data = await API.get('/api/jobs');
       this.jobs = data.jobs || [];
       State.set({ jobs: this.jobs });
-      this.renderTable();
+      this.renderTabs();
     } catch (error) {
       console.error('Failed to load jobs:', error);
-      document.getElementById('jobs-table').innerHTML = `
+      document.getElementById('jobs-content').innerHTML = `
         <div class="card">
           <div class="empty-state">
             <div class="empty-state-icon">${Icons.alertCircle}</div>
@@ -1166,18 +1178,234 @@ const JobsView = {
     }
   },
 
-  renderTable() {
+  renderTabs() {
+    const activeTab = State.get('jobsActiveTab') || 0;
+    document.getElementById('jobs-content').innerHTML = Components.tabs({
+      id: 'jobs-tabs',
+      tabs: [
+        { label: 'Calendar', content: this.buildCalendar() },
+        { label: 'List', content: this.buildTable() },
+        { label: 'History', content: this.buildHistoryPlaceholder() },
+      ],
+      activeTab,
+    });
+
+    // Override tab switch to persist state and lazy-load history
+    const origSwitch = Tabs.switch.bind(Tabs);
+    const tabBtns = document.querySelectorAll('#jobs-tabs .tab');
+    tabBtns.forEach((btn, idx) => {
+      btn.onclick = () => {
+        State.set({ jobsActiveTab: idx });
+        origSwitch('jobs-tabs', idx);
+        if (idx === 2) this.loadHistory();
+      };
+    });
+
+    // If History tab is active on load, fetch data
+    if (activeTab === 2) this.loadHistory();
+  },
+
+  // ── Schedule parsing helpers ───────────────────────────────────────
+
+  isIntervalJob(schedule) {
+    if (!schedule) return false;
+    return /^(hourly|half-hourly)/i.test(schedule.replace(/ UK$/, '').trim());
+  },
+
+  getIntervalLabel(schedule) {
+    const clean = (schedule || '').replace(/ UK$/, '').trim();
+    if (/^half-hourly/i.test(clean)) return 'Every 30 min';
+    if (/^hourly/i.test(clean)) return 'Every hour';
+    return clean;
+  },
+
+  isMonthlyJob(schedule) {
+    if (!schedule) return false;
+    return /^1st /i.test((schedule || '').replace(/ UK$/, '').trim());
+  },
+
+  /** Expand "Mon-Wed,Fri" into [1,2,3,5] */
+  expandDaySpec(spec) {
+    const parts = spec.toLowerCase().split(',');
+    const days = new Set();
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed.includes('-')) {
+        const [startStr, endStr] = trimmed.split('-');
+        const start = this.DAY_MAP[startStr.trim()];
+        const end = this.DAY_MAP[endStr.trim()];
+        if (start != null && end != null) {
+          for (let d = start; d !== (end + 1) % 7; d = (d + 1) % 7) {
+            days.add(d);
+            if (days.size > 7) break;
+          }
+          days.add(end);
+        }
+      } else if (this.DAY_MAP[trimmed] != null) {
+        days.add(this.DAY_MAP[trimmed]);
+      }
+    }
+    return [...days].sort((a, b) => a - b);
+  },
+
+  /** Get array of weekday numbers (0=Sun..6=Sat) a job runs on */
+  getJobDays(schedule) {
+    if (!schedule) return [0,1,2,3,4,5,6];
+    const clean = schedule.replace(/ UK$/, '').trim();
+
+    // Interval jobs go in the "Always Running" section
+    if (this.isIntervalJob(schedule)) return [];
+
+    // Monthly jobs — don't show in weekly grid
+    if (/^1st /i.test(clean)) return [];
+
+    // Try to match "DaySpec HH:MM" pattern
+    const dayTimeMatch = clean.match(/^([a-zA-Z,\-]+)\s+\d/);
+    if (dayTimeMatch) {
+      return this.expandDaySpec(dayTimeMatch[1]);
+    }
+
+    // Simple time or multi-time (e.g. "07:00" or "09:02,11:02,13:02") → every day
+    return [0,1,2,3,4,5,6];
+  },
+
+  /** Extract display time from schedule string */
+  getJobTime(schedule) {
+    if (!schedule) return '';
+    const clean = schedule.replace(/ UK$/, '').trim();
+    // Match first HH:MM pattern
+    const m = clean.match(/(\d{1,2}:\d{2})/);
+    return m ? m[1] : '';
+  },
+
+  /** Count how many distinct times a job runs per day */
+  getJobTimes(schedule) {
+    if (!schedule) return [];
+    const clean = schedule.replace(/ UK$/, '').trim();
+    // Remove leading day spec if present
+    const withoutDays = clean.replace(/^[a-zA-Z,\-]+\s+/, '');
+    const matches = withoutDays.match(/\d{1,2}:\d{2}/g);
+    return matches || [];
+  },
+
+  // ── Calendar builders ──────────────────────────────────────────────
+
+  buildCalendar() {
+    const enabledJobs = this.jobs.filter(j => j.enabled !== false);
+
+    const intervalJobs = enabledJobs.filter(j => this.isIntervalJob(j.schedule));
+    const monthlyJobs = enabledJobs.filter(j => this.isMonthlyJob(j.schedule));
+    const gridJobs = enabledJobs.filter(j =>
+      !this.isIntervalJob(j.schedule) && !this.isMonthlyJob(j.schedule)
+    );
+
+    return `
+      ${this.buildAlwaysRunning(intervalJobs)}
+      ${this.buildWeeklyGrid(gridJobs)}
+      ${this.buildNextUp(enabledJobs, monthlyJobs)}
+    `;
+  },
+
+  buildAlwaysRunning(jobs) {
+    if (!jobs.length) return '';
+    return `
+      <div class="calendar-section">
+        <div class="calendar-section-title">Always Running</div>
+        <div class="always-running">
+          ${jobs.map(j => `
+            <span class="always-running-pill" onclick="JobsView.openJobDetail('${j.id}')">
+              ${Icons.refresh}
+              ${j.name || j.id} &middot; ${this.getIntervalLabel(j.schedule)}
+            </span>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  },
+
+  buildWeeklyGrid(jobs) {
+    const today = new Date().getDay(); // 0=Sun
+
+    // Build per-day buckets
+    const buckets = Array.from({ length: 7 }, () => []);
+    for (const job of jobs) {
+      const days = this.getJobDays(job.schedule);
+      const time = this.getJobTime(job.schedule);
+      for (const d of days) {
+        buckets[d].push({ ...job, _time: time });
+      }
+    }
+
+    // Sort each bucket by time
+    for (const bucket of buckets) {
+      bucket.sort((a, b) => (a._time || '').localeCompare(b._time || ''));
+    }
+
+    const columns = this.DAY_NAMES.map((name, idx) => {
+      const isToday = idx === today;
+      const cards = buckets[idx].map(j => `
+        <div class="job-card" onclick="JobsView.openJobDetail('${j.id}')" title="${j.name || j.id}">
+          <div class="job-card-name">${j.name || j.id}</div>
+          <div class="job-card-time">${j._time || ''}</div>
+        </div>
+      `).join('');
+
+      return `
+        <div class="weekly-grid-day${isToday ? ' today' : ''}">
+          <div class="weekly-grid-header">${name}</div>
+          <div class="weekly-grid-jobs">${cards}</div>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="calendar-section">
+        <div class="calendar-section-title">Weekly Schedule</div>
+        <div class="weekly-grid">${columns}</div>
+      </div>
+    `;
+  },
+
+  buildNextUp(allJobs, monthlyJobs) {
+    // Sort by next_run, take top 8
+    const upcoming = allJobs
+      .filter(j => j.next_run)
+      .sort((a, b) => new Date(a.next_run) - new Date(b.next_run))
+      .slice(0, 8);
+
+    if (!upcoming.length) return '';
+
+    const rows = upcoming.map(j => {
+      const isMonthly = this.isMonthlyJob(j.schedule);
+      const badge = isMonthly ? '<span class="job-badge-monthly">Monthly</span>' : '';
+      return `
+        <div class="next-up-item" onclick="JobsView.openJobDetail('${j.id}')">
+          <span class="next-up-name">${j.name || j.id}${badge}</span>
+          <span class="next-up-time">${Format.relativeTime(j.next_run)}</span>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="calendar-section">
+        <div class="calendar-section-title">Next Up</div>
+        <div class="next-up-list">${rows}</div>
+      </div>
+    `;
+  },
+
+  // ── List tab (existing table) ──────────────────────────────────────
+
+  buildTable() {
     const filter = State.get('jobFilter');
     const search = State.get('searchQuery');
 
     let filteredJobs = this.jobs;
 
-    // Apply status filter
     if (filter && filter !== 'all') {
       filteredJobs = filteredJobs.filter(j => j.status === filter);
     }
 
-    // Apply search filter
     if (search) {
       filteredJobs = filteredJobs.filter(j =>
         (j.name || j.id || '').toLowerCase().includes(search) ||
@@ -1185,7 +1413,6 @@ const JobsView = {
       );
     }
 
-    // Apply sorting
     filteredJobs = DataTable.applySorting(filteredJobs);
 
     const columns = [
@@ -1210,20 +1437,195 @@ const JobsView = {
         ` },
     ];
 
-    const tableHtml = Components.dataTable({
+    return Components.dataTable({
       id: 'jobs-data-table',
       columns,
       data: filteredJobs,
       onRowClick: 'JobsView.selectJob',
     });
+  },
 
-    document.getElementById('jobs-table').innerHTML = tableHtml;
+  // ── Detail panel + actions ─────────────────────────────────────────
+
+  // ── History tab ──────────────────────────────────────────────────
+
+  historyData: [],
+  historyHours: 24,
+  historyFilter: 'all',
+
+  buildHistoryPlaceholder() {
+    return `
+      <div id="jobs-history-content">
+        ${Components.skeleton('table', 8)}
+      </div>
+    `;
+  },
+
+  async loadHistory() {
+    const container = document.getElementById('jobs-history-content');
+    if (!container) return;
+
+    container.innerHTML = Components.skeleton('table', 8);
+
+    try {
+      const params = new URLSearchParams({ hours: this.historyHours, limit: '200' });
+      if (this.historyFilter && this.historyFilter !== 'all') {
+        params.set('status', this.historyFilter);
+      }
+      const data = await API.get(`/api/jobs/executions?${params}`);
+      this.historyData = data.executions || [];
+      this.renderHistory();
+    } catch (error) {
+      console.error('Failed to load job history:', error);
+      container.innerHTML = `
+        <div class="card">
+          <div class="empty-state">
+            <div class="empty-state-icon">${Icons.alertCircle}</div>
+            <div class="empty-state-title">Failed to load history</div>
+            <div class="empty-state-description">${error.message}</div>
+            <button class="btn btn-primary mt-md" onclick="JobsView.loadHistory()">Retry</button>
+          </div>
+        </div>
+      `;
+    }
+  },
+
+  renderHistory() {
+    const container = document.getElementById('jobs-history-content');
+    if (!container) return;
+
+    // Build summary cards
+    const total = this.historyData.length;
+    const success = this.historyData.filter(e => e.status === 'success').length;
+    const failed = this.historyData.filter(e => e.status === 'error').length;
+    const running = this.historyData.filter(e => e.status === 'running').length;
+    const successRate = total > 0 ? ((success / total) * 100).toFixed(1) : '0';
+    const avgDuration = total > 0
+      ? Math.round(this.historyData.filter(e => e.duration_ms).reduce((sum, e) => sum + e.duration_ms, 0) / Math.max(this.historyData.filter(e => e.duration_ms).length, 1))
+      : 0;
+
+    // Job name map from main jobs list
+    const jobNameMap = {};
+    for (const j of this.jobs) {
+      jobNameMap[j.id] = j.name || j.id;
+    }
+
+    const formatDuration = (ms) => {
+      if (!ms && ms !== 0) return '-';
+      if (ms < 1000) return `${ms}ms`;
+      if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+      return `${(ms / 60000).toFixed(1)}m`;
+    };
+
+    // Build filter/toolbar
+    const toolbar = `
+      <div class="flex justify-between items-center mb-md" style="flex-wrap: wrap; gap: 0.5rem;">
+        <div class="flex gap-sm items-center" style="flex-wrap: wrap;">
+          <select class="form-select" onchange="JobsView.historyHours = parseInt(this.value); JobsView.loadHistory();">
+            <option value="6" ${this.historyHours === 6 ? 'selected' : ''}>Last 6 hours</option>
+            <option value="24" ${this.historyHours === 24 ? 'selected' : ''}>Last 24 hours</option>
+            <option value="72" ${this.historyHours === 72 ? 'selected' : ''}>Last 3 days</option>
+            <option value="168" ${this.historyHours === 168 ? 'selected' : ''}>Last 7 days</option>
+          </select>
+          <select class="form-select" onchange="JobsView.historyFilter = this.value; JobsView.loadHistory();">
+            <option value="all" ${this.historyFilter === 'all' ? 'selected' : ''}>All Status</option>
+            <option value="success" ${this.historyFilter === 'success' ? 'selected' : ''}>Success</option>
+            <option value="error" ${this.historyFilter === 'error' ? 'selected' : ''}>Error</option>
+            <option value="running" ${this.historyFilter === 'running' ? 'selected' : ''}>Running</option>
+          </select>
+        </div>
+        <button class="btn btn-sm btn-secondary" onclick="JobsView.loadHistory()">
+          ${Icons.refresh} Refresh
+        </button>
+      </div>
+    `;
+
+    // Stats row
+    const stats = `
+      <div class="grid grid-4 mb-md">
+        <div class="card" style="padding: 0.75rem 1rem;">
+          <div class="text-muted text-xs" style="margin-bottom:0.25rem">Total Runs</div>
+          <div style="font-size:1.25rem; font-weight:700">${total}</div>
+        </div>
+        <div class="card" style="padding: 0.75rem 1rem;">
+          <div class="text-muted text-xs" style="margin-bottom:0.25rem">Success Rate</div>
+          <div style="font-size:1.25rem; font-weight:700; color: ${parseFloat(successRate) >= 90 ? 'var(--success)' : parseFloat(successRate) >= 50 ? 'var(--warning)' : 'var(--error)'}">${successRate}%</div>
+        </div>
+        <div class="card" style="padding: 0.75rem 1rem;">
+          <div class="text-muted text-xs" style="margin-bottom:0.25rem">Failures</div>
+          <div style="font-size:1.25rem; font-weight:700; color: ${failed > 0 ? 'var(--error)' : 'var(--text-primary)'}">${failed}</div>
+        </div>
+        <div class="card" style="padding: 0.75rem 1rem;">
+          <div class="text-muted text-xs" style="margin-bottom:0.25rem">Avg Duration</div>
+          <div style="font-size:1.25rem; font-weight:700">${formatDuration(avgDuration)}</div>
+        </div>
+      </div>
+    `;
+
+    // Build table rows
+    const tableRows = this.historyData.map(e => {
+      const jobName = jobNameMap[e.job_id] || e.job_id;
+      const statusBadge = Components.statusBadge(e.status);
+      const started = Format.datetime(e.started_at);
+      const duration = formatDuration(e.duration_ms);
+      const errorCell = e.error
+        ? `<span class="text-error" title="${Utils.escapeHtml(e.error)}">${Utils.escapeHtml(e.error.substring(0, 50))}${e.error.length > 50 ? '...' : ''}</span>`
+        : (e.output_preview ? `<span class="text-muted" title="${Utils.escapeHtml(e.output_preview)}">${Utils.escapeHtml(e.output_preview.substring(0, 50))}${e.output_preview.length > 50 ? '...' : ''}</span>` : '-');
+
+      return `
+        <tr class="clickable" onclick="JobsView.openJobDetail('${e.job_id}')">
+          <td>${statusBadge}</td>
+          <td><strong>${Utils.escapeHtml(jobName)}</strong></td>
+          <td>${started}</td>
+          <td>${duration}</td>
+          <td>${errorCell}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const table = `
+      <div class="data-table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width:100px">Status</th>
+              <th>Job</th>
+              <th style="width:140px">Started</th>
+              <th style="width:100px">Duration</th>
+              <th>Output / Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows.length ? tableRows : `
+              <tr>
+                <td colspan="5" style="text-align:center; padding:2rem; color:var(--text-secondary)">
+                  No executions found for this time period
+                </td>
+              </tr>
+            `}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    container.innerHTML = toolbar + stats + table;
+  },
+
+  // ── Detail panel + actions ─────────────────────────────────────────
+
+  openJobDetail(jobId) {
+    const job = this.jobs.find(j => j.id === jobId);
+    if (!job) return;
+    this.showJobPanel(job);
   },
 
   selectJob(index) {
     const job = this.jobs[index];
     if (!job) return;
+    this.showJobPanel(job);
+  },
 
+  showJobPanel(job) {
     State.set({ selectedItem: job });
 
     const content = `
@@ -1374,6 +1776,8 @@ const ServicesView = {
             </button>
           </div>
         </div>
+
+        <div id="model-provider-card" class="mb-lg"></div>
 
         <div class="services-layout">
           <div class="services-grid-container">
@@ -1785,6 +2189,9 @@ const ServicesView = {
 
       this.renderServices();
 
+      // Render model provider card (uses status.model_provider from /api/status)
+      this.renderModelProviderCard(status.model_provider);
+
       // Update detail panel if a service is selected
       if (this.selectedService && this.services[this.selectedService]) {
         this.renderDetailPanel(this.selectedService);
@@ -1794,6 +2201,127 @@ const ServicesView = {
       if (!silent) {
         Toast.error('Error', 'Failed to load service status');
       }
+    }
+  },
+
+  renderModelProviderCard(providerStatus) {
+    const container = document.getElementById('model-provider-card');
+    if (!container) return;
+
+    // Migrate legacy 'claude' → 'claude_cc'
+    let provider = (providerStatus && providerStatus.active_provider) || 'claude_cc';
+    if (provider === 'claude') provider = 'claude_cc';
+
+    const reason = (providerStatus && providerStatus.reason) || 'default';
+    const switchedAt = providerStatus && providerStatus.switched_at;
+    const autoSwitch = providerStatus ? providerStatus.auto_switch_enabled !== false : true;
+    const kimiRequests = (providerStatus && providerStatus.kimi_requests) || 0;
+    const priority = (providerStatus && providerStatus.provider_priority) || ['claude_cc', 'claude_cc2', 'kimi'];
+
+    const providerConfig = {
+      'claude_cc':  { label: 'Claude (cc)',  icon: '🤖', badge: 'badge-success', color: 'var(--success)', bg: 'rgba(16, 185, 129, 0.1)', tier: 'Primary' },
+      'claude_cc2': { label: 'Claude (cc2)', icon: '🤖', badge: 'badge-info',    color: 'var(--info)',    bg: 'rgba(59, 130, 246, 0.1)', tier: 'Secondary' },
+      'kimi':       { label: 'Kimi 2.5',     icon: '⚠️', badge: 'badge-warning', color: 'var(--warning)', bg: 'rgba(245, 158, 11, 0.1)', tier: 'Fallback' },
+    };
+    const cfg = providerConfig[provider] || providerConfig['claude_cc'];
+    const switchedTimeStr = switchedAt ? Utils.formatRelativeTime(switchedAt) : 'never';
+
+    // Build status text
+    let statusText = `${cfg.tier} provider · Switched ${switchedTimeStr}`;
+    if (provider === 'kimi') {
+      statusText = `Fallback mode (${reason}) · ${kimiRequests} Kimi requests · Switched ${switchedTimeStr}`;
+    } else if (provider === 'claude_cc2') {
+      statusText = `Secondary account (${reason}) · Switched ${switchedTimeStr}`;
+    }
+
+    // Build switch buttons for other providers
+    const switchButtons = priority
+      .filter(p => p !== provider)
+      .map(p => {
+        const pcfg = providerConfig[p] || {};
+        return `<button class="btn btn-sm btn-secondary" onclick="ServicesView.confirmSwitchProvider('${p}')">${pcfg.label || p}</button>`;
+      })
+      .join(' ');
+
+    container.innerHTML = `
+      <div class="card" style="border-left: 4px solid ${cfg.color}; background: ${cfg.bg};">
+        <div class="flex justify-between items-center">
+          <div class="flex items-center gap-md">
+            <div>
+              <div class="flex items-center gap-sm">
+                <span style="font-size: 1.25rem;">${cfg.icon}</span>
+                <strong style="font-size: 1.1rem;">Model Provider</strong>
+                <span class="badge ${cfg.badge}" style="margin-left: 0.5rem;">
+                  ${cfg.label}
+                </span>
+              </div>
+              <div class="text-secondary text-sm" style="margin-top: 0.35rem;">
+                ${statusText}
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-sm">
+            <label class="flex items-center gap-xs text-sm" title="Auto-switch to next provider when credits exhausted" style="cursor: pointer;">
+              <input type="checkbox" ${autoSwitch ? 'checked' : ''} onchange="ServicesView.toggleAutoSwitch(this.checked)">
+              Auto-cascade
+            </label>
+            ${switchButtons}
+          </div>
+        </div>
+      </div>
+    `;
+  },
+
+  confirmSwitchProvider(targetProvider) {
+    const labels = { 'claude_cc': 'Claude (cc)', 'claude_cc2': 'Claude (cc2)', 'kimi': 'Kimi 2.5' };
+    const label = labels[targetProvider] || targetProvider;
+    const warnings = {
+      'claude_cc': 'Ensure primary Anthropic account has available credits.',
+      'claude_cc2': 'Ensure secondary Anthropic account has available credits.',
+      'kimi': 'Kimi is degraded mode — no MCP tools, no CLAUDE.md auto-load.',
+    };
+    const warning = warnings[targetProvider] || '';
+
+    Modal.show(`
+      <h3>Switch to ${label}?</h3>
+      <p class="text-secondary mb-md">${warning}</p>
+      <div class="flex gap-sm justify-end">
+        <button class="btn btn-secondary" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="ServicesView.switchProvider('${targetProvider}')">Switch</button>
+      </div>
+    `);
+  },
+
+  async switchProvider(targetProvider) {
+    Modal.close();
+    const labels = { 'claude_cc': 'Claude (cc)', 'claude_cc2': 'Claude (cc2)', 'kimi': 'Kimi 2.5' };
+    try {
+      const HADLEY_API = 'http://localhost:8100';
+      const resp = await fetch(HADLEY_API + '/model/switch', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: targetProvider, reason: 'manual' }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      Toast.success('Provider Switched', `Now using ${labels[targetProvider] || targetProvider}`);
+      await this.loadData();
+    } catch (e) {
+      Toast.error('Error', `Failed to switch provider: ${e.message}`);
+    }
+  },
+
+  async toggleAutoSwitch(enabled) {
+    try {
+      const HADLEY_API = 'http://localhost:8100';
+      const resp = await fetch(HADLEY_API + '/model/auto-switch', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      Toast.success('Auto-Switch', enabled ? 'Enabled' : 'Disabled');
+    } catch (e) {
+      Toast.error('Error', `Failed to toggle auto-switch: ${e.message}`);
     }
   },
 
@@ -3254,7 +3782,7 @@ const MemoryView = {
   async searchBrain(query) {
     if (!query.trim()) return;
     try {
-      const results = await API.get(`/api/search/second-brain?q=${encodeURIComponent(query)}`);
+      const results = await API.get(`/api/search/second-brain?query=${encodeURIComponent(query)}`);
       this.renderSearchResults('brain-results', results.results || []);
     } catch (error) { Toast.error('Error', `Search failed: ${error.message}`); }
   },
@@ -4114,6 +4642,1164 @@ const CostsView = {
 
 
 // =============================================================================
+// TASKS VIEW — Kanban Board
+// =============================================================================
+
+const TasksView = {
+  title: 'Tasks',
+  HADLEY_API: '/api/hadley/proxy',
+  _tasks: [],
+  _counts: {},
+  _categories: [],
+  _activeList: 'personal_todo',
+  _dragTaskId: null,
+
+  LIST_TYPES: [
+    { key: 'personal_todo', label: 'Todos', icon: Icons.checkCircle },
+    { key: 'peter_queue', label: 'Peter Queue', icon: Icons.zap },
+    { key: 'idea', label: 'Ideas', icon: Icons.star },
+    { key: 'research', label: 'Research', icon: Icons.search },
+  ],
+
+  // Columns shown per list type (order = left to right)
+  COLUMNS: {
+    personal_todo: ['inbox', 'scheduled', 'in_progress', 'done'],
+    peter_queue:   ['queued', 'heartbeat_scheduled', 'in_heartbeat', 'in_progress', 'review', 'done'],
+    idea:          ['inbox', 'scheduled', 'review', 'done'],
+    research:      ['queued', 'in_progress', 'findings_ready', 'done'],
+  },
+
+  COLUMN_CONFIG: {
+    inbox:               { label: 'Inbox',        color: '#6B7280', accent: '#E5E7EB' },
+    scheduled:           { label: 'Scheduled',    color: '#2563EB', accent: '#BFDBFE' },
+    queued:              { label: 'Queued',        color: '#7C3AED', accent: '#DDD6FE' },
+    heartbeat_scheduled: { label: 'HB Scheduled',  color: '#D97706', accent: '#FDE68A' },
+    in_heartbeat:        { label: 'In Heartbeat',  color: '#EA580C', accent: '#FED7AA' },
+    in_progress:         { label: 'In Progress',   color: '#059669', accent: '#A7F3D0' },
+    review:              { label: 'Review',        color: '#7C3AED', accent: '#DDD6FE' },
+    findings_ready:      { label: 'Findings Ready', color: '#059669', accent: '#A7F3D0' },
+    done:                { label: 'Done',          color: '#16A34A', accent: '#BBF7D0' },
+    cancelled:           { label: 'Cancelled',     color: '#9CA3AF', accent: '#E5E7EB' },
+  },
+
+  PRIORITY_CONFIG: {
+    critical: { label: 'Critical', color: '#DC2626', bg: '#FEE2E2' },
+    high:     { label: 'High',     color: '#EA580C', bg: '#FFF7ED' },
+    medium:   { label: 'Medium',   color: '#2563EB', bg: '#EFF6FF' },
+    low:      { label: 'Low',      color: '#6B7280', bg: '#F3F4F6' },
+    someday:  { label: 'Someday',  color: '#9CA3AF', bg: '#F9FAFB' },
+  },
+
+  async render(container) {
+    container.innerHTML = `
+      <div class="animate-fade-in">
+        <div class="flex justify-between items-center mb-lg">
+          <div>
+            <h2>Tasks</h2>
+            <p class="text-secondary" id="tasks-subtitle">To-dos, ideas, research & Peter's work queue</p>
+          </div>
+          <div class="flex gap-sm">
+            <button class="btn btn-primary" onclick="TasksView.showCreateModal()">
+              ${Icons.plus} New Task
+            </button>
+            <button class="btn btn-ghost" onclick="TasksView.refresh()">
+              ${Icons.refresh} Refresh
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-4 gap-md mb-lg" id="tasks-stats">
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+        </div>
+
+        <div class="flex gap-sm mb-md" id="tasks-tab-bar">
+          ${this.LIST_TYPES.map(lt => `
+            <button class="btn ${lt.key === this._activeList ? 'btn-primary' : 'btn-secondary'}"
+                    onclick="TasksView.switchList('${lt.key}')"
+                    data-list="${lt.key}">
+              ${lt.icon} ${lt.label}
+              <span class="kb-tab-count" id="tab-count-${lt.key}"></span>
+            </button>
+          `).join('')}
+        </div>
+
+        <div class="kb-filter-bar" id="kb-filters">
+          <input type="text" id="kb-search" placeholder="Search tasks..." onkeyup="TasksView.applyFilters()">
+          <select id="kb-filter-priority" onchange="TasksView.applyFilters()">
+            <option value="">All Priorities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+            <option value="someday">Someday</option>
+          </select>
+          <select id="kb-filter-category" onchange="TasksView.applyFilters()">
+            <option value="">All Categories</option>
+          </select>
+        </div>
+
+        <div id="kanban-board" class="kb-board">
+          ${Components.skeleton('table', 5)}
+        </div>
+      </div>
+    `;
+    await this.loadData();
+  },
+
+  async loadData() {
+    try {
+      const [countsResp, tasksResp, catsResp] = await Promise.all([
+        fetch(`${this.HADLEY_API}/ptasks/counts`),
+        fetch(`${this.HADLEY_API}/ptasks/list/${this._activeList}?include_done=true`),
+        fetch(`${this.HADLEY_API}/ptasks/categories`),
+      ]);
+
+      this._counts = (await countsResp.json()).counts || {};
+      this._tasks = (await tasksResp.json()).tasks || [];
+      this._categories = (await catsResp.json()).categories || [];
+
+      this.renderStats();
+      this.populateCategoryFilter();
+      this.renderBoard();
+    } catch (error) {
+      console.error('Failed to load tasks:', error);
+      Toast.error('Error', 'Failed to load tasks');
+    }
+  },
+
+  renderStats() {
+    const c = this._counts;
+    const total = (c.personal_todo || 0) + (c.peter_queue || 0) + (c.idea || 0) + (c.research || 0);
+    const container = document.getElementById('tasks-stats');
+    if (!container) return;
+
+    container.innerHTML = `
+      ${Components.statsCard({ icon: Icons.checkCircle, value: c.personal_todo || 0, label: 'Todos', variant: 'info' })}
+      ${Components.statsCard({ icon: Icons.zap, value: c.peter_queue || 0, label: 'Peter Queue', variant: 'warning' })}
+      ${Components.statsCard({ icon: Icons.star, value: c.idea || 0, label: 'Ideas', variant: 'success' })}
+      ${Components.statsCard({ icon: Icons.search, value: c.research || 0, label: 'Research', variant: 'info' })}
+    `;
+
+    // Update tab counts
+    for (const lt of this.LIST_TYPES) {
+      const el = document.getElementById(`tab-count-${lt.key}`);
+      if (el) el.textContent = c[lt.key] || '';
+    }
+
+    document.getElementById('tasks-subtitle').textContent = `${total} active tasks across all lists`;
+  },
+
+  populateCategoryFilter() {
+    const sel = document.getElementById('kb-filter-category');
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All Categories</option>' +
+      this._categories.map(c => `<option value="${c.slug}" ${c.slug === current ? 'selected' : ''}>${Utils.escapeHtml(c.name)}</option>`).join('');
+  },
+
+  _getFilteredTasks() {
+    const search = (document.getElementById('kb-search')?.value || '').toLowerCase();
+    const priority = document.getElementById('kb-filter-priority')?.value || '';
+    const category = document.getElementById('kb-filter-category')?.value || '';
+    return this._tasks.filter(task => {
+      if (search && !task.title.toLowerCase().includes(search) && !(task.description || '').toLowerCase().includes(search)) return false;
+      if (priority && task.priority !== priority) return false;
+      if (category && !(task.categories || []).includes(category)) return false;
+      return true;
+    });
+  },
+
+  applyFilters() {
+    this.renderBoard();
+  },
+
+  renderBoard() {
+    const board = document.getElementById('kanban-board');
+    if (!board) return;
+
+    const columns = this.COLUMNS[this._activeList] || [];
+    const filtered = this._getFilteredTasks();
+
+    // Group tasks by status
+    const byStatus = {};
+    for (const task of filtered) {
+      byStatus[task.status] = byStatus[task.status] || [];
+      byStatus[task.status].push(task);
+    }
+
+    board.innerHTML = columns.map(status => {
+      const col = this.COLUMN_CONFIG[status] || { label: status, color: '#6B7280', accent: '#E5E7EB' };
+      const tasks = byStatus[status] || [];
+
+      return `
+        <div class="kb-column" data-status="${status}"
+             ondragover="TasksView.onDragOver(event)"
+             ondragenter="TasksView.onDragEnter(event)"
+             ondragleave="TasksView.onDragLeave(event)"
+             ondrop="TasksView.onDrop(event, '${status}')">
+          <div class="kb-column-header" style="border-top: 3px solid ${col.color};">
+            <span class="kb-column-title">${col.label}</span>
+            <span class="kb-column-count">${tasks.length}</span>
+          </div>
+          <div class="kb-column-body">
+            ${tasks.map(t => this._renderCard(t)).join('')}
+          </div>
+        </div>
+      `;
+    }).join('');
+  },
+
+  _renderCard(task) {
+    const prio = this.PRIORITY_CONFIG[task.priority] || this.PRIORITY_CONFIG.medium;
+    const isDone = task.status === 'done' || task.status === 'cancelled';
+
+    const dueStr = task.due_date
+      ? new Date(task.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+      : '';
+    const isOverdue = task.due_date && !isDone && new Date(task.due_date) < new Date();
+
+    const catBadges = (task.categories || []).map(slug => {
+      const cat = this._categories.find(c => c.slug === slug);
+      if (!cat) return '';
+      return `<span class="kb-cat-badge" style="background: ${cat.color}22; color: ${cat.color};">${Utils.escapeHtml(cat.name)}</span>`;
+    }).join('');
+
+    return `
+      <div class="kb-card ${isDone ? 'kb-card-done' : ''}"
+           draggable="true"
+           data-task-id="${task.id}"
+           ondragstart="TasksView.onDragStart(event, '${task.id}')"
+           ondragend="TasksView.onDragEnd(event)"
+           onclick="TasksView.showEditModal('${task.id}')">
+        <div class="kb-card-title ${isDone ? 'kb-title-done' : ''}">${Utils.escapeHtml(task.title)}</div>
+        ${task.description ? `<div class="kb-card-desc">${Utils.escapeHtml(task.description).substring(0, 80)}${task.description.length > 80 ? '...' : ''}</div>` : ''}
+        <div class="kb-card-footer">
+          <span class="kb-prio-dot" style="background: ${prio.color};" title="${prio.label}"></span>
+          ${catBadges}
+          ${dueStr ? `<span class="kb-due ${isOverdue ? 'kb-overdue' : ''}">${dueStr}</span>` : ''}
+          ${task.created_by === 'peter' ? '<span class="kb-peter-badge" title="Created by Peter">P</span>' : ''}
+        </div>
+      </div>
+    `;
+  },
+
+  // ---- Drag and Drop ----
+  onDragStart(e, taskId) {
+    this._dragTaskId = taskId;
+    e.dataTransfer.effectAllowed = 'move';
+    e.target.classList.add('kb-card-dragging');
+  },
+
+  onDragEnd(e) {
+    this._dragTaskId = null;
+    e.target.classList.remove('kb-card-dragging');
+    document.querySelectorAll('.kb-column-over').forEach(el => el.classList.remove('kb-column-over'));
+  },
+
+  onDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  },
+
+  onDragEnter(e) {
+    e.preventDefault();
+    const col = e.target.closest('.kb-column');
+    if (col) col.classList.add('kb-column-over');
+  },
+
+  onDragLeave(e) {
+    const col = e.target.closest('.kb-column');
+    if (col && !col.contains(e.relatedTarget)) col.classList.remove('kb-column-over');
+  },
+
+  async onDrop(e, newStatus) {
+    e.preventDefault();
+    const col = e.target.closest('.kb-column');
+    if (col) col.classList.remove('kb-column-over');
+
+    if (!this._dragTaskId) return;
+    const task = this._tasks.find(t => t.id === this._dragTaskId);
+    if (!task || task.status === newStatus) return;
+
+    try {
+      const resp = await fetch(`${this.HADLEY_API}/ptasks/${this._dragTaskId}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus, actor: 'chris' })
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        Toast.error('Invalid move', err.detail || 'Status transition not allowed');
+        return;
+      }
+      await this.loadData();
+    } catch (error) {
+      Toast.error('Error', `Failed to move task: ${error.message}`);
+    }
+  },
+
+  // ---- List switching ----
+  async switchList(listType) {
+    this._activeList = listType;
+    document.querySelectorAll('#tasks-tab-bar button[data-list]').forEach(btn => {
+      btn.classList.toggle('btn-primary', btn.dataset.list === listType);
+      btn.classList.toggle('btn-secondary', btn.dataset.list !== listType);
+    });
+    document.getElementById('kanban-board').innerHTML = Components.skeleton('table', 5);
+    await this.loadData();
+  },
+
+  // ---- Edit Modal (full editing with activity timeline) ----
+  async showEditModal(taskId) {
+    try {
+      // Fetch task detail and history in parallel
+      const [taskResp, histResp] = await Promise.all([
+        fetch(`${this.HADLEY_API}/ptasks/${taskId}`),
+        fetch(`${this.HADLEY_API}/ptasks/${taskId}/history`),
+      ]);
+      const task = await taskResp.json();
+      const histData = await histResp.json();
+      const history = histData.history || [];
+
+      const prioOpts = Object.entries(this.PRIORITY_CONFIG).map(([k, v]) =>
+        `<option value="${k}" ${task.priority === k ? 'selected' : ''}>${v.label}</option>`
+      ).join('');
+
+      const statusOpts = (this.COLUMNS[this._activeList] || []).map(s => {
+        const sc = this.COLUMN_CONFIG[s] || { label: s };
+        return `<option value="${s}" ${task.status === s ? 'selected' : ''}>${sc.label}</option>`;
+      }).join('');
+
+      const allCats = this._categories;
+      const taskCatSlugs = task.categories || [];
+      const catCheckboxes = allCats.map(cat => `
+        <label class="kb-cat-check" style="--cat-color: ${cat.color};">
+          <input type="checkbox" value="${cat.slug}" ${taskCatSlugs.includes(cat.slug) ? 'checked' : ''}>
+          <span class="kb-cat-check-label" style="background: ${cat.color}22; color: ${cat.color}; border: 1px solid ${cat.color}40;">${Utils.escapeHtml(cat.name)}</span>
+        </label>
+      `).join('');
+
+      const comments = (task.comments_list || []).map(c => `
+        <div class="kb-comment">
+          <div class="kb-comment-meta">
+            <strong>${Utils.escapeHtml(c.author)}</strong> &middot; ${new Date(c.created_at).toLocaleString('en-GB')}
+            ${c.is_system_message ? '<span style="color: #7C3AED; font-size: 10px;">(system)</span>' : ''}
+          </div>
+          <div class="kb-comment-text">${Utils.escapeHtml(c.content)}</div>
+        </div>
+      `).join('') || '<p class="text-muted" style="font-size: 12px;">No comments yet</p>';
+
+      // Activity timeline from task_history
+      const timeline = history.map(h => {
+        const time = new Date(h.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        let desc = h.action;
+        if (h.action === 'status_changed') {
+          const oldLabel = (this.COLUMN_CONFIG[h.old_value] || {}).label || h.old_value;
+          const newLabel = (this.COLUMN_CONFIG[h.new_value] || {}).label || h.new_value;
+          desc = `${oldLabel} &rarr; ${newLabel}`;
+        } else if (h.action === 'created') {
+          desc = 'Task created';
+        }
+        const actor = h.actor || '';
+        const isPeter = actor === 'peter';
+        return `<div class="kb-timeline-item">
+          <div class="kb-timeline-dot" style="background: ${isPeter ? '#7C3AED' : '#2563EB'};"></div>
+          <div class="kb-timeline-content">
+            <span class="kb-timeline-desc">${desc}</span>
+            <span class="kb-timeline-meta">${actor} &middot; ${time}</span>
+          </div>
+        </div>`;
+      }).join('') || '<p class="text-muted" style="font-size: 12px;">No activity recorded</p>';
+
+      const dueVal = task.due_date ? task.due_date.split('T')[0] : '';
+
+      Modal.open({
+        title: 'Edit Task',
+        size: 'lg',
+        content: `
+          <div class="kb-edit-form">
+            <div class="kb-edit-row">
+              <label class="form-label">Title</label>
+              <input type="text" id="edit-task-title" class="form-input" value="${Utils.escapeHtml(task.title)}">
+            </div>
+            <div class="kb-edit-row">
+              <label class="form-label">Description</label>
+              <textarea id="edit-task-desc" class="form-input" rows="3">${Utils.escapeHtml(task.description || '')}</textarea>
+            </div>
+            <div class="kb-edit-row-grid">
+              <div>
+                <label class="form-label">Status</label>
+                <select id="edit-task-status" class="form-input">${statusOpts}</select>
+              </div>
+              <div>
+                <label class="form-label">Priority</label>
+                <select id="edit-task-priority" class="form-input">${prioOpts}</select>
+              </div>
+              <div>
+                <label class="form-label">Due Date</label>
+                <input type="date" id="edit-task-due" class="form-input" value="${dueVal}">
+              </div>
+              <div>
+                <label class="form-label">Effort</label>
+                <input type="text" id="edit-task-effort" class="form-input" value="${Utils.escapeHtml(task.estimated_effort || '')}" placeholder="e.g. 2h, half_day">
+              </div>
+            </div>
+            <div class="kb-edit-row">
+              <label class="form-label">Categories</label>
+              <div class="kb-cat-list">${catCheckboxes || '<span class="text-muted" style="font-size: 12px;">No categories defined</span>'}</div>
+            </div>
+            <div class="kb-edit-row" style="margin-top: 8px;">
+              <label class="form-label">Comments</label>
+              <div class="kb-comments-box">${comments}</div>
+              <div class="kb-comment-add">
+                <input type="text" id="edit-task-comment" class="form-input" placeholder="Add a comment...">
+                <button class="btn btn-secondary btn-sm" onclick="TasksView.addComment('${task.id}')">Send</button>
+              </div>
+            </div>
+            <div class="kb-edit-row" style="margin-top: 8px;">
+              <label class="form-label">Activity</label>
+              <div class="kb-timeline">${timeline}</div>
+            </div>
+            <div class="kb-edit-meta">
+              Created by <strong>${task.created_by || 'unknown'}</strong>
+              &middot; ${new Date(task.created_at).toLocaleString('en-GB')}
+            </div>
+          </div>
+        `,
+        footer: `
+          <button class="btn btn-ghost" style="color: #DC2626; margin-right: auto;" onclick="TasksView.deleteTask('${task.id}')">Delete</button>
+          <button class="btn btn-secondary" onclick="Modal.close()">Cancel</button>
+          <button class="btn btn-primary" onclick="TasksView.saveTask('${task.id}')">Save</button>
+        `
+      });
+    } catch (error) {
+      Toast.error('Error', `Failed to load task: ${error.message}`);
+    }
+  },
+
+  async saveTask(taskId) {
+    const title = document.getElementById('edit-task-title')?.value?.trim();
+    const description = document.getElementById('edit-task-desc')?.value?.trim();
+    const status = document.getElementById('edit-task-status')?.value;
+    const priority = document.getElementById('edit-task-priority')?.value;
+    const dueDate = document.getElementById('edit-task-due')?.value;
+    const effort = document.getElementById('edit-task-effort')?.value?.trim();
+
+    if (!title) { Toast.error('Error', 'Title is required'); return; }
+
+    // Collect selected categories
+    const catChecks = document.querySelectorAll('.kb-cat-check input[type="checkbox"]');
+    const selectedCats = Array.from(catChecks).filter(cb => cb.checked).map(cb => cb.value);
+
+    try {
+      // Update task fields
+      const updateBody = { title, description: description || null, priority };
+      if (dueDate) updateBody.due_date = new Date(dueDate).toISOString();
+      if (effort) updateBody.estimated_effort = effort;
+
+      const oldTask = this._tasks.find(t => t.id === taskId);
+
+      await fetch(`${this.HADLEY_API}/ptasks/${taskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updateBody)
+      });
+
+      // Update status if changed
+      if (oldTask && oldTask.status !== status) {
+        const statusResp = await fetch(`${this.HADLEY_API}/ptasks/${taskId}/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status, actor: 'chris' })
+        });
+        if (!statusResp.ok) {
+          const err = await statusResp.json();
+          Toast.error('Status change failed', err.detail || 'Invalid transition');
+        }
+      }
+
+      // Update categories
+      await fetch(`${this.HADLEY_API}/ptasks/${taskId}/categories`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(selectedCats)
+      });
+
+      Modal.close();
+      Toast.success('Saved', 'Task updated');
+      await this.loadData();
+    } catch (error) {
+      Toast.error('Error', `Failed to save: ${error.message}`);
+    }
+  },
+
+  async addComment(taskId) {
+    const input = document.getElementById('edit-task-comment');
+    if (!input || !input.value.trim()) return;
+
+    try {
+      await fetch(`${this.HADLEY_API}/ptasks/${taskId}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: input.value.trim(), author: 'chris' })
+      });
+      input.value = '';
+      Toast.success('Comment added', '');
+      // Refresh the comment list in-place
+      this.showEditModal(taskId);
+    } catch (error) {
+      Toast.error('Error', `Failed to add comment: ${error.message}`);
+    }
+  },
+
+  // ---- Create Modal ----
+  showCreateModal() {
+    const listOpts = this.LIST_TYPES.map(lt =>
+      `<option value="${lt.key}" ${lt.key === this._activeList ? 'selected' : ''}>${lt.label}</option>`
+    ).join('');
+
+    const prioOpts = Object.entries(this.PRIORITY_CONFIG).map(([k, v]) =>
+      `<option value="${k}" ${k === 'medium' ? 'selected' : ''}>${v.label}</option>`
+    ).join('');
+
+    const catCheckboxes = this._categories.map(cat => `
+      <label class="kb-cat-check" style="--cat-color: ${cat.color};">
+        <input type="checkbox" value="${cat.slug}">
+        <span class="kb-cat-check-label" style="background: ${cat.color}22; color: ${cat.color}; border: 1px solid ${cat.color}40;">${Utils.escapeHtml(cat.name)}</span>
+      </label>
+    `).join('');
+
+    Modal.open({
+      title: 'New Task',
+      content: `
+        <div class="kb-edit-form">
+          <div class="kb-edit-row">
+            <label class="form-label">Title</label>
+            <input type="text" id="new-task-title" class="form-input" placeholder="What needs doing?">
+          </div>
+          <div class="kb-edit-row">
+            <label class="form-label">Description</label>
+            <textarea id="new-task-desc" class="form-input" rows="2" placeholder="Optional details..."></textarea>
+          </div>
+          <div class="kb-edit-row-grid">
+            <div>
+              <label class="form-label">List</label>
+              <select id="new-task-list" class="form-input">${listOpts}</select>
+            </div>
+            <div>
+              <label class="form-label">Priority</label>
+              <select id="new-task-priority" class="form-input">${prioOpts}</select>
+            </div>
+          </div>
+          ${catCheckboxes ? `
+            <div class="kb-edit-row">
+              <label class="form-label">Categories</label>
+              <div class="kb-cat-list">${catCheckboxes}</div>
+            </div>
+          ` : ''}
+        </div>
+      `,
+      footer: `
+        <button class="btn btn-secondary" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="TasksView.createTask()">Create</button>
+      `
+    });
+  },
+
+  async createTask() {
+    const title = document.getElementById('new-task-title')?.value?.trim();
+    const desc = document.getElementById('new-task-desc')?.value?.trim();
+    const listType = document.getElementById('new-task-list')?.value;
+    const priority = document.getElementById('new-task-priority')?.value;
+
+    if (!title) { Toast.error('Error', 'Title is required'); return; }
+
+    const catChecks = document.querySelectorAll('.kb-cat-check input[type="checkbox"]');
+    const selectedCats = Array.from(catChecks).filter(cb => cb.checked).map(cb => cb.value);
+
+    Modal.close();
+
+    try {
+      await fetch(`${this.HADLEY_API}/ptasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          list_type: listType,
+          title,
+          description: desc || null,
+          priority,
+          created_by: 'chris',
+          category_slugs: selectedCats.length > 0 ? selectedCats : null,
+        })
+      });
+      Toast.success('Created', `Task "${title}" created`);
+      if (listType !== this._activeList) {
+        this._activeList = listType;
+        document.querySelectorAll('#tasks-tab-bar button[data-list]').forEach(btn => {
+          btn.classList.toggle('btn-primary', btn.dataset.list === listType);
+          btn.classList.toggle('btn-secondary', btn.dataset.list !== listType);
+        });
+      }
+      await this.loadData();
+    } catch (error) {
+      Toast.error('Error', `Failed to create task: ${error.message}`);
+    }
+  },
+
+  async deleteTask(taskId) {
+    if (!confirm('Delete this task? This cannot be undone.')) return;
+    Modal.close();
+
+    try {
+      await fetch(`${this.HADLEY_API}/ptasks/${taskId}`, { method: 'DELETE' });
+      Toast.success('Deleted', 'Task deleted');
+      await this.loadData();
+    } catch (error) {
+      Toast.error('Error', `Failed to delete task: ${error.message}`);
+    }
+  },
+
+  async refresh() {
+    await this.loadData();
+    Toast.info('Refreshed', 'Tasks updated');
+  },
+};
+
+
+// =============================================================================
+// MEAL PLAN VIEW
+// =============================================================================
+
+const MealPlanView = {
+  title: 'Meal Plan',
+  _plan: null,
+  _shoppingList: null,
+  HADLEY_API: '/api/hadley/proxy',
+  DAY_NAMES: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+  DAY_SHORT: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+
+  async render(container) {
+    container.innerHTML = `
+      <div class="animate-fade-in">
+        <div class="flex justify-between items-center mb-lg">
+          <div>
+            <h2>Meal Plan</h2>
+            <p class="text-secondary" id="meal-plan-subtitle">Weekly meal planner</p>
+          </div>
+          <div class="flex gap-sm">
+            <button class="btn btn-secondary" onclick="MealPlanView.importFromSheets()">
+              ${Icons.refreshCw} Import from Sheets
+            </button>
+            <button class="btn btn-secondary" onclick="MealPlanView.exportMealPlanPDF()">
+              ${Icons.file} Export PDF
+            </button>
+            <button class="btn btn-ghost" onclick="MealPlanView.refresh()">
+              ${Icons.refresh} Refresh
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-4 gap-md mb-lg" id="meal-plan-stats">
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+        </div>
+
+        ${Components.tabs({
+          id: 'meal-plan-tabs',
+          tabs: [
+            { label: 'Week View', badge: '' },
+            { label: 'Shopping List', badge: '' },
+            { label: 'Import', badge: '' }
+          ],
+          activeTab: 0
+        })}
+      </div>
+    `;
+
+    // Override tab panel content
+    document.getElementById('meal-plan-tabs-panel-0').innerHTML = `<div id="meal-week-view">${Components.skeleton('table', 7)}</div>`;
+    document.getElementById('meal-plan-tabs-panel-1').innerHTML = `<div id="meal-shopping-list">${Components.skeleton('table', 5)}</div>`;
+    document.getElementById('meal-plan-tabs-panel-2').innerHTML = `<div id="meal-import-panel">${this._renderImportPanel()}</div>`;
+
+    await this.loadData();
+  },
+
+  async loadData() {
+    try {
+      const resp = await fetch(`${this.HADLEY_API}/meal-plan/current`);
+      const data = await resp.json();
+      this._plan = data.plan;
+      this.renderStats();
+      this.renderWeekView();
+      this.renderShoppingList();
+    } catch (error) {
+      console.error('Failed to load meal plan:', error);
+      Toast.error('Error', 'Failed to load meal plan');
+      this.renderEmpty();
+    }
+  },
+
+  renderStats() {
+    const plan = this._plan;
+    const container = document.getElementById('meal-plan-stats');
+    if (!container) return;
+
+    if (!plan) {
+      container.innerHTML = `
+        ${Components.statsCard({ icon: Icons.alertCircle, value: 'None', label: 'Current Plan', variant: 'warning' })}
+        ${Components.statsCard({ icon: Icons.clock, value: '-', label: 'Week Starting', variant: 'info' })}
+        ${Components.statsCard({ icon: Icons.list, value: '0', label: 'Meals Planned', variant: 'info' })}
+        ${Components.statsCard({ icon: Icons.box, value: '0', label: 'Ingredients', variant: 'info' })}
+      `;
+      document.getElementById('meal-plan-subtitle').textContent = 'No plan imported yet — import from Google Sheets to get started';
+      return;
+    }
+
+    const items = plan.items || [];
+    const ingredients = plan.ingredients || [];
+    const days = new Set(items.map(i => i.date)).size;
+    const goustoCount = items.filter(i => i.source_tag === 'gousto').length;
+    const weekDate = new Date(plan.week_start + 'T00:00:00');
+    const weekStr = weekDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+
+    container.innerHTML = `
+      ${Components.statsCard({ icon: Icons.checkCircle, value: `w/c ${weekStr}`, label: 'Current Week', variant: 'success' })}
+      ${Components.statsCard({ icon: Icons.list, value: items.length, label: `Meals (${days} days)`, variant: 'info' })}
+      ${Components.statsCard({ icon: Icons.box, value: ingredients.length, label: 'Ingredients', variant: 'info' })}
+      ${Components.statsCard({ icon: Icons.zap, value: goustoCount, label: 'Gousto Meals', variant: 'info' })}
+    `;
+
+    document.getElementById('meal-plan-subtitle').textContent = `Week commencing ${weekDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} — source: ${plan.source || 'manual'}`;
+  },
+
+  renderWeekView() {
+    const container = document.getElementById('meal-week-view');
+    if (!container) return;
+
+    if (!this._plan || !this._plan.items || this._plan.items.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state" style="padding: 48px 0;">
+          <div class="empty-state-icon">${Icons.inbox}</div>
+          <div class="empty-state-title">No Meal Plan</div>
+          <div class="empty-state-description">Import your meal plan from Google Sheets to see it here.</div>
+          <button class="btn btn-primary" style="margin-top: 16px;" onclick="MealPlanView.importFromSheets()">
+            ${Icons.refreshCw} Import from Sheets
+          </button>
+        </div>
+      `;
+      return;
+    }
+
+    // Group items by date
+    const byDate = {};
+    for (const item of this._plan.items) {
+      if (!byDate[item.date]) byDate[item.date] = [];
+      byDate[item.date].push(item);
+    }
+
+    // Sort dates
+    const dates = Object.keys(byDate).sort();
+    const today = new Date().toISOString().split('T')[0];
+
+    let html = '<div class="meal-week-grid">';
+    for (const date of dates) {
+      const d = new Date(date + 'T00:00:00');
+      const dayName = d.toLocaleDateString('en-GB', { weekday: 'long' });
+      const dateStr = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+      const isToday = date === today;
+      const meals = byDate[date].sort((a, b) => a.meal_slot - b.meal_slot);
+
+      html += `
+        <div class="meal-day-card ${isToday ? 'meal-day-today' : ''}">
+          <div class="meal-day-header">
+            <span class="meal-day-name">${dayName}</span>
+            <span class="meal-day-date">${dateStr}</span>
+            ${isToday ? '<span class="status-badge running" style="font-size: 10px; padding: 2px 6px;">Today</span>' : ''}
+          </div>
+          <div class="meal-day-body">
+            ${meals.map(m => this._renderMealSlot(m)).join('')}
+          </div>
+        </div>
+      `;
+    }
+    html += '</div>';
+
+    container.innerHTML = html;
+  },
+
+  _renderMealSlot(meal) {
+    const sourceTag = meal.source_tag;
+    let tagBadge = '';
+    if (sourceTag === 'gousto') {
+      tagBadge = '<span class="meal-tag meal-tag-gousto">Gousto</span>';
+    } else if (sourceTag === 'chris_out') {
+      tagBadge = '<span class="meal-tag meal-tag-out">Out</span>';
+    }
+
+    const adults = meal.adults_meal || '';
+    const kids = meal.kids_meal || '';
+    const sameAsBoth = adults && kids && adults.toLowerCase() === kids.toLowerCase();
+
+    let content;
+    if (sameAsBoth) {
+      content = `<div class="meal-slot-item"><span class="meal-slot-who">Everyone</span> ${Utils.escapeHtml(adults)}</div>`;
+    } else {
+      content = '';
+      if (adults) {
+        content += `<div class="meal-slot-item"><span class="meal-slot-who">Adults</span> ${Utils.escapeHtml(adults)}</div>`;
+      }
+      if (kids) {
+        content += `<div class="meal-slot-item"><span class="meal-slot-who">Kids</span> ${Utils.escapeHtml(kids)}</div>`;
+      }
+    }
+
+    return `
+      <div class="meal-slot">
+        <div class="meal-slot-header">
+          <span class="meal-slot-label">Meal ${meal.meal_slot}</span>
+          ${tagBadge}
+        </div>
+        ${content}
+        ${meal.recipe_url ? `<a href="${meal.recipe_url}" target="_blank" class="meal-recipe-link">${Icons.file} Recipe</a>` : ''}
+      </div>
+    `;
+  },
+
+  renderShoppingList() {
+    const container = document.getElementById('meal-shopping-list');
+    if (!container) return;
+
+    if (!this._plan) {
+      container.innerHTML = `
+        <div class="empty-state" style="padding: 48px 0;">
+          <div class="empty-state-icon">${Icons.inbox}</div>
+          <div class="empty-state-title">No Shopping List</div>
+          <div class="empty-state-description">Import a meal plan first, then shopping list ingredients will appear here.</div>
+        </div>
+      `;
+      return;
+    }
+
+    const ingredients = this._plan.ingredients || [];
+    if (ingredients.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state" style="padding: 48px 0;">
+          <div class="empty-state-icon">${Icons.inbox}</div>
+          <div class="empty-state-title">No Ingredients</div>
+          <div class="empty-state-description">No ingredients found in this plan. Make sure the Google Sheet has an ingredients tab.</div>
+        </div>
+      `;
+      return;
+    }
+
+    // Group by category
+    const byCategory = {};
+    for (const ing of ingredients) {
+      const cat = ing.category || 'Other';
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push(ing);
+    }
+
+    const categories = Object.keys(byCategory).sort();
+    let html = `
+      <div class="flex justify-between items-center" style="margin-bottom: 16px;">
+        <div>
+          <strong>${ingredients.length}</strong> items across <strong>${categories.length}</strong> categories
+        </div>
+        <button class="btn btn-primary" onclick="MealPlanView.generateShoppingPDF()">
+          ${Icons.file} Generate PDF
+        </button>
+      </div>
+      <div class="meal-ingredients-grid">
+    `;
+
+    for (const cat of categories) {
+      const items = byCategory[cat];
+      html += `
+        <div class="meal-ingredient-category">
+          <div class="meal-ingredient-cat-header">${Utils.escapeHtml(cat)} <span class="text-muted">(${items.length})</span></div>
+          <ul class="meal-ingredient-list">
+            ${items.map(item => {
+              const qty = item.quantity ? ` <span class="text-muted">(${Utils.escapeHtml(item.quantity)})</span>` : '';
+              const recipe = item.for_recipe ? ` <span class="meal-ingredient-recipe">${Utils.escapeHtml(item.for_recipe)}</span>` : '';
+              return `<li class="meal-ingredient-item">${Utils.escapeHtml(item.item)}${qty}${recipe}</li>`;
+            }).join('')}
+          </ul>
+        </div>
+      `;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+  },
+
+  _renderImportPanel() {
+    return `
+      <div class="grid grid-cols-3 gap-md" style="padding: 8px 0;">
+        <div class="card">
+          <div class="card-body" style="text-align: center; padding: 24px;">
+            <div style="font-size: 32px; margin-bottom: 12px;">${Icons.box}</div>
+            <h4 style="margin-bottom: 8px;">Google Sheets</h4>
+            <p class="text-secondary text-sm" style="margin-bottom: 16px;">Import meal plan and ingredients from Chris's Google Sheet.</p>
+            <button class="btn btn-primary" onclick="MealPlanView.importFromSheets()">
+              ${Icons.refreshCw} Import
+            </button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body" style="text-align: center; padding: 24px;">
+            <div style="font-size: 32px; margin-bottom: 12px;">${Icons.zap}</div>
+            <h4 style="margin-bottom: 8px;">Gousto Emails</h4>
+            <p class="text-secondary text-sm" style="margin-bottom: 16px;">Search Gmail for Gousto recipe box confirmations.</p>
+            <button class="btn btn-secondary" onclick="MealPlanView.importGousto()">
+              ${Icons.search} Search Emails
+            </button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body" style="text-align: center; padding: 24px;">
+            <div style="font-size: 32px; margin-bottom: 12px;">${Icons.file}</div>
+            <h4 style="margin-bottom: 8px;">CSV Import</h4>
+            <p class="text-secondary text-sm" style="margin-bottom: 16px;">Paste CSV data to import meals and ingredients.</p>
+            <button class="btn btn-secondary" onclick="MealPlanView.showCSVModal()">
+              ${Icons.file} Paste CSV
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="import-results" style="margin-top: 16px;"></div>
+    `;
+  },
+
+  renderEmpty() {
+    const statsEl = document.getElementById('meal-plan-stats');
+    if (statsEl) {
+      statsEl.innerHTML = `
+        ${Components.statsCard({ icon: Icons.alertCircle, value: 'Error', label: 'Failed to load', variant: 'warning' })}
+        ${Components.statsCard({ icon: Icons.clock, value: '-', label: 'Week Starting', variant: 'info' })}
+        ${Components.statsCard({ icon: Icons.list, value: '-', label: 'Meals', variant: 'info' })}
+        ${Components.statsCard({ icon: Icons.box, value: '-', label: 'Ingredients', variant: 'info' })}
+      `;
+    }
+  },
+
+  async importFromSheets() {
+    Toast.info('Importing', 'Importing meal plan from Google Sheets...');
+    try {
+      const resp = await fetch(`${this.HADLEY_API}/meal-plan/import/sheets`, { method: 'POST' });
+      const data = await resp.json();
+
+      if (data.status === 'imported') {
+        Toast.success('Imported', `${data.items_count} meals, ${data.ingredients_count} ingredients imported`);
+        await this.loadData();
+
+        const resultsEl = document.getElementById('import-results');
+        if (resultsEl) {
+          resultsEl.innerHTML = `
+            <div class="card" style="border-left: 3px solid var(--status-running);">
+              <div class="card-body">
+                <strong>Import Successful</strong>
+                <p class="text-secondary text-sm" style="margin-top: 4px;">
+                  Week: ${data.week_start} | ${data.items_count} meals | ${data.ingredients_count} ingredients<br>
+                  Tabs found: ${data.tabs_found.meal_plan || 'none'} (meals), ${data.tabs_found.ingredients || 'none'} (ingredients)
+                </p>
+              </div>
+            </div>
+          `;
+        }
+      } else {
+        Toast.error('Import Failed', data.detail || 'Unknown error');
+      }
+    } catch (error) {
+      Toast.error('Error', `Import failed: ${error.message}`);
+    }
+  },
+
+  async importGousto() {
+    Toast.info('Searching', 'Searching Gmail for Gousto emails...');
+    try {
+      const resp = await fetch(`${this.HADLEY_API}/meal-plan/import/gousto`, { method: 'POST' });
+      const data = await resp.json();
+
+      const resultsEl = document.getElementById('import-results');
+      if (!resultsEl) return;
+
+      if (data.status === 'no_emails') {
+        Toast.info('No Emails', 'No recent Gousto emails found');
+        resultsEl.innerHTML = `
+          <div class="card" style="border-left: 3px solid var(--status-paused);">
+            <div class="card-body">
+              <strong>No Gousto Emails Found</strong>
+              <p class="text-secondary text-sm" style="margin-top: 4px;">No Gousto emails found in the last 14 days.</p>
+            </div>
+          </div>
+        `;
+      } else {
+        Toast.success('Found', `${data.recipes_found.length} recipes found in ${data.emails_checked} emails`);
+        resultsEl.innerHTML = `
+          <div class="card" style="border-left: 3px solid var(--status-running);">
+            <div class="card-body">
+              <strong>Gousto Recipes Found</strong>
+              <p class="text-secondary text-sm" style="margin-top: 8px;">
+                ${data.recipes_found.map(r => `<span class="meal-tag meal-tag-gousto" style="margin: 2px;">${Utils.escapeHtml(r)}</span>`).join('')}
+              </p>
+              ${data.matched.length > 0 ? `
+                <p class="text-sm" style="margin-top: 8px; color: var(--status-running);">
+                  Matched ${data.matched.length} to current plan
+                </p>
+              ` : ''}
+              ${data.unmatched.length > 0 ? `
+                <p class="text-sm" style="margin-top: 4px; color: var(--status-paused);">
+                  ${data.unmatched.length} unmatched recipes
+                </p>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      }
+    } catch (error) {
+      Toast.error('Error', `Gousto search failed: ${error.message}`);
+    }
+  },
+
+  showCSVModal() {
+    Modal.open({
+      title: 'Import from CSV',
+      content: `
+        <div style="margin-bottom: 12px;">
+          <label class="form-label">Meal Plan CSV</label>
+          <textarea id="csv-meals-input" class="form-input" rows="8"
+            placeholder="Date,Day,Adults,Kids&#10;07/02,Sat,Chicken stir-fry,Fish fingers&#10;08/02,Sun,Roast dinner,Roast dinner"
+            style="font-family: var(--font-mono); font-size: 12px;"></textarea>
+        </div>
+        <div>
+          <label class="form-label">Ingredients CSV (optional)</label>
+          <textarea id="csv-ingredients-input" class="form-input" rows="5"
+            placeholder="Category,Item,Quantity,Recipe&#10;Meat & Fish,Chicken breast,500g,Chicken stir-fry"
+            style="font-family: var(--font-mono); font-size: 12px;"></textarea>
+        </div>
+      `,
+      footer: `
+        <button class="btn btn-secondary" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="MealPlanView.importCSV()">Import</button>
+      `
+    });
+  },
+
+  async importCSV() {
+    const csvData = document.getElementById('csv-meals-input')?.value;
+    const ingredientsCsv = document.getElementById('csv-ingredients-input')?.value;
+
+    if (!csvData || !csvData.trim()) {
+      Toast.error('Error', 'Please enter meal plan CSV data');
+      return;
+    }
+
+    Modal.close();
+    Toast.info('Importing', 'Processing CSV data...');
+
+    try {
+      const body = { csv_data: csvData };
+      if (ingredientsCsv && ingredientsCsv.trim()) {
+        body.ingredients_csv = ingredientsCsv;
+      }
+
+      const resp = await fetch(`${this.HADLEY_API}/meal-plan/import/csv`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await resp.json();
+
+      if (data.status === 'imported') {
+        Toast.success('Imported', `${data.items_count} meals imported from CSV`);
+        await this.loadData();
+      } else {
+        Toast.error('Import Failed', data.detail || 'CSV parsing error');
+      }
+    } catch (error) {
+      Toast.error('Error', `CSV import failed: ${error.message}`);
+    }
+  },
+
+  async generateShoppingPDF() {
+    if (!this._plan) {
+      Toast.error('Error', 'No meal plan loaded');
+      return;
+    }
+
+    Toast.info('Generating', 'Creating shopping list PDF...');
+
+    try {
+      const resp = await fetch(`${this.HADLEY_API}/meal-plan/shopping-list/generate?plan_id=${this._plan.id}`, {
+        method: 'POST'
+      });
+      const data = await resp.json();
+
+      if (data.status === 'created') {
+        Toast.success('PDF Created', `${data.filename} saved to Google Drive`);
+      } else {
+        Toast.error('Error', data.detail || 'PDF generation failed');
+      }
+    } catch (error) {
+      Toast.error('Error', `PDF generation failed: ${error.message}`);
+    }
+  },
+
+  async exportMealPlanPDF() {
+    if (!this._plan) {
+      Toast.error('Error', 'No meal plan loaded');
+      return;
+    }
+
+    Toast.info('Generating', 'Creating meal plan PDF...');
+
+    try {
+      const resp = await fetch(`${this.HADLEY_API}/meal-plan/export-pdf?plan_id=${this._plan.id}`, {
+        method: 'POST'
+      });
+      const data = await resp.json();
+
+      if (data.status === 'created') {
+        Toast.success('PDF Created', `${data.filename} saved to Google Drive`);
+      } else {
+        Toast.error('Error', data.detail || 'PDF generation failed');
+      }
+    } catch (error) {
+      Toast.error('Error', `PDF generation failed: ${error.message}`);
+    }
+  },
+
+  async deletePlan() {
+    if (!this._plan) return;
+
+    if (!confirm('Delete this meal plan? This cannot be undone.')) return;
+
+    try {
+      await fetch(`${this.HADLEY_API}/meal-plan/${this._plan.id}`, { method: 'DELETE' });
+      Toast.success('Deleted', 'Meal plan deleted');
+      this._plan = null;
+      this.renderStats();
+      this.renderWeekView();
+      this.renderShoppingList();
+    } catch (error) {
+      Toast.error('Error', `Delete failed: ${error.message}`);
+    }
+  },
+
+  async refresh() {
+    await this.loadData();
+    Toast.info('Refreshed', 'Meal plan data updated');
+  }
+};
+
+
+// =============================================================================
 // 8. INITIALIZATION
 // =============================================================================
 
@@ -4139,7 +5825,13 @@ const App = {
     if (typeof ApiExplorerView !== 'undefined') {
       Router.register('/api-explorer', ApiExplorerView);
     }
+    // MindMapView is defined in mind-map.js which may load after this
+    if (typeof MindMapView !== 'undefined') {
+      Router.register('/mind-map', MindMapView);
+    }
     Router.register('/costs', CostsView);
+    Router.register('/tasks', TasksView);
+    Router.register('/meal-plan', MealPlanView);
     Router.register('/settings', SettingsView);
 
     // Initialize router
@@ -4292,5 +5984,6 @@ window.LogsView = LogsView;
 window.FilesView = FilesView;
 window.MemoryView = MemoryView;
 window.CostsView = CostsView;
+window.MealPlanView = MealPlanView;
 // ApiExplorerView is defined in api-explorer.js
 window.SettingsView = SettingsView;

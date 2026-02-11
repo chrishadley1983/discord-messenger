@@ -73,6 +73,20 @@
           </a>
         </div>
 
+        <!-- Tasks Section -->
+        <div class="sidebar-section">
+          <div class="sidebar-section-label">Tasks</div>
+          <a href="#/tasks" class="sidebar-item" data-route="/tasks">
+            <span class="sidebar-item-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 11l3 3L22 4"/>
+                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+              </svg>
+            </span>
+            <span class="sidebar-item-label">Tasks</span>
+          </a>
+        </div>
+
         <!-- Workflows Section -->
         <div class="sidebar-section">
           <div class="sidebar-section-label">Workflows</div>
@@ -129,6 +143,22 @@
             </span>
             <span class="sidebar-item-label">Memory</span>
           </a>
+          <a href="#/mind-map" class="sidebar-item" data-route="/mind-map">
+            <span class="sidebar-item-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"/>
+                <circle cx="4" cy="6" r="2"/>
+                <circle cx="20" cy="6" r="2"/>
+                <circle cx="4" cy="18" r="2"/>
+                <circle cx="20" cy="18" r="2"/>
+                <line x1="9.5" y1="10.5" x2="5.5" y2="7.5"/>
+                <line x1="14.5" y1="10.5" x2="18.5" y2="7.5"/>
+                <line x1="9.5" y1="13.5" x2="5.5" y2="16.5"/>
+                <line x1="14.5" y1="13.5" x2="18.5" y2="16.5"/>
+              </svg>
+            </span>
+            <span class="sidebar-item-label">Mind Map</span>
+          </a>
           <a href="#/costs" class="sidebar-item" data-route="/costs">
             <span class="sidebar-item-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -137,6 +167,23 @@
               </svg>
             </span>
             <span class="sidebar-item-label">Costs</span>
+          </a>
+        </div>
+
+        <!-- Life Section -->
+        <div class="sidebar-section">
+          <div class="sidebar-section-label">Life</div>
+          <a href="#/meal-plan" class="sidebar-item" data-route="/meal-plan">
+            <span class="sidebar-item-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 8h1a4 4 0 010 8h-1"/>
+                <path d="M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z"/>
+                <line x1="6" y1="1" x2="6" y2="4"/>
+                <line x1="10" y1="1" x2="10" y2="4"/>
+                <line x1="14" y1="1" x2="14" y2="4"/>
+              </svg>
+            </span>
+            <span class="sidebar-item-label">Meal Plan</span>
           </a>
         </div>
 
@@ -250,8 +297,10 @@
   <div class="modal-backdrop" id="mobile-overlay" onclick="document.getElementById('sidebar').classList.remove('open'); this.classList.remove('open');"></div>
 
   <!-- Scripts -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
   <script src="/static/js/app.js"></script>
   <script src="/static/js/api-explorer.js"></script>
+  <script src="/static/js/mind-map.js"></script>
 
   <!-- Update connection indicator and last update time -->
   <script>

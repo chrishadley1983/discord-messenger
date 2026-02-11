@@ -639,24 +639,36 @@ async def health_check():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 
+def _read_model_provider_status() -> dict:
+    """Read model provider status from data/model_config.json."""
+    config_path = Path(__file__).parent.parent / "data" / "model_config.json"
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # Migrate legacy 'claude' → 'claude_cc'
+        if data.get("active_provider") == "claude":
+            data["active_provider"] = "claude_cc"
+        data["provider_priority"] = ["claude_cc", "claude_cc2", "kimi"]
+        return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"active_provider": "claude_cc", "reason": "default", "provider_priority": ["claude_cc", "claude_cc2", "kimi"]}
+
+
 @app.get("/api/status")
 async def get_system_status():
     """Get overall system status with PID tracking."""
-    # Check HTTP services in parallel
+    # Run ALL checks in parallel — blocking calls via to_thread
     hadley_task = check_http_service(f"{CONFIG['hadley_api_url']}/health")
     mem_task = check_http_service(f"{CONFIG['claude_mem_url']}/health")
+    hb_task = check_http_service("http://localhost:3000/", timeout=3.0, accept_any=True)
+    svc_task = asyncio.to_thread(service_manager.status_all)
+    tmux_task = asyncio.to_thread(get_tmux_sessions)
 
-    hadley_http_status, mem_status = await asyncio.gather(hadley_task, mem_task)
+    hadley_http_status, mem_status, hb_http_status, svc_status, sessions = await asyncio.gather(
+        hadley_task, mem_task, hb_task, svc_task, tmux_task
+    )
 
-    # Get process-level status from service_manager
-    svc_status = service_manager.status_all()
-
-    # Check tmux sessions
-    sessions = get_tmux_sessions()
     peterbot_session = next((s for s in sessions if s["name"] == "claude-peterbot"), None)
-
-    # Check Hadley Bricks status
-    hb_http_status = await check_http_service("http://localhost:3000/", timeout=3.0, accept_any=True)
 
     # Helper to get last restart - prefer actual process start time, fall back to tracked time
     def get_last_restart(service_key):
@@ -694,7 +706,8 @@ async def get_system_status():
                 "last_restart": _last_restart_time.get("peterbot_session")
             }
         },
-        "tmux_sessions": sessions
+        "tmux_sessions": sessions,
+        "model_provider": _read_model_provider_status(),
     }
 
 
@@ -1075,19 +1088,21 @@ async def get_peter_memories(limit: int = 50):
             if not ids:
                 return {"observations": [], "count": 0, "source": "peterbot"}
 
-            # Fetch full observation details
-            details_response = await client.post(
-                f"{CONFIG['claude_mem_url']}/api/observations",
-                json={"ids": ids[:limit]}
-            )
-            if details_response.status_code == 200:
-                observations = details_response.json()
-                return {
-                    "observations": [format_observation(obs, "peterbot") for obs in observations],
-                    "count": len(observations),
-                    "source": "peterbot"
-                }
-            return {"error": f"Details status {details_response.status_code}", "observations": [], "source": "peterbot"}
+            # Fetch full observation details individually
+            import asyncio
+            async def fetch_one(obs_id):
+                resp = await client.get(f"{CONFIG['claude_mem_url']}/api/observation/{obs_id}")
+                if resp.status_code == 200:
+                    return resp.json()
+                return None
+
+            results = await asyncio.gather(*[fetch_one(oid) for oid in ids[:limit]])
+            observations = [r for r in results if r is not None]
+            return {
+                "observations": [format_observation(obs, "peterbot") for obs in observations],
+                "count": len(observations),
+                "source": "peterbot"
+            }
     except Exception as e:
         logger.error(f"Error fetching peter memories: {e}")
         return {"error": str(e), "observations": [], "source": "peterbot"}
@@ -1113,19 +1128,21 @@ async def get_claude_memories(limit: int = 50):
             if not ids:
                 return {"observations": [], "count": 0, "source": "claude"}
 
-            # Fetch full observation details
-            details_response = await client.post(
-                f"{CONFIG['claude_mem_url']}/api/observations",
-                json={"ids": ids[:limit]}
-            )
-            if details_response.status_code == 200:
-                observations = details_response.json()
-                return {
-                    "observations": [format_observation(obs, "claude") for obs in observations],
-                    "count": len(observations),
-                    "source": "claude"
-                }
-            return {"error": f"Details status {details_response.status_code}", "observations": [], "source": "claude"}
+            # Fetch full observation details individually
+            import asyncio
+            async def fetch_one(obs_id):
+                resp = await client.get(f"{CONFIG['claude_mem_url']}/api/observation/{obs_id}")
+                if resp.status_code == 200:
+                    return resp.json()
+                return None
+
+            results = await asyncio.gather(*[fetch_one(oid) for oid in ids[:limit]])
+            observations = [r for r in results if r is not None]
+            return {
+                "observations": [format_observation(obs, "claude") for obs in observations],
+                "count": len(observations),
+                "source": "claude"
+            }
     except Exception as e:
         logger.error(f"Error fetching claude memories: {e}")
         return {"error": str(e), "observations": [], "source": "claude"}
@@ -1135,6 +1152,78 @@ async def get_claude_memories(limit: int = 50):
 async def get_recent_memories(limit: int = 50):
     """Get recent memory observations from claude-mem (peterbot project)."""
     return await get_peter_memories(limit=limit)
+
+
+@app.get("/api/memory/graph")
+async def get_memory_graph_data():
+    """Get all peterbot memories aggregated by category for mind map.
+
+    Returns lightweight category summaries without fetching every observation individually.
+    Uses the search index to get IDs+titles, then batch-fetches categories.
+    """
+    import asyncio
+    import re
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Get all observation IDs from search index
+            search_response = await client.get(
+                f"{CONFIG['claude_mem_url']}/api/search",
+                params={"project": "peterbot", "limit": "5000", "orderBy": "id_desc"}
+            )
+            if search_response.status_code != 200:
+                return {"categories": [], "total": 0}
+
+            search_data = search_response.json()
+            ids = parse_observation_ids(search_data)
+            if not ids:
+                return {"categories": [], "total": 0}
+
+            # Batch-fetch observations with concurrency limit
+            semaphore = asyncio.Semaphore(20)
+
+            async def fetch_one(obs_id):
+                async with semaphore:
+                    try:
+                        resp = await client.get(f"{CONFIG['claude_mem_url']}/api/observation/{obs_id}")
+                        if resp.status_code == 200:
+                            d = resp.json()
+                            return {
+                                "id": d.get("id"),
+                                "title": d.get("title", ""),
+                                "type": d.get("type", "observation"),
+                                "category": d.get("category", ""),
+                                "narrative": (d.get("narrative") or "")[:200],
+                                "created_at": d.get("created_at", ""),
+                                "is_active": d.get("is_active", 1),
+                            }
+                    except Exception:
+                        pass
+                    return None
+
+            results = await asyncio.gather(*[fetch_one(oid) for oid in ids])
+            observations = [r for r in results if r is not None and r.get("is_active", 1)]
+
+            # Aggregate by category
+            cat_map = {}
+            for obs in observations:
+                cat = obs.get("category") or "uncategorised"
+                if cat not in cat_map:
+                    cat_map[cat] = {"category": cat, "count": 0, "types": {}, "recent": 0, "items": []}
+                cat_map[cat]["count"] += 1
+                t = obs.get("type", "observation")
+                cat_map[cat]["types"][t] = cat_map[cat]["types"].get(t, 0) + 1
+                cat_map[cat]["items"].append(obs)
+
+            categories = sorted(cat_map.values(), key=lambda x: x["count"], reverse=True)
+
+            return {
+                "categories": categories,
+                "total": len(observations),
+            }
+    except Exception as e:
+        logger.error(f"Error fetching memory graph data: {e}")
+        return {"categories": [], "total": 0, "error": str(e)}
 
 
 @app.get("/api/costs")

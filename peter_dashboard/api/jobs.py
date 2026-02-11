@@ -554,6 +554,77 @@ async def list_jobs():
     }
 
 
+@router.get("/jobs/executions")
+async def list_all_executions(
+    job_id: Optional[str] = None,
+    status: Optional[str] = None,
+    hours: int = 24,
+    limit: int = 100,
+):
+    """Get all recent job executions across all jobs.
+
+    Args:
+        job_id: Optional filter by job identifier
+        status: Optional filter by status ('running', 'success', 'error')
+        hours: Hours of history to return (default 24)
+        limit: Maximum number of records (default 100, max 500)
+    """
+    limit = min(max(limit, 1), 500)
+    since = (datetime.now(UK_TZ) - timedelta(hours=hours)).isoformat()
+
+    with get_db() as conn:
+        query = """
+            SELECT id, job_id, started_at, completed_at, status, duration_ms,
+                   output, error_message
+            FROM job_executions
+            WHERE started_at >= ?
+        """
+        params: list = [since]
+
+        if job_id:
+            query += " AND job_id = ?"
+            params.append(job_id)
+
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+
+        query += " ORDER BY started_at DESC LIMIT ?"
+        params.append(limit)
+
+        rows = conn.execute(query, params).fetchall()
+
+        executions = []
+        for row in rows:
+            output_preview = None
+            if row["output"]:
+                output_preview = row["output"][:100] + "..." if len(row["output"]) > 100 else row["output"]
+
+            executions.append({
+                "id": row["id"],
+                "job_id": row["job_id"],
+                "started_at": row["started_at"],
+                "completed_at": row["completed_at"],
+                "status": row["status"],
+                "duration_ms": row["duration_ms"],
+                "output_preview": output_preview,
+                "error": row["error_message"],
+            })
+
+    # Build summary counts
+    status_counts = {}
+    for e in executions:
+        s = e["status"]
+        status_counts[s] = status_counts.get(s, 0) + 1
+
+    return {
+        "executions": executions,
+        "count": len(executions),
+        "status_counts": status_counts,
+        "since": since,
+    }
+
+
 @router.get("/jobs/{job_id}/history")
 async def get_job_history(job_id: str, limit: int = 50):
     """Get execution history for a specific job.
