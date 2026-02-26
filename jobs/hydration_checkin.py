@@ -186,9 +186,11 @@ async def hydration_checkin(bot):
         water_target = DAILY_TARGETS["water_ml"]
         water_pct = (water_ml / water_target * 100) if water_target else 0
 
-        steps = steps_data.get("steps", 0) if steps_data else 0
+        raw_steps = steps_data.get("steps") if steps_data else None
+        steps = raw_steps if raw_steps is not None else 0
+        steps_available = raw_steps is not None and steps_data.get("error") is None
         steps_target = DAILY_TARGETS["steps"]
-        steps_pct = (steps / steps_target * 100) if steps_target else 0
+        steps_pct = (steps / steps_target * 100) if steps_target and steps_available else 0
 
         # Get time info
         now = datetime.now()
@@ -203,14 +205,24 @@ async def hydration_checkin(bot):
         )
 
         # Build message
+        if steps_available:
+            steps_line = f"🚶 **Steps:** {steps:,} / {steps_target:,} ({steps_pct:.0f}%)"
+            steps_bar = f"   {_progress_bar(steps, steps_target)}"
+        else:
+            steps_line = "🚶 **Steps:** ⚠️ unavailable (Garmin sync pending)"
+            steps_bar = ""
+
         lines = [
             f"{time_emoji} **{hour}:00 Check-in**",
             "",
             f"💧 **Water:** {water_ml:,.0f}ml / {water_target:,}ml ({water_pct:.0f}%)",
             f"   {_progress_bar(water_ml, water_target)}",
             "",
-            f"🚶 **Steps:** {steps:,} / {steps_target:,} ({steps_pct:.0f}%)",
-            f"   {_progress_bar(steps, steps_target)}",
+            steps_line,
+        ]
+        if steps_bar:
+            lines.append(steps_bar)
+        lines += [
             "",
             "---",
             motivation,

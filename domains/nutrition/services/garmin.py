@@ -1,6 +1,7 @@
 """Garmin Connect service for fitness tracking."""
 
 import os
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -10,14 +11,45 @@ from config import GARMIN_EMAIL, GARMIN_PASSWORD
 from logger import logger
 
 _client = None
+_last_api_success = 0.0  # timestamp of last successful API call
 
 # Session storage directory
 SESSION_DIR = Path(os.getenv("LOCALAPPDATA", ".")) / "discord-assistant" / "garmin_session"
 
+# Re-authenticate if no successful API call in this many seconds
+_SESSION_MAX_AGE = 3600  # 1 hour
+
+
+def _save_session():
+    """Save current garth session to disk."""
+    try:
+        SESSION_DIR.mkdir(parents=True, exist_ok=True)
+        garth.save(str(SESSION_DIR))
+        logger.debug("Garmin session saved")
+    except Exception as e:
+        logger.warning(f"Failed to save Garmin session: {e}")
+
+
+def _invalidate_client():
+    """Clear cached client so next call re-authenticates."""
+    global _client, _last_api_success
+    _client = None
+    _last_api_success = 0.0
+
 
 def _get_client() -> garth.Client:
-    """Get or create authenticated Garmin client."""
-    global _client
+    """Get or create authenticated Garmin client.
+
+    Invalidates the cached client if no successful API call within _SESSION_MAX_AGE,
+    forcing a session reload which triggers garth's automatic token refresh.
+    """
+    global _client, _last_api_success
+
+    # Invalidate stale client (forces session reload + token refresh)
+    if _client is not None and (time.time() - _last_api_success) > _SESSION_MAX_AGE:
+        logger.info("Garmin client stale (no recent success), reloading session...")
+        _client = None
+
     if _client is not None:
         return _client
 
@@ -39,44 +71,49 @@ def _get_client() -> garth.Client:
     logger.info("Authenticating with Garmin Connect (may require MFA)...")
     garth.login(GARMIN_EMAIL, GARMIN_PASSWORD)
     _client = garth.client
-
-    # Save session for future use
-    try:
-        SESSION_DIR.mkdir(parents=True, exist_ok=True)
-        garth.save(str(SESSION_DIR))
-        logger.info(f"Garmin session saved to {SESSION_DIR}")
-    except Exception as e:
-        logger.warning(f"Failed to save Garmin session: {e}")
+    _save_session()
 
     logger.info("Garmin authentication successful")
     return _client
 
 
-async def get_steps() -> dict:
-    """Get today's step count from Garmin."""
+async def get_steps(date_str: str | None = None) -> dict:
+    """Get step count from Garmin for a given date (default: today).
+
+    Args:
+        date_str: Date in YYYY-MM-DD format, or None for today.
+    """
     try:
         _get_client()  # Ensure authenticated
-        today = date.today()
+        target_date = date.fromisoformat(date_str) if date_str else date.today()
 
         # Use garth stats API
-        steps_data = garth.DailySteps.list(end=today, period=1)
+        steps_data = garth.DailySteps.list(end=target_date, period=1)
+
+        # Mark successful API call and save refreshed session
+        global _last_api_success
+        _last_api_success = time.time()
+        _save_session()
+
         if steps_data:
             step = steps_data[0]
-            steps = step.total_steps
-            goal = step.step_goal
+            steps = step.total_steps if step.total_steps is not None else 0
+            goal = step.step_goal or 15000
 
             result = {
                 "steps": steps,
                 "goal": goal,
-                "percentage": round((steps / goal) * 100) if goal else 0
+                "percentage": round((steps / goal) * 100) if goal else 0,
+                "date": target_date.isoformat()
             }
 
-            logger.info(f"Retrieved Garmin steps: {steps}/{goal}")
+            logger.info(f"Retrieved Garmin steps for {target_date}: {steps}/{goal}")
             return result
 
-        return {"steps": 0, "goal": 15000, "percentage": 0}
+        return {"steps": 0, "goal": 15000, "percentage": 0, "date": target_date.isoformat()}
     except Exception as e:
         logger.error(f"Garmin API error: {e}")
+        _invalidate_client()  # Force re-auth on next call
         return {"error": str(e), "steps": None, "goal": None, "percentage": None}
 
 
@@ -146,6 +183,7 @@ async def get_heart_rate() -> dict:
 
 async def get_daily_summary() -> dict:
     """Get comprehensive daily health summary from Garmin."""
+    global _last_api_success
     try:
         _get_client()  # Ensure authenticated
         today = date.today()
@@ -164,9 +202,11 @@ async def get_daily_summary() -> dict:
             if steps_data:
                 step = steps_data[0]
                 result["steps"] = {
-                    "count": step.total_steps,
-                    "goal": step.step_goal
+                    "count": step.total_steps if step.total_steps is not None else 0,
+                    "goal": step.step_goal or 15000
                 }
+            _last_api_success = time.time()
+            _save_session()
         except Exception as e:
             logger.warning(f"Failed to get steps: {e}")
 
