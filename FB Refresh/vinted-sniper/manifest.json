@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Vinted Sniper",
+  "version": "1.0",
+  "description": "Monitors Vinted searches and sends Discord notifications with Amazon price comparison",
+  "permissions": [
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "https://www.vinted.co.uk/*",
+    "https://*.vinted.net/*",
+    "https://api.keepa.com/*",
+    "https://discord.com/api/webhooks/*",
+    "https://discordapp.com/api/webhooks/*",
+    "https://modjoikyuhqzouxvieua.supabase.co/*",
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.vinted.co.uk/catalog*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

@@ -589,6 +589,69 @@ async def get_recent_items(limit: int = 10) -> list[KnowledgeItem]:
         raise
 
 
+async def list_items(
+    limit: int = 50,
+    offset: int = 0,
+    content_type: Optional[str] = None,
+    topic: Optional[str] = None,
+    sort_by: str = "created_at",
+    order: str = "desc",
+) -> tuple[list[KnowledgeItem], int]:
+    """List knowledge items with pagination and filtering.
+
+    Args:
+        limit: Max items to return (default 50)
+        offset: Pagination offset
+        content_type: Filter by content_type value (e.g. "article", "recipe")
+        topic: Filter by topic (items where topics array contains this value)
+        sort_by: Column to sort by (default "created_at")
+        order: Sort order, "asc" or "desc" (default "desc")
+
+    Returns:
+        Tuple of (items, total_count)
+    """
+    # Whitelist sortable columns to prevent injection
+    allowed_sorts = {"created_at", "title", "access_count", "decay_score", "base_priority"}
+    if sort_by not in allowed_sorts:
+        sort_by = "created_at"
+    if order not in ("asc", "desc"):
+        order = "desc"
+
+    try:
+        # Build query params
+        url = f"{_get_rest_url()}/knowledge_items?status=eq.active"
+        url += f"&order={sort_by}.{order}"
+        url += f"&limit={limit}&offset={offset}"
+
+        if content_type:
+            url += f"&content_type=eq.{content_type}"
+        if topic:
+            url += f"&topics=cs.{{{topic}}}"
+
+        # Use count=exact header to get total count
+        headers = {**_get_headers(), "Prefer": "count=exact, return=representation"}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+
+        # Parse total count from content-range header
+        content_range = response.headers.get("content-range", "")
+        total_count = 0
+        if "/" in content_range:
+            count_str = content_range.split("/")[-1]
+            if count_str != "*":
+                total_count = int(count_str)
+
+        items = [KnowledgeItem.from_db_row(row) for row in data]
+        return items, total_count
+
+    except Exception as e:
+        logger.error(f"Failed to list items: {e}")
+        raise
+
+
 async def get_topics_with_counts() -> list[tuple[str, int]]:
     """Get all topics with their counts."""
     try:

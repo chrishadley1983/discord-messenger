@@ -89,7 +89,7 @@ Base URL: `http://172.19.64.1:8100`
 | Quick add | `/calendar/quickadd?text=Lunch+Friday+at+noon` | POST |
 | Next event | `/calendar/next` | GET |
 | Check conflicts | `/calendar/conflicts?start=...&end=...` | GET |
-| Create recurring | `/calendar/recurring?summary=Gym&start_time=07:00&days=MO,WE,FR` | POST |
+| Create recurring | `/calendar/recurring?summary=Gym&start_time=07:00&days=MO,WE,FR&end_date=2026-07-31&color_id=7&transparency=transparent&exclude_dates=2026-04-07,2026-04-14` | POST |
 | Invite attendee | `/calendar/invite?event_id=...&email=...` | POST |
 | List calendars | `/calendar/calendars` | GET |
 | Check busy | `/calendar/busy?email=...&date=...` | GET |

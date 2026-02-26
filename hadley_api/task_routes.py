@@ -909,6 +909,25 @@ async def get_comments(task_id: str):
         return {"comments": resp.json()}
 
 
+@router.get("/{task_id}/history")
+async def get_task_history(task_id: str):
+    """Get activity timeline for a task."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise HTTPException(500, "Supabase not configured")
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/task_history?task_id=eq.{task_id}&order=created_at.desc&limit=50",
+            headers=get_supabase_headers(),
+            timeout=10
+        )
+
+        if resp.status_code != 200:
+            raise HTTPException(resp.status_code, f"Failed to fetch history: {resp.text}")
+
+        return {"history": resp.json()}
+
+
 @router.put("/{task_id}/categories")
 async def update_task_categories(task_id: str, category_slugs: List[str]):
     """Update categories for a task."""

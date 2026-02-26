@@ -15,7 +15,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Callable, Awaitable
+from typing import Optional, Callable, Awaitable, Union
 
 import aiohttp
 
@@ -23,9 +23,17 @@ from logger import logger
 from . import memory
 from .config import (
     CHANNEL_ID_TO_NAME,
+    CLI_COMMAND,
+    CLI_CC_CONFIG_DIR,
+    CLI_CC2_CONFIG_DIR,
     CLI_TOTAL_TIMEOUT,
+    CLI_MAX_TURNS,
+    CLI_SCHEDULED_MAX_TURNS,
     CLI_MODEL,
+    CLI_SCHEDULED_MODEL,
     CLI_WORKING_DIR,
+    DOCUMENT_MIN_LENGTH,
+    DOCUMENT_MIN_HEADERS,
 )
 
 # Windows: hide console window when running WSL commands
@@ -104,34 +112,72 @@ def _log_cost(meta: CLIResultMeta, source: str, channel_name: str, message_previ
     )
 
 
-# Tool name → interim message mapping
-TOOL_INTERIM_MESSAGES = {
-    "WebSearch": "🔍 Searching the web...",
-    "WebFetch": "🌐 Fetching page...",
-    "Read": "📄 Reading file...",
-    "Bash": "⚙️ Running command...",
-    "mcp__searxng__search": "🔍 Searching via SearXNG...",
-    "mcp__brave-search__brave_web_search": "🔍 Searching via Brave...",
-    "mcp__context7__query-docs": "📚 Looking up docs...",
-    "mcp__supabase__execute_sql": "🗄️ Querying database...",
+# Tool name → emoji mapping for activity log
+TOOL_EMOJI = {
+    "Read": "📄",
+    "Edit": "✏️",
+    "Write": "📝",
+    "Bash": "⚙️",
+    "Grep": "🔎",
+    "Glob": "📂",
+    "WebSearch": "🔍",
+    "WebFetch": "🌐",
+    "Task": "🤖",
+    "mcp__searxng__search": "🔍",
+    "mcp__brave-search__brave_web_search": "🔍",
+    "mcp__context7__query-docs": "📚",
+    "mcp__supabase__execute_sql": "🗄️",
 }
 
 
-def _tool_to_interim(tool_name: str) -> str:
-    """Map a tool name to an interim update message."""
-    # Direct match first
-    if tool_name in TOOL_INTERIM_MESSAGES:
-        return TOOL_INTERIM_MESSAGES[tool_name]
-
-    # Prefix match for MCP tools (e.g., mcp__searxng__anything)
-    for prefix, msg in TOOL_INTERIM_MESSAGES.items():
+def _tool_emoji(tool_name: str) -> str:
+    """Get emoji for a tool name."""
+    if tool_name in TOOL_EMOJI:
+        return TOOL_EMOJI[tool_name]
+    for prefix, emoji in TOOL_EMOJI.items():
         if "__" in prefix and tool_name.startswith(prefix.rsplit("__", 1)[0]):
-            return msg
+            return emoji
+    return "🔧"
 
-    # Generic fallback for any tool use
-    if tool_name:
-        return "🔧 Working on it..."
+
+def _tool_context(tool_name: str, tool_input: dict) -> str:
+    """Extract a short human-readable context string from tool input."""
+    if tool_name == "Read":
+        fp = tool_input.get("file_path", "")
+        return _short_path(fp) if fp else ""
+    if tool_name in ("Edit", "Write"):
+        fp = tool_input.get("file_path", "")
+        return _short_path(fp) if fp else ""
+    if tool_name == "Bash":
+        cmd = tool_input.get("command", "")
+        return f"`{cmd[:80]}{'…' if len(cmd) > 80 else ''}`" if cmd else ""
+    if tool_name == "Grep":
+        pat = tool_input.get("pattern", "")
+        return f'"{pat[:40]}"' if pat else ""
+    if tool_name == "Glob":
+        pat = tool_input.get("pattern", "")
+        return f"`{pat}`" if pat else ""
+    if tool_name == "WebSearch":
+        q = tool_input.get("query", "")
+        return f'"{q[:60]}"' if q else ""
+    if tool_name == "WebFetch":
+        url = tool_input.get("url", "")
+        return url[:60] if url else ""
+    if tool_name == "Task":
+        desc = tool_input.get("description", "")
+        return desc[:60] if desc else ""
+    if "execute_sql" in tool_name:
+        q = tool_input.get("query", "")
+        return f"`{q[:60]}{'…' if len(q) > 60 else ''}`" if q else ""
     return ""
+
+
+def _short_path(fp: str) -> str:
+    """Shorten a file path to just filename or last 2 segments."""
+    parts = fp.replace("\\", "/").split("/")
+    if len(parts) <= 2:
+        return fp
+    return "/".join(parts[-2:])
 
 
 def _windows_to_wsl_path(win_path: Path) -> str:
@@ -254,30 +300,36 @@ def _cleanup_stale_pids() -> None:
 
 def _build_cli_command(
     append_prompt: str = "Respond to the user message in the Current Message section.",
+    config_dir: str = "",
+    model: str = "",
 ) -> tuple[list[str], str]:
     """Build the WSL command to invoke Claude CLI.
 
+    Args:
+        append_prompt: System prompt suffix for Claude
+        config_dir: WSL path to CLAUDE_CONFIG_DIR (empty = default ~/.claude)
+        model: Model to use (empty = CLI_MODEL default)
+
     Returns (command_list, pid_file_path) for asyncio.create_subprocess_exec().
     Uses `exec` so bash replaces itself with Claude, inheriting the PID.
-    No --max-budget-usd: CLI runs on subscription, not API billing.
     """
     invocation_id = uuid.uuid4().hex[:12]
     pid_file = f"{WSL_PID_DIR}/{invocation_id}.pid"
 
-    # Build the claude command that runs inside WSL
-    # mkdir -p ensures pid dir exists; echo $$ writes bash PID;
-    # exec replaces bash with claude so the PID stays the same
+    use_model = model or CLI_MODEL
+    config_export = f"export CLAUDE_CONFIG_DIR='{config_dir}' && " if config_dir else ""
     claude_cmd = (
         f"mkdir -p {WSL_PID_DIR} && "
         f"echo $$ > {pid_file} && "
         f"cd {CLI_WORKING_DIR} && "
-        f"exec claude -p "
+        f"{config_export}"
+        f"exec {CLI_COMMAND} -p "
         f"--output-format stream-json "
         f"--verbose "
         f"--append-system-prompt '{append_prompt}' "
         f"--permission-mode bypassPermissions "
         f"--no-session-persistence "
-        f"--model {CLI_MODEL}"
+        f"--model {use_model}"
     )
 
     return ["wsl", "bash", "-c", claude_cmd], pid_file
@@ -287,7 +339,8 @@ async def _stream_response(
     proc: asyncio.subprocess.Process,
     context_bytes: bytes,
     meta: CLIResultMeta,
-    interim_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+    interim_callback: Optional[Callable[[Union[str, dict]], Awaitable[None]]] = None,
+    max_turns: int = 0,
 ) -> CLIResultMeta:
     """Write stdin and read stdout concurrently, parsing NDJSON events.
 
@@ -296,6 +349,7 @@ async def _stream_response(
         context_bytes: UTF-8 encoded context to pipe via stdin
         meta: Shared CLIResultMeta — updated incrementally so timeout captures partial data
         interim_callback: Optional async function for interim status updates
+        max_turns: Max agentic turns before aborting (0 = unlimited)
 
     Returns:
         CLIResultMeta with result text and cost/usage metadata
@@ -306,7 +360,8 @@ async def _stream_response(
     proc.stdin.close()
 
     last_assistant_text = ""  # Fallback: last text from assistant events
-    posted_tools = set()  # Avoid duplicate interim messages for same tool type
+    non_json_lines = []  # Capture non-JSON output for credit error detection
+    start_time = time.monotonic()
 
     async for raw_line in proc.stdout:
         line = raw_line.decode("utf-8", errors="replace").strip()
@@ -316,7 +371,8 @@ async def _stream_response(
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
-            logger.debug(f"CLI non-JSON line: {line[:100]}")
+            logger.debug(f"CLI non-JSON line: {line[:200]}")
+            non_json_lines.append(line)
             continue
 
         etype = event.get("type")
@@ -329,6 +385,19 @@ async def _stream_response(
 
         elif etype == "assistant":
             meta.num_turns += 1
+
+            # Enforce max turns to prevent runaway tool chains
+            if max_turns and meta.num_turns > max_turns:
+                logger.warning(
+                    f"Max turns ({max_turns}) exceeded at turn {meta.num_turns} — "
+                    f"aborting with last response ({len(last_assistant_text)} chars)"
+                )
+                if last_assistant_text:
+                    meta.result_text = last_assistant_text
+                else:
+                    meta.result_text = "I got a bit carried away there. Could you try rephrasing your request?"
+                return meta
+
             # Extract text content blocks (fallback if result field is empty)
             for block in event.get("message", {}).get("content", []):
                 if block.get("type") == "text":
@@ -339,18 +408,23 @@ async def _stream_response(
                 # Track tool use and post interim updates (update meta incrementally)
                 if block.get("type") == "tool_use":
                     tool_name = block.get("name", "")
+                    tool_input = block.get("input", {})
                     meta.tools_used.append(tool_name)
 
                     if interim_callback:
-                        tool_prefix = tool_name.split("__")[0] if "__" in tool_name else tool_name
-                        if tool_prefix not in posted_tools:
-                            interim_msg = _tool_to_interim(tool_name)
-                            if interim_msg:
-                                try:
-                                    await interim_callback(interim_msg)
-                                    posted_tools.add(tool_prefix)
-                                except Exception as e:
-                                    logger.warning(f"Interim callback failed: {e}")
+                        elapsed = time.monotonic() - start_time
+                        tool_info = {
+                            "tool_name": tool_name,
+                            "tool_input": tool_input,
+                            "emoji": _tool_emoji(tool_name),
+                            "context": _tool_context(tool_name, tool_input),
+                            "turn": meta.num_turns,
+                            "elapsed_seconds": elapsed,
+                        }
+                        try:
+                            await interim_callback(tool_info)
+                        except Exception as e:
+                            logger.warning(f"Interim callback failed: {e}")
 
         # Detect hook feedback loop: synthetic user messages mean Stop hooks
         # are injecting errors. The real response is already in last_assistant_text.
@@ -365,6 +439,14 @@ async def _stream_response(
             if event.get("is_error") or esubtype == "error":
                 error_msg = event.get("result", "Unknown error")
                 logger.error(f"CLI error result: {error_msg}")
+
+                # Check for credit/billing exhaustion — return sentinel for invoke_llm
+                from .provider_manager import is_credit_exhaustion_error
+                if is_credit_exhaustion_error(error_msg):
+                    logger.warning(f"Credit exhaustion detected: {error_msg[:100]}")
+                    meta.result_text = "__CREDIT_EXHAUSTED__"
+                    return meta
+
                 meta.result_text = f"⚠️ Something went wrong: {error_msg[:200]}"
                 return meta
 
@@ -388,6 +470,15 @@ async def _stream_response(
             # The caller will kill the process to clean up.
             return meta
 
+    # Process exited without a result event. Check non-JSON output for credit errors.
+    if non_json_lines and not meta.result_text:
+        combined = " ".join(non_json_lines)
+        logger.warning(f"CLI exited without result event. Non-JSON output: {combined[:300]}")
+        from .provider_manager import is_credit_exhaustion_error
+        if is_credit_exhaustion_error(combined):
+            logger.warning(f"Credit exhaustion detected in non-JSON output")
+            meta.result_text = "__CREDIT_EXHAUSTED__"
+
     return meta
 
 
@@ -395,10 +486,13 @@ async def invoke_claude_cli(
     context: str,
     append_prompt: str = "Respond to the user message in the Current Message section.",
     timeout: int = CLI_TOTAL_TIMEOUT,
-    interim_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+    interim_callback: Optional[Callable[[Union[str, dict]], Awaitable[None]]] = None,
     cost_source: str = "unknown",
     cost_channel: str = "",
     cost_message: str = "",
+    config_dir: str = "",
+    max_turns: int = 0,
+    model: str = "",
 ) -> str:
     """Invoke Claude CLI with context via stdin and return the result.
 
@@ -412,11 +506,13 @@ async def invoke_claude_cli(
         cost_source: Label for cost log (e.g., "conversation", "scheduled:hydration")
         cost_channel: Channel name for cost log
         cost_message: Message preview for cost log
+        config_dir: WSL path to CLAUDE_CONFIG_DIR (empty = default ~/.claude)
+        max_turns: Max agentic turns before aborting (0 = unlimited)
 
     Returns:
         Clean response text, or error message string
     """
-    cmd, pid_file = _build_cli_command(append_prompt=append_prompt)
+    cmd, pid_file = _build_cli_command(append_prompt=append_prompt, config_dir=config_dir, model=model)
     wall_start = time.monotonic()
 
     try:
@@ -439,7 +535,7 @@ async def invoke_claude_cli(
 
     try:
         meta = await asyncio.wait_for(
-            _stream_response(proc, context_bytes, meta, interim_callback),
+            _stream_response(proc, context_bytes, meta, interim_callback, max_turns=max_turns),
             timeout=timeout,
         )
     except asyncio.TimeoutError:
@@ -453,6 +549,24 @@ async def invoke_claude_cli(
         proc.kill()
         await proc.wait()
         await _kill_wsl_process(pid_file)
+
+        # Check if timeout was caused by rate limit (CLI hangs on interactive menu)
+        # meta.result_text may contain __CREDIT_EXHAUSTED__ from non-JSON line detection
+        if meta.result_text == CREDIT_EXHAUSTED_SENTINEL:
+            return CREDIT_EXHAUSTED_SENTINEL
+
+        # Also check stderr for rate limit clues
+        try:
+            stderr_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=2)
+            stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+            if stderr_text:
+                logger.error(f"CLI stderr (after timeout): {stderr_text[:300]}")
+                from .provider_manager import is_credit_exhaustion_error
+                if is_credit_exhaustion_error(stderr_text):
+                    return CREDIT_EXHAUSTED_SENTINEL
+        except Exception:
+            pass
+
         return "⚠️ Response timed out. Try a simpler question or try again."
 
     wall_ms = (time.monotonic() - wall_start) * 1000
@@ -474,18 +588,201 @@ async def invoke_claude_cli(
     # Log cost data
     _log_cost(meta, cost_source, cost_channel, cost_message)
 
+    # If no result text, check stderr for rate limit / credit errors
     if not meta.result_text:
+        stderr_text = ""
+        try:
+            stderr_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=2)
+            stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+            if stderr_text:
+                logger.error(f"CLI stderr: {stderr_text[:500]}")
+        except Exception:
+            pass
+
+        from .provider_manager import is_credit_exhaustion_error
+        if is_credit_exhaustion_error(stderr_text):
+            logger.warning(f"Credit exhaustion detected in stderr: {stderr_text[:100]}")
+            return CREDIT_EXHAUSTED_SENTINEL
+
         logger.error("CLI produced no result text")
         return "⚠️ Claude encountered an issue. Please try again."
 
     return meta.result_text
 
 
+# Sentinel value returned by invoke_claude_cli when credits are exhausted
+CREDIT_EXHAUSTED_SENTINEL = "__CREDIT_EXHAUSTED__"
+
+
+def _get_config_dir_for_provider(provider: str) -> str:
+    """Return the CLAUDE_CONFIG_DIR for a Claude provider."""
+    if provider == "claude_cc":
+        return CLI_CC_CONFIG_DIR
+    elif provider == "claude_cc2":
+        return CLI_CC2_CONFIG_DIR
+    return ""
+
+
+# Display labels for user-facing messages and cost logs
+PROVIDER_LABELS = {
+    "claude_cc": "Claude (cc)",
+    "claude_cc2": "Claude (cc2)",
+    "kimi": "Kimi 2.5",
+}
+
+
+async def invoke_llm(
+    context: str,
+    append_prompt: str = "Respond to the user message in the Current Message section.",
+    timeout: int = CLI_TOTAL_TIMEOUT,
+    interim_callback: Optional[Callable[[Union[str, dict]], Awaitable[None]]] = None,
+    cost_source: str = "unknown",
+    cost_channel: str = "",
+    cost_message: str = "",
+    max_turns: int = 0,
+    model: str = "",
+) -> tuple[str, str]:
+    """Route to active provider with automatic cascade on credit exhaustion.
+
+    Priority: claude_cc → claude_cc2 → kimi
+    On credit exhaustion, tries the next provider and persists the switch.
+
+    Args:
+        context: Full context string to send
+        append_prompt: System prompt suffix (Claude only)
+        timeout: Max seconds for execution
+        interim_callback: Optional async function for interim status updates
+        cost_source: Label for cost log
+        cost_channel: Channel name for cost log
+        cost_message: Message preview for cost log
+        max_turns: Max agentic turns before aborting (0 = unlimited)
+
+    Returns:
+        Tuple of (response_text, provider_name)
+    """
+    from .provider_manager import get_active_provider, get_next_provider, set_active_provider
+    from .kimi_provider import invoke_kimi
+    from .config import KIMI_TIMEOUT
+
+    provider = get_active_provider()
+
+    # Walk the cascade until we get a response or exhaust all providers
+    while provider:
+        if provider == "kimi":
+            response = await invoke_kimi(
+                context=context,
+                timeout=KIMI_TIMEOUT,
+                interim_callback=interim_callback,
+                cost_source=cost_source,
+                cost_channel=cost_channel,
+                cost_message=cost_message,
+            )
+            return response, "kimi"
+
+        # Claude provider (cc or cc2)
+        config_dir = _get_config_dir_for_provider(provider)
+        label = PROVIDER_LABELS.get(provider, provider)
+
+        response = await invoke_claude_cli(
+            context=context,
+            append_prompt=append_prompt,
+            timeout=timeout,
+            interim_callback=interim_callback,
+            cost_source=cost_source,
+            cost_channel=cost_channel,
+            cost_message=cost_message,
+            config_dir=config_dir,
+            max_turns=max_turns,
+            model=model,
+        )
+
+        # Success — return the response
+        if response != CREDIT_EXHAUSTED_SENTINEL:
+            return response, provider
+
+        # Credit exhaustion — try next provider in cascade
+        next_provider = get_next_provider(provider)
+        if next_provider:
+            next_label = PROVIDER_LABELS.get(next_provider, next_provider)
+            logger.warning(f"{label} credits exhausted — failing over to {next_label}")
+            set_active_provider(next_provider, f"auto_failover_from_{provider}")
+
+            if interim_callback:
+                try:
+                    await interim_callback(f"⚠️ {label} credits exhausted — switching to {next_label}...")
+                except Exception:
+                    pass
+
+            provider = next_provider
+        else:
+            # All providers exhausted (shouldn't happen — kimi is terminal)
+            logger.error("All providers exhausted")
+            return "⚠️ All model providers are currently unavailable. Please try again later.", provider
+
+
+import re as _re
+
+# Casual opening phrases that indicate conversational reply (not a document)
+_CASUAL_PREFIXES = (
+    "sure", "here", "hey", "hi ", "ok", "yeah", "yep", "no,", "no ", "yes,",
+    "yes ", "i ", "i'", "thanks", "alright", "great", "good", "hmm",
+)
+
+
+def _is_generated_document(response: str) -> bool:
+    """Check if a response looks like a generated document worth saving.
+
+    Must meet ALL criteria:
+    - Length > DOCUMENT_MIN_LENGTH
+    - Contains >= DOCUMENT_MIN_HEADERS markdown headers
+    - Does not start with casual conversational phrases
+    """
+    if len(response) < DOCUMENT_MIN_LENGTH:
+        return False
+
+    # Count markdown headers (lines starting with # or ##)
+    header_count = len(_re.findall(r"^#{1,3}\s+\S", response, _re.MULTILINE))
+    if header_count < DOCUMENT_MIN_HEADERS:
+        return False
+
+    # Check first non-empty line for casual phrasing
+    first_line = ""
+    for line in response.split("\n"):
+        stripped = line.strip()
+        if stripped:
+            first_line = stripped.lower()
+            break
+
+    if any(first_line.startswith(p) for p in _CASUAL_PREFIXES):
+        return False
+
+    return True
+
+
+async def _save_document_to_brain(response: str) -> None:
+    """Fire-and-forget: save a detected document to Second Brain."""
+    try:
+        from domains.second_brain import process_capture, CaptureType
+
+        item = await process_capture(
+            source=response,
+            capture_type=CaptureType.EXPLICIT,
+            user_note="[Generated document from conversation]",
+            user_tags=["generated", "document"],
+        )
+        if item:
+            logger.info(f"Auto-saved document to Second Brain: {item.id}")
+        else:
+            logger.debug("Document auto-save returned None (too short or duplicate)")
+    except Exception as e:
+        logger.warning(f"Failed to auto-save document to Second Brain: {e}")
+
+
 async def handle_message(
     message: str,
     user_id: int,
     channel_id: int,
-    interim_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+    interim_callback: Optional[Callable[[Union[str, dict]], Awaitable[None]]] = None,
     busy_callback: Optional[Callable[[str], Awaitable[None]]] = None,
     attachment_urls: Optional[list[dict]] = None,
 ) -> str:
@@ -542,15 +839,22 @@ async def handle_message(
             attachment_urls=attachment_urls,
         )
 
-        # 4. Send to Claude CLI (no lock needed — independent process)
-        response = await invoke_claude_cli(
+        # 4. Send to LLM (routes to Claude or Kimi based on active provider)
+        response, provider_used = await invoke_llm(
             context=full_context,
             append_prompt="Respond to the user message in the Current Message section.",
             interim_callback=interim_callback,
             cost_source="conversation",
             cost_channel=channel_name,
             cost_message=message,
+            max_turns=CLI_MAX_TURNS,
         )
+
+        # Prepend fallback banner if not on primary provider
+        if provider_used == "claude_cc2":
+            response = f"> *Using secondary account (cc2)*\n\n{response}"
+        elif provider_used == "kimi":
+            response = f"> **Running in fallback mode (Kimi 2.5)** — Claude credits unavailable\n\n{response}"
     finally:
         # Clean up temp image files regardless of success/failure
         if temp_files:
@@ -568,7 +872,56 @@ async def handle_message(
         lambda t: logger.info(f"Memory capture completed: {t.exception() or 'success'}")
     )
 
+    # 7. Auto-save generated documents to Second Brain (fire-and-forget)
+    if response and _is_generated_document(response):
+        logger.info("Document detected in response, auto-saving to Second Brain")
+        asyncio.create_task(_save_document_to_brain(response))
+
     return response if response else "(No response captured)"
+
+
+async def cleanup_claude_mem_workers(max_allowed: int = 3) -> int:
+    """Kill accumulated claude-mem worker processes in WSL.
+
+    The claude-mem MCP server spawns Claude subagent processes for
+    memory summarization that never terminate. Each leaks ~400MB RAM
+    and consumes API rate limit capacity, causing peterbot timeouts.
+
+    Args:
+        max_allowed: Kill all workers if count exceeds this threshold.
+
+    Returns:
+        Number of workers killed (0 if below threshold).
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "wsl", "bash", "-c",
+            "pgrep -cf 'claude.*stream-json.*disallowedTools'",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        count = int(stdout.decode().strip())
+
+        if count <= max_allowed:
+            return 0
+
+        logger.warning(
+            f"claude-mem worker buildup: {count} processes (max {max_allowed}), killing all"
+        )
+        kill_proc = await asyncio.create_subprocess_exec(
+            "wsl", "bash", "-c",
+            "pkill -9 -f 'claude.*stream-json.*disallowedTools' 2>/dev/null; echo done",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(kill_proc.communicate(), timeout=10)
+        logger.info(f"Killed {count} claude-mem worker processes")
+        return count
+
+    except Exception as e:
+        logger.debug(f"claude-mem worker cleanup failed: {e}")
+        return 0
 
 
 def on_startup() -> None:

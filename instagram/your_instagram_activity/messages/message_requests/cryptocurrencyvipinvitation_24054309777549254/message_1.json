@@ -1,0 +1,74 @@
+{
+  "participants": [
+    {
+      "name": "Chris Hadley"
+    },
+    {
+      "name": "Adri\u00c3\u00a1n Romanillos"
+    },
+    {
+      "name": "sara"
+    },
+    {
+      "name": "Beth\u00f0\u009f\u008c\u00b9"
+    },
+    {
+      "name": "Rhianne Coleman"
+    },
+    {
+      "name": "Instagram user"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1699280682628,
+      "content": "https://chat.whatsapp.com/EVX7SCcBCPB3Vyi18LrQbq",
+      "share": {
+        "link": "https://chat.whatsapp.com/EVX7SCcBCPB3Vyi18LrQbq",
+        "share_text": "https://chat.whatsapp.com/EVX7SCcBCPB3Vyi18LrQbq"
+      },
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1699280672589,
+      "content": "Hello, dear friend, congratulations on becoming our VIP guest, and now invite you to join the (BTC) discussion group created by a team of top international financial analysts. In the discussion group, we share real-time news about cryptocurrencies and BTC trading signals every day, and teach you how to trade in the cryptocurrency market. Weekly income is approximately 300-800%. Join the discussion group and you'll get free guidance from analysts. If you are interested in cryptocurrencies, click on the link below to enter the WhatsApp discussion group: Trust me this will open up a new world for you (requires age 22+)",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1699280595549,
+      "content": "A contact added you and 2 others to the group.",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1699280569505,
+      "content": "A contact named the group Cryptocurrency VIP Invitation.",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1699280547334,
+      "content": "A contact created the group.",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Cryptocurrency VIP Invitation",
+  "is_still_participant": true,
+  "thread_path": "message_requests/cryptocurrencyvipinvitation_24054309777549254",
+  "magic_words": [
+    
+  ],
+  "joinable_mode": {
+    "mode": 1,
+    "link": ""
+  },
+  "is_pending": true
+}

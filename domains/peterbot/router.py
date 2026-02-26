@@ -37,6 +37,8 @@ _last_channel_id: int | None = None
 _current_task: dict | None = None  # {"channel": str, "task": str, "started": float}
 
 from .config import (
+    CLI_COMMAND,
+    CLI_CC_CONFIG_DIR as CLI_CONFIG_DIR,  # Legacy v1 router uses primary account
     PETERBOT_SESSION,
     PETERBOT_SESSION_PATH,
     RESPONSE_TIMEOUT,
@@ -93,8 +95,10 @@ def create_headless_session() -> str:
     if result.returncode != 0:
         return f"Failed to create session: {result.stderr}"
 
-    # Start claude in the session with auto-approve permissions
-    _tmux("send-keys", "-t", PETERBOT_SESSION, "claude --permission-mode dontAsk", "Enter")
+    # Set config dir if using alternate account, then start claude
+    if CLI_CONFIG_DIR:
+        _tmux("send-keys", "-t", PETERBOT_SESSION, f"export CLAUDE_CONFIG_DIR='{CLI_CONFIG_DIR}'", "Enter")
+    _tmux("send-keys", "-t", PETERBOT_SESSION, f"{CLI_COMMAND} --permission-mode dontAsk", "Enter")
 
     return "Started"
 

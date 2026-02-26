@@ -30,9 +30,9 @@ uvicorn hadley_api.main:app --port 8100 --reload
 - `GET /gmail/attachment/text?message_id=<id>&attachment_id=<id>` - Get attachment text
 
 **Write:**
-- `POST /gmail/send?to=<email>&subject=<text>&body=<text>` - Send email
-- `POST /gmail/draft?to=<email>&subject=<text>&body=<text>` - Create draft
-- `POST /gmail/reply?message_id=<id>&body=<text>` - Reply to email
+- `POST /gmail/send?to=<email>&subject=<text>&body=<text>&attachments=<path>` - Send email (repeat `attachments` for multiple files)
+- `POST /gmail/draft?to=<email>&subject=<text>&body=<text>&attachments=<path>` - Create draft (repeat `attachments` for multiple files)
+- `POST /gmail/reply?message_id=<id>&body=<text>&attachments=<path>` - Reply to email (repeat `attachments` for multiple files)
 - `POST /gmail/forward?message_id=<id>&to=<email>` - Forward email
 - `POST /gmail/archive?message_id=<id>` - Archive email
 - `POST /gmail/trash?message_id=<id>` - Move to trash
@@ -60,7 +60,7 @@ uvicorn hadley_api.main:app --port 8100 --reload
 
 **Write:**
 - `POST /calendar/create` - Create event with full options:
-  - `summary` (required), `start`, `end`, `location`, `description`
+  - `summary` (required), `start`, `end`, `location`, `description`, `attachments` (Google Drive URLs, repeat for multiple)
   - `color` - 1=lavender, 2=sage, 3=grape, 4=flamingo, 5=banana, 6=tangerine, 7=peacock, 8=graphite, 9=blueberry, 10=basil, 11=tomato
   - `visibility` - default, public, private, confidential
   - `transparency` - opaque (busy) or transparent (free)
@@ -70,7 +70,7 @@ uvicorn hadley_api.main:app --port 8100 --reload
 - `POST /calendar/recurring?summary=<title>&start=<date>&rrule=<rule>` - Create recurring event
 - `POST /calendar/invite?event_id=<id>&email=<email>` - Add attendee
 - `PUT /calendar/event` - Update event with full options:
-  - `id` (required), `summary`, `start`, `end`, `location`, `description`
+  - `id` (required), `summary`, `start`, `end`, `location`, `description`, `attachments` (Google Drive URLs, appended to existing)
   - `color`, `visibility`, `transparency`, `status` (confirmed/tentative/cancelled)
   - `reminders`
 - `DELETE /calendar/event?id=<event_id>` - Delete event
@@ -87,7 +87,8 @@ uvicorn hadley_api.main:app --port 8100 --reload
 - `GET /drive/storage` - Storage quota
 
 **Write:**
-- `POST /drive/create?name=<name>&content=<text>` - Create file
+- `POST /drive/create?title=<name>&type=<document|spreadsheet|presentation>` - Create file (optional JSON body: `{"content": "<text>", "folder_name": "<name>"}` to populate content and auto-find/create folder)
+- `POST /drive/upload?file_path=<local_path>&title=<name>&folder_id=<id>` - Upload local file to Drive (returns file_id, link for use as calendar attachments)
 - `POST /drive/folder?name=<name>` - Create folder
 - `POST /drive/copy?file_id=<id>&name=<new_name>` - Copy file
 - `POST /drive/rename?file_id=<id>&name=<new_name>` - Rename file
@@ -242,6 +243,33 @@ Unified task management system with 4 list types: personal_todo, peter_queue, id
 - `GET /sunrise?lat=<lat>&lng=<lng>` - Sunrise/sunset times
 - `GET /moon` - Moon phase
 
+### Meal Plan
+Weekly meal plan management with Google Sheets import, Gousto email integration, and shopping list generation.
+
+**Read:**
+- `GET /meal-plan/current` - Get current week's plan (items + ingredients)
+- `GET /meal-plan/week?date=YYYY-MM-DD` - Get plan for week containing date
+- `GET /meal-plan/{plan_id}` - Get plan by ID
+- `GET /meal-plan/shopping-list?plan_id=<id>` - Get ingredients as shopping list categories (defaults to current week)
+
+**Import:**
+- `POST /meal-plan/import/sheets?spreadsheet_id=<id>` - Import from Google Sheet (default: Chris's meal plan sheet)
+  - Auto-discovers meal plan and ingredients tabs
+  - Parses DD/MM dates, detects Gousto/homemade source tags
+- `POST /meal-plan/import/csv` - Import from CSV (body: `{csv_data: "Date,Day,Adults,Kids\n...", ingredients_csv: "Category,Item,Qty\n..."}`)
+- `POST /meal-plan/import/gousto` - Search Gmail for Gousto order emails, extract and match recipes
+
+**Write:**
+- `PUT /meal-plan/{plan_id}/ingredients` - Replace ingredients (body: `{ingredients: [{category, item, quantity?, for_recipe?}]}`)
+- `POST /meal-plan/shopping-list/generate?plan_id=<id>&title=<title>` - Generate PDF from plan ingredients
+- `DELETE /meal-plan/{plan_id}` - Delete a plan (cascades to items and ingredients)
+
+### Shopping List
+- `POST /shopping-list/generate` - Generate printable shopping list PDF (body: `{categories: {"Dairy": ["Milk"]}, title: "Weekly Shop", output_dir: "..."}`)
+  - Defaults to `G:\My Drive\AI Work\Shopping Lists` with timestamped filename
+  - Optional `output_dir` to override save location
+  - Returns `{status, filename, path}`
+
 ### Nutrition
 - `POST /nutrition/log-meal` - Log meal
 - `POST /nutrition/log-water` - Log water
@@ -317,10 +345,28 @@ Allowlisted: amazon.co.uk, ebay.co.uk, premierinn.com
 6. POST /browser/session/end {session_id: "...", save_state: false}
 ```
 
+### Investment ML Pipeline
+- `POST /investment/retrain` - Trigger full Python/LightGBM pipeline (build → features → train → score)
+- `POST /investment/retrain?step=build` - Just rebuild training data from price snapshots
+- `POST /investment/retrain?step=features` - Just re-engineer features
+- `POST /investment/retrain?step=train` - Just retrain LightGBM models
+- `POST /investment/retrain?step=score` - Just re-score active sets
+
+**Note:** Full pipeline takes ~5-10 minutes. Returns stdout/stderr and return code. Pipeline lives in `hadley-bricks/scripts/ml/`.
+
 ### Schedule Management
 - `GET /schedule` - Read current SCHEDULE.md content
 - `PUT /schedule` - Update SCHEDULE.md and trigger reload (body: `{content, reason}`)
 - `POST /schedule/reload` - Trigger schedule reload without editing
+
+### Vinted Collections
+- `GET /vinted/collections?days=7&mark_reported=true` - Get Vinted parcels ready to collect
+  - Searches Gmail for `no-reply@vinted.co.uk` "waiting for you" notifications
+  - Parses item name, delivery service (InPost/Evri/Royal Mail/Yodel/DPD), and pickup location
+  - Deduplicates against `data/vinted_collections_reported.json`
+  - Returns `{collections: [{email_id, item, date, service, location, is_new}], new_count, total_count}`
+  - `days` (1-90, default 7): how far back to search
+  - `mark_reported` (default true): save new email IDs to dedup file
 
 ## Environment Variables
 
@@ -331,6 +377,12 @@ Uses the same `.env` as the main Discord bot:
 - `NOTION_API_KEY`
 - `NOTION_TODOS_DATABASE_ID`
 - `NOTION_IDEAS_DATABASE_ID`
+
+### Model Provider
+
+- `GET /model/status` - Get current model provider status (claude/kimi, reason, timestamps)
+- `PUT /model/switch` - Switch provider: `{"provider": "claude"|"kimi", "reason": "manual"}`
+- `PUT /model/auto-switch` - Toggle auto-recovery: `{"enabled": true|false}`
 
 ## Notes
 

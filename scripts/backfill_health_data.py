@@ -52,31 +52,25 @@ def _get_supabase_headers():
 
 
 async def _upsert_record(http_client: httpx.AsyncClient, table: str, data: dict, key_columns: list[str]) -> bool:
-    """Upsert a record - try PATCH first (update), fall back to POST (insert)."""
-    # Build filter for the key columns
-    filters = "&".join(f"{col}=eq.{data[col]}" for col in key_columns)
+    """Upsert a record using PostgREST native upsert with on_conflict."""
+    headers = {
+        **_get_supabase_headers(),
+        "Prefer": "resolution=merge-duplicates"
+    }
+    on_conflict = ",".join(key_columns)
 
-    # Try PATCH first (update existing)
-    response = await http_client.patch(
-        f"{SUPABASE_URL}/rest/v1/{table}?{filters}",
-        headers=_get_supabase_headers(),
+    response = await http_client.post(
+        f"{SUPABASE_URL}/rest/v1/{table}?on_conflict={on_conflict}",
+        headers=headers,
         json=data,
         timeout=10
     )
 
-    # 200 = success with body, 204 = success no content (both are success for PATCH)
-    if response.status_code in (200, 204):
+    if response.status_code in (200, 201):
         return True
 
-    # If PATCH failed, try POST (insert)
-    response = await http_client.post(
-        f"{SUPABASE_URL}/rest/v1/{table}",
-        headers=_get_supabase_headers(),
-        json=data,
-        timeout=10
-    )
-
-    return response.status_code in (200, 201)
+    logger.warning(f"Upsert {table} failed ({response.status_code}): {response.text[:200]}")
+    return False
 
 
 async def refresh_withings_token() -> bool:
@@ -256,8 +250,8 @@ async def backfill_garmin_data(days: int = 10) -> dict:
         except Exception as e:
             logger.error(f"Steps backfill error: {e}")
 
-        # Fetch sleep data
-        logger.info("Fetching sleep data...")
+        # Fetch sleep + HR data and merge into garmin_daily_summary
+        logger.info("Fetching sleep & HR data...")
         try:
             for day_offset in range(days):
                 target_date = (date.today() - timedelta(days=day_offset)).isoformat()
@@ -273,6 +267,10 @@ async def backfill_garmin_data(days: int = 10) -> dict:
                         if dto.sleep_scores and dto.sleep_scores.overall:
                             quality_score = dto.sleep_scores.overall.value
 
+                        # Get resting HR from sleep data
+                        resting_hr = sleep.resting_heart_rate if hasattr(sleep, 'resting_heart_rate') else None
+
+                        # Write to garmin_sleep table (detailed record)
                         sleep_record = {
                             "user_id": "chris",
                             "date": target_date,
@@ -284,18 +282,28 @@ async def backfill_garmin_data(days: int = 10) -> dict:
                             "awake_hours": round((dto.awake_sleep_seconds or 0) / 3600, 1) if hasattr(dto, 'awake_sleep_seconds') and dto.awake_sleep_seconds else None,
                             "source": "garmin"
                         }
+                        await _upsert_record(http_client, "garmin_sleep", sleep_record, ["user_id", "date"])
 
-                        # Use upsert to allow updating sleep data
+                        # Also merge sleep_hours, sleep_score, resting_hr into garmin_daily_summary
+                        summary_update = {
+                            "user_id": "chris",
+                            "date": target_date,
+                            "source": "garmin",
+                        }
+                        if sleep_hours is not None:
+                            summary_update["sleep_hours"] = sleep_hours
+                        if quality_score is not None:
+                            summary_update["sleep_score"] = quality_score
+                        if resting_hr is not None:
+                            summary_update["resting_hr"] = resting_hr
+
                         success = await _upsert_record(
-                            http_client,
-                            "garmin_sleep",
-                            sleep_record,
-                            ["user_id", "date"]
+                            http_client, "garmin_daily_summary", summary_update, ["user_id", "date"]
                         )
 
                         if success:
                             results["sleep"] += 1
-                            logger.info(f"  {target_date}: {sleep_hours}h sleep, score: {quality_score}")
+                            logger.info(f"  {target_date}: {sleep_hours}h sleep, score: {quality_score}, rhr: {resting_hr}")
                 except Exception as e:
                     logger.debug(f"  No sleep data for {target_date}: {e}")
         except Exception as e:

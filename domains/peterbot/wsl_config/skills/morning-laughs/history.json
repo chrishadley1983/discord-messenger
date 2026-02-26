@@ -1,0 +1,12 @@
+{
+  "jokes": [
+    {"content": "I'm reading a book about anti-gravity. It's impossible to put down.", "date": "2026-02-11"},
+    {"content": "Why did the scarecrow win an award? He was outstanding in his field.", "date": "2026-02-11"},
+    {"content": "What do you call a bear with no teeth? A gummy bear.", "date": "2026-02-11"}
+  ],
+  "quotes": [
+    {"content": "Success is not final, failure is not fatal: it is the courage to continue that counts.", "author": "Winston Churchill", "date": "2026-02-11"}
+  ],
+  "last_updated": "2026-02-11T06:30:00Z",
+  "notes": "Each entry stores content hash and ISO timestamp. Content expires after 90 days."
+}

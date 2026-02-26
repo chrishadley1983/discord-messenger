@@ -1,0 +1,112 @@
+{
+  "devices_devices": [
+    {
+      "title": "",
+      "media_map_data": {
+        
+      },
+      "string_map_data": {
+        "Last login": {
+          "href": "",
+          "value": "",
+          "timestamp": 1765732809
+        },
+        "User agent": {
+          "href": "",
+          "value": "Instagram 409.1.0.27.161 (iPad11,6; iPadOS 18_5; en_GB; en-GB; scale=2.00; 2160x1620; 841016381) AppleWebKit/420+",
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "title": "",
+      "media_map_data": {
+        
+      },
+      "string_map_data": {
+        "Last login": {
+          "href": "",
+          "value": "",
+          "timestamp": 1757490637
+        },
+        "User agent": {
+          "href": "",
+          "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "title": "",
+      "media_map_data": {
+        
+      },
+      "string_map_data": {
+        "Last login": {
+          "href": "",
+          "value": "",
+          "timestamp": 1638861749
+        },
+        "User agent": {
+          "href": "",
+          "value": "Instagram 215.0.0.27.359 Android (29/10; 440dpi; 1080x2029; Xiaomi; MI 8; dipper; qcom; en_GB; 337202359)",
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "title": "",
+      "media_map_data": {
+        
+      },
+      "string_map_data": {
+        "Last login": {
+          "href": "",
+          "value": "",
+          "timestamp": 1537975683
+        },
+        "User agent": {
+          "href": "",
+          "value": "Instagram 41.1.1.14.90 (Surface Pro Surface_Pro_1796; osmeta/Windows 10_3_6848; en_GB; en-GB; scale=2.00; gamut=normal; 1344x1822) AppleWebKit/420+",
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "title": "",
+      "media_map_data": {
+        
+      },
+      "string_map_data": {
+        "Last login": {
+          "href": "",
+          "value": "",
+          "timestamp": 1521289781
+        },
+        "User agent": {
+          "href": "",
+          "value": "Instagram 36.0.0.13.91 Android (24/7.0; 480dpi; 1080x1920; samsung; SM-G930F; herolte; samsungexynos8890; en_GB; 96794592)",
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "title": "",
+      "media_map_data": {
+        
+      },
+      "string_map_data": {
+        "Last login": {
+          "href": "",
+          "value": "",
+          "timestamp": 1509807651
+        },
+        "User agent": {
+          "href": "",
+          "value": "Instagram 21.0.0.10.61 (iPad2,1; iPhone OS 9_3_5; en_GB; en-GB; scale=2.00; gamut=normal; 960x640) AppleWebKit/420+",
+          "timestamp": 0
+        }
+      }
+    }
+  ]
+}

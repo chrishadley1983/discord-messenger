@@ -1,0 +1,24 @@
+{
+  "participants": [
+    {
+      "name": "Natacha's BBQ"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Natacha's BBQ",
+      "timestamp_ms": 1573901675938,
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Natacha's BBQ",
+  "is_still_participant": true,
+  "thread_path": "inbox/natachasbbq_550491506351897",
+  "magic_words": [
+    
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "participants": [
+    {
+      "name": "Mark Forrest"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Mark Forrest",
+      "timestamp_ms": 1695723612547,
+      "content": "I need yah help x",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Mark Forrest",
+  "is_still_participant": true,
+  "thread_path": "inbox/markforrest_1059661825434860",
+  "magic_words": [
+    
+  ]
+}

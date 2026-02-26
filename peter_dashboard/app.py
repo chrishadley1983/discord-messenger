@@ -2337,6 +2337,56 @@ async def search_second_brain(
         }
 
 
+@app.get("/api/search/second-brain/list")
+async def list_second_brain_items(
+    limit: int = 50,
+    offset: int = 0,
+    content_type: str = None,
+    topic: str = None,
+):
+    """List Second Brain items with pagination and filtering."""
+    try:
+        from domains.second_brain import list_items
+
+        items, total_count = await list_items(
+            limit=min(limit, 100),
+            offset=offset,
+            content_type=content_type,
+            topic=topic,
+        )
+
+        result_items = []
+        for item in items:
+            created = getattr(item, 'created_at', None)
+            if created and hasattr(created, 'isoformat'):
+                created = created.isoformat()
+            elif created:
+                created = str(created)
+
+            result_items.append({
+                "id": str(item.id) if item.id else None,
+                "title": getattr(item, 'title', None) or "Untitled",
+                "summary": getattr(item, 'summary', None),
+                "content_type": item.content_type.value if item.content_type else None,
+                "capture_type": item.capture_type.value if item.capture_type else None,
+                "topics": getattr(item, 'topics', None) or [],
+                "created_at": created,
+                "decay_score": getattr(item, 'decay_score', None),
+                "access_count": getattr(item, 'access_count', 0),
+            })
+
+        return {
+            "success": True,
+            "items": result_items,
+            "total": total_count,
+            "limit": limit,
+            "offset": offset,
+        }
+    except Exception as e:
+        import traceback
+        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+
+
 @app.get("/api/search/second-brain/stats")
 async def get_second_brain_stats():
     """Get Second Brain statistics."""

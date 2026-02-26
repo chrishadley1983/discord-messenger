@@ -1,0 +1,53 @@
+{
+  "participants": [
+    {
+      "name": "Instagram user"
+    },
+    {
+      "name": "James"
+    },
+    {
+      "name": "Instagram user"
+    },
+    {
+      "name": "Instagram user"
+    },
+    {
+      "name": "Chris Hadley"
+    },
+    {
+      "name": "Instagram user"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1633267626123,
+      "content": "Hi",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1592083749465,
+      "content": "Instagram user sent an attachment.",
+      "share": {
+        "link": "http://toponline.website/Cg7xWwXL",
+        "share_text": "All my nude photos and videos FREE! Sign up anonymously and full free"
+      },
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Instagram user, James, Instagram user and 2 others",
+  "is_still_participant": true,
+  "thread_path": "message_requests/instagramuserjamesinstagramuserand2others_116682420076358",
+  "magic_words": [
+    
+  ],
+  "joinable_mode": {
+    "mode": 1,
+    "link": ""
+  },
+  "is_pending": true
+}

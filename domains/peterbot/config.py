@@ -35,7 +35,7 @@ RETRY_INTERVAL_SECONDS = 60
 MAX_RETRIES = 3
 
 # Response capture
-RESPONSE_TIMEOUT = 60
+RESPONSE_TIMEOUT = 600
 POLL_INTERVAL = 0.5
 STABLE_COUNT_THRESHOLD = 3
 
@@ -64,8 +64,49 @@ CHANNEL_ID_TO_NAME = {
 USE_ROUTER_V2 = os.environ.get("PETERBOT_ROUTER_V2", "1").lower() not in ("0", "false", "no")
 
 # CLI execution settings
-CLI_TOTAL_TIMEOUT = 300       # Max seconds for full CLI execution (tool chains, research)
+CLI_TOTAL_TIMEOUT = 1200      # Max seconds for conversation CLI execution (20 min)
+CLI_MAX_TURNS = 50            # Max agentic turns for conversations (quality over speed)
+CLI_SCHEDULED_MAX_TURNS = 15  # Max agentic turns for scheduled jobs (may need more tools)
 # No --max-budget-usd flag needed: CLI runs on subscription, not API billing.
 # The subscription's own rate limits are the safety net.
-CLI_MODEL = "opus"            # Model flag for claude CLI
+CLI_MODEL = "claude-sonnet-4-6"    # Sonnet 4.6 for conversations (fast with large context)
+CLI_SCHEDULED_MODEL = "claude-opus-4-6"  # Opus 4.6 for scheduled jobs (smaller context, quality matters)
+CLI_COMMAND = os.environ.get("PETERBOT_CLI_COMMAND", "claude")  # CLI binary
 CLI_WORKING_DIR = PETERBOT_SESSION_PATH  # ~/peterbot (where CLAUDE.md lives)
+
+# --- Provider Priority (3-tier cascade) ---
+# cc (primary account) → cc2 (secondary account) → Kimi (API fallback)
+# Each Claude account uses a different CLAUDE_CONFIG_DIR.
+# cc uses the default (~/.claude), cc2 uses a secondary config dir.
+CLI_CC_CONFIG_DIR = os.environ.get("PETERBOT_CC_CONFIG_DIR", "")  # Empty = default ~/.claude
+CLI_CC2_CONFIG_DIR = os.environ.get("PETERBOT_CC2_CONFIG_DIR", "/mnt/c/Users/Chris Hadley/.claude-secondary")
+
+# Provider priority order — tried left to right on credit exhaustion
+PROVIDER_PRIORITY = ["claude_cc", "claude_cc2", "kimi"]
+
+# --- Kimi Fallback ---
+# Kimi 2.5 (Moonshot AI) as degraded-mode fallback when Anthropic credits are exhausted.
+# OpenAI-compatible API. No MCP tools, no CLAUDE.md auto-load, but pre-fetched data still injected.
+KIMI_API_BASE = "https://api.moonshot.ai/v1"
+KIMI_MODEL = "kimi-k2.5"
+KIMI_MAX_TOKENS = 4096
+KIMI_TIMEOUT = 120
+
+# --- Second Brain Auto-Save ---
+# Skills whose output is auto-saved to Second Brain after execution.
+# High-value, searchable content that builds a useful knowledge archive.
+SECOND_BRAIN_SAVE_SKILLS: set[str] = {
+    "daily-recipes",
+    "health-digest",
+    "nutrition-summary",
+    "weekly-health",
+    "morning-briefing",
+    "news",
+    "youtube-digest",
+    "knowledge-digest",
+}
+
+# --- Document Detection (ad-hoc auto-save) ---
+# Heuristics for detecting generated documents in conversation responses.
+DOCUMENT_MIN_LENGTH = 800      # Minimum characters to consider as document
+DOCUMENT_MIN_HEADERS = 2       # Minimum markdown headers (# or ##) required

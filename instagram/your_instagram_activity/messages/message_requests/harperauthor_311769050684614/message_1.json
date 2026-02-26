@@ -1,0 +1,37 @@
+{
+  "participants": [
+    {
+      "name": "Harper || Author"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Harper || Author",
+      "timestamp_ms": 1626731271639,
+      "content": "Hey, just followed you \u00f0\u009f\u0091\u008b\r\n\r\nIf you're into fashion & lifestyle, here is our best suggestion of the week \u00f0\u009f\u0091\u0089 @elidaze\r\nHer content is very unique !\r\n\r\nHonestly, it would mean a lot if you could support her \u00f0\u009f\u0099\u008f You are awesome!",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Harper || Author",
+      "timestamp_ms": 1626731270598,
+      "share": {
+        "link": "https://www.instagram.com/_u/elidaze",
+        "profile_share_username": "elidaze",
+        "profile_share_name": "Joanne Ly"
+      },
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Harper || Author",
+  "is_still_participant": true,
+  "thread_path": "message_requests/harperauthor_311769050684614",
+  "magic_words": [
+    
+  ],
+  "is_pending": true
+}

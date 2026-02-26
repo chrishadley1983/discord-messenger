@@ -1,0 +1,32 @@
+{
+  "participants": [
+    {
+      "name": "Instagram user"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1650454720559,
+      "content": "How's it going?",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1650454717409,
+      "content": "Hello Chris\nWishing you a lovely day\u00f0\u009f\u0092\u00af. I appreciate the follow back & lovely content on your page as well \u00f0\u009f\u0091\u008d\u00f0\u009f\u008f\u00bb",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Instagram user",
+  "is_still_participant": true,
+  "thread_path": "inbox/instagramuser_111112771461608",
+  "magic_words": [
+    
+  ]
+}

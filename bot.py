@@ -6,10 +6,14 @@ Routes messages to domain handlers based on channel.
 
 import asyncio
 import os
+import sys
+import time
+from pathlib import Path
 import discord
 from discord import app_commands
 from discord.ext import commands
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 from claude_client import ClaudeClient
 from registry import registry
@@ -163,6 +167,108 @@ async def on_ready():
     # Start scheduler
     scheduler.start()
     logger.info(f"Scheduler started with {len(scheduler.get_jobs())} jobs")
+
+    # Periodic cleanup of claude-mem worker processes that accumulate in WSL
+    # These leak ~400MB RAM each and saturate API rate limits, causing timeouts
+    if USE_ROUTER_V2:
+        from domains.peterbot.router_v2 import cleanup_claude_mem_workers
+        scheduler.add_job(
+            cleanup_claude_mem_workers,
+            IntervalTrigger(minutes=5),
+            id="__claude_mem_cleanup",
+            max_instances=1,
+            replace_existing=True,
+        )
+        logger.info("claude-mem worker cleanup registered (every 5 min, threshold=3)")
+
+    # Periodic self-restart to free WSL memory (claude-mem worker leaks subagents)
+    async def periodic_restart():
+        """Restart the bot every 6 hours to clear orphaned WSL processes.
+
+        Waits for any running job to finish before restarting.
+        NSSM will auto-restart the service after exit.
+        """
+        import subprocess, sys, time
+
+        # Check if a scheduled job is currently running
+        if peterbot_scheduler and peterbot_scheduler._job_executing:
+            logger.info(f"Periodic restart deferred — job '{peterbot_scheduler._current_job_name}' is running")
+            # Retry in 2 minutes
+            scheduler.add_job(
+                periodic_restart,
+                "date",
+                run_date=datetime.now() + timedelta(minutes=2),
+                id="__restart_deferred",
+                max_instances=1,
+                replace_existing=True,
+            )
+            return
+
+        logger.info("Periodic restart: cleaning up WSL orphans and restarting...")
+
+        # Kill orphaned claude-mem subagents in WSL before exit
+        try:
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = subprocess.SW_HIDE
+            subprocess.run(
+                ["wsl", "bash", "-c",
+                 "pkill -9 -f 'claude.*disallowedTools' 2>/dev/null; "
+                 "pkill -9 -f 'chroma-mcp' 2>/dev/null; "
+                 "pkill -9 -f 'worker-service.cjs' 2>/dev/null"],
+                capture_output=True, timeout=15,
+                startupinfo=si,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            logger.info("WSL orphan cleanup complete")
+        except Exception as e:
+            logger.warning(f"WSL cleanup failed (non-fatal): {e}")
+
+        # Exit — NSSM will restart the service
+        logger.info("Exiting for NSSM restart...")
+        os._exit(0)
+
+    from datetime import datetime, timedelta
+    scheduler.add_job(
+        periodic_restart,
+        IntervalTrigger(hours=6),
+        id="__periodic_restart",
+        max_instances=1,
+        replace_existing=True,
+    )
+    logger.info("Periodic restart registered (every 6h)")
+
+    # Vercel usage scraper — runs 06:45 UK, 15min before the 7am cron
+    from apscheduler.triggers.cron import CronTrigger
+
+    async def run_vercel_scraper():
+        """Run the Vercel usage scraper as a subprocess."""
+        import subprocess
+        script = str(Path(__file__).parent / "scripts" / "scrape_vercel_usage.py")
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                [sys.executable, script],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode == 0:
+                logger.info(f"Vercel scraper succeeded: {result.stdout.strip()[-200:]}")
+            elif result.returncode == 2:
+                logger.warning("Vercel scraper: session expired (exit code 2)")
+            else:
+                logger.error(f"Vercel scraper failed (exit {result.returncode}): {result.stderr.strip()[-200:]}")
+        except Exception as e:
+            logger.error(f"Vercel scraper exception: {e}")
+
+    scheduler.add_job(
+        run_vercel_scraper,
+        CronTrigger(hour=6, minute=45, timezone="Europe/London"),
+        id="__vercel_scraper",
+        max_instances=1,
+        replace_existing=True,
+    )
+    logger.info("Vercel CPU scraper registered (06:45 UK daily)")
+
     logger.info(f"Bot ready - {len(registry.all_domains())} domains registered")
 
     # Claude Code domain startup - restore active session
@@ -322,9 +428,10 @@ async def _passive_capture_check(message_content: str, channel_name: str):
 @bot.event
 async def on_message(message):
     """Handle incoming messages."""
-    # Ignore bot messages
+    # Ignore bot messages (but allow "Chris (Voice)" webhook messages through)
     if message.author.bot:
-        return
+        if not (message.webhook_id and message.author.display_name == "Chris (Voice)"):
+            return
 
     # Message deduplication - prevent processing same message twice
     import time
@@ -359,10 +466,53 @@ async def on_message(message):
                 if history_messages:
                     populate_buffer_from_history(message.channel.id, history_messages)
 
-            # Define interim callback for "working on it" messages
-            async def post_interim(text: str):
-                """Post interim status update to channel."""
-                await message.channel.send(text)
+            # Live status message that updates in place with tool activity
+            status_msg = None
+            status_lines = []
+            status_start = time.monotonic()
+
+            def _format_elapsed(seconds: float) -> str:
+                m, s = divmod(int(seconds), 60)
+                return f"{m}m {s:02d}s" if m else f"{s}s"
+
+            def _build_status_text(turn: int, elapsed: float) -> str:
+                header = f"🎫 Working on your request...\n⏱️ {_format_elapsed(elapsed)} · Turn {turn}\n"
+                # Show last 15 lines to stay within Discord 2000 char limit
+                visible = status_lines[-15:]
+                body = "\n".join(visible)
+                if len(status_lines) > 15:
+                    body = f"*... {len(status_lines) - 15} earlier steps*\n" + body
+                return (header + "\n" + body) if body else header
+
+            async def post_interim(info):
+                """Post/update live status message with tool activity."""
+                nonlocal status_msg
+
+                # Handle string messages (credit exhaustion, kimi fallback, etc.)
+                if isinstance(info, str):
+                    status_lines.append(f"⚠️ {info}" if not info.startswith("⚠️") else info)
+                elif isinstance(info, dict):
+                    emoji = info.get("emoji", "🔧")
+                    tool_name = info.get("tool_name", "")
+                    context = info.get("context", "")
+                    # Short display name for the tool
+                    short_name = tool_name.split("__")[-1] if "__" in tool_name else tool_name
+                    line = f"{emoji} {short_name}"
+                    if context:
+                        line += f"  {context}"
+                    status_lines.append(line)
+
+                turn = info.get("turn", 0) if isinstance(info, dict) else 0
+                elapsed = info.get("elapsed_seconds", 0) if isinstance(info, dict) else (time.monotonic() - status_start)
+                text = _build_status_text(max(turn, 1), elapsed)
+
+                try:
+                    if status_msg is None:
+                        status_msg = await message.channel.send(text)
+                    else:
+                        await status_msg.edit(content=text)
+                except Exception:
+                    pass  # Don't let status updates break the main flow
 
             # Define busy callback for when Peter is working on another task
             async def post_busy(text: str):
@@ -388,6 +538,13 @@ async def on_message(message):
                 busy_callback=post_busy,
                 attachment_urls=attachment_urls if attachment_urls else None
             )
+
+            # Delete the live status message now that we have the full response
+            if status_msg is not None:
+                try:
+                    await status_msg.delete()
+                except Exception:
+                    pass
 
             # Process through Response Pipeline (sanitise → classify → format → chunk)
             # When using v2, output is clean JSON — skip sanitiser
@@ -830,6 +987,33 @@ def _kill_orphaned_bots():
         logger.info(f"Cleaned up {killed} orphaned bot process(es)")
 
 
+def _kill_wsl_orphans():
+    """Kill orphaned claude-mem subagent and chroma-mcp processes in WSL.
+
+    The claude-mem MCP worker daemon spawns Claude subagent processes for
+    memory summarization and never reaps them. Each leaks ~400MB RAM.
+    """
+    import subprocess
+    try:
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        result = subprocess.run(
+            ["wsl", "bash", "-c",
+             "pkill -9 -f 'claude.*disallowedTools' 2>/dev/null; "
+             "pkill -9 -f 'chroma-mcp' 2>/dev/null; "
+             "pkill -9 -f 'worker-service.cjs' 2>/dev/null; "
+             "echo done"],
+            capture_output=True, text=True, timeout=15,
+            startupinfo=si,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if "done" in result.stdout:
+            logger.info("WSL orphan cleanup complete")
+    except Exception as e:
+        logger.debug(f"WSL orphan cleanup skipped: {e}")
+
+
 def main():
     """Entry point."""
     if not DISCORD_TOKEN:
@@ -837,6 +1021,7 @@ def main():
         return
 
     _kill_orphaned_bots()
+    _kill_wsl_orphans()
     logger.info("Starting Discord Assistant...")
     bot.run(DISCORD_TOKEN)
 

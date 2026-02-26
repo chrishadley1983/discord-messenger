@@ -50,6 +50,18 @@ Context about why this matters.
 4. **One-line summaries**: Brief context under each headline
 5. **3-5 stories max**: Quality over quantity
 
+## Search Efficiency
+
+- Use **2-3 searches maximum** — don't iterate across every provider
+- Prefer `brave_news_search` for headlines, fall back to others only if it fails
+- Spend most of the time composing, not searching
+
+## Deduplication
+
+If a "Previously Covered Articles" section is injected below, **do not repeat those stories**.
+Find fresh angles or different topics instead. It's fine to cover the same broad topic
+if there's a genuinely new development, but don't rehash yesterday's headlines.
+
 ## Conversational vs Scheduled
 
 **Conversational** (user asks for news):
@@ -70,3 +82,5 @@ Context about why this matters.
 - ❌ "Here's your news..." preamble
 - ❌ Sources section at the end (links are inline)
 - ❌ Generic news that doesn't reflect their interests
+- ❌ Repeating articles from the "Previously Covered" list
+- ❌ Spending all the time searching — 2-3 searches then compose

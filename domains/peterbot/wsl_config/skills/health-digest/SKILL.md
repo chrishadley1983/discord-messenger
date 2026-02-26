@@ -45,7 +45,7 @@ Daily morning digest at 8am UK. Shows overnight health data and compares to prev
     "yesterday_calories": 2050,
     "yesterday_protein": 145,
     "target_calories": 2100,
-    "target_protein": 160
+    "target_protein": 120
   },
   "goal": {
     "target_weight_kg": 80,
@@ -76,7 +76,7 @@ Resting HR: 58bpm ↓ from 60
 
 **Yesterday's Nutrition** 🍽️
 Calories: 2,050 / 2,100 ✅
-Protein: 145g / 160g (91%) ⚠️
+Protein: 145g / 120g ✅
 
 ---
 [Personalized motivation - reference the goal, call out wins, note areas to focus]

@@ -1,0 +1,30 @@
+{
+  "participants": [
+    {
+      "name": "Instagram user"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1561414008081,
+      "share": {
+        "link": "https://www.instagram.com/p/By5w73_Dm8r/?id=2069900724548824875_14561137850",
+        "share_text": "",
+        "original_content_owner": "pqkdjdfgegr"
+      },
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Instagram user",
+  "is_still_participant": true,
+  "thread_path": "message_requests/instagramuser_546441110090270",
+  "magic_words": [
+    
+  ],
+  "is_pending": true
+}

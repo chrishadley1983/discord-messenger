@@ -21,6 +21,13 @@
     "description": "Check API credit balances and alert if low",
     "channel": null
   },
+  "daily-instagram-prep": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Daily Instagram post preparation for Hadley Bricks. Sources 3 candidate images, applies the Instagram photo optimizer to each, posts the optimized images to Discord at 9pm for Chris to pick one to post the next day. Use when the skill is triggered by schedule or when the user says \"instagram prep\", \"prepare insta\", \"daily instagram\", or \"instagram tomorrow\".\n",
+    "channel": "#peterbot"
+  },
   "daily-recipes": {
     "triggers": [
       "recipe ideas",
@@ -380,6 +387,22 @@
     "description": "Weekly Second Brain knowledge digest",
     "channel": null
   },
+  "meal-plan": {
+    "triggers": [
+      "meal plan",
+      "what's for dinner",
+      "what are we eating",
+      "import meal plan",
+      "shopping list from meal plan",
+      "this week's meals",
+      "gousto recipes",
+      "what's for tea"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "View, import, and manage weekly meal plans with shopping list generation",
+    "channel": null
+  },
   "monthly-health": {
     "triggers": [
       "monthly summary",
@@ -402,6 +425,17 @@
     "conversational": true,
     "scheduled": true,
     "description": "AI and Claude news morning briefing",
+    "channel": null
+  },
+  "morning-laughs": {
+    "triggers": [
+      "tell me a joke",
+      "dad joke",
+      "morning laughs"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily dad jokes and inspirational quote to start the day",
     "channel": null
   },
   "morning-quality-report": {
@@ -457,7 +491,8 @@
       "cancel reminder",
       "my reminders",
       "update reminder",
-      "delete reminder"
+      "delete reminder",
+      "/remind"
     ],
     "conversational": true,
     "scheduled": false,
@@ -492,6 +527,19 @@
     "scheduled": true,
     "description": "Scheduled self-improvement review - add items to HEARTBEAT.md",
     "channel": "#alerts"
+  },
+  "shopping-list-pdf": {
+    "triggers": [
+      "shopping list",
+      "grocery list",
+      "printable list",
+      "make a shopping list PDF",
+      "print shopping list"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Generate a printable shopping list PDF with categories and checkboxes",
+    "channel": null
   },
   "spurs-match": {
     "triggers": [

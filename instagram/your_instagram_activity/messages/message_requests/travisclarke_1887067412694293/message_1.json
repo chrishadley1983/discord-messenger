@@ -1,0 +1,32 @@
+{
+  "participants": [
+    {
+      "name": "Travis Clarke"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Travis Clarke",
+      "timestamp_ms": 1763477885265,
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Travis Clarke",
+      "timestamp_ms": 1763477884492,
+      "content": "You sent a private reply to a comment on your Instagram post.",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Travis Clarke",
+  "is_still_participant": true,
+  "thread_path": "message_requests/travisclarke_1887067412694293",
+  "magic_words": [
+    
+  ],
+  "is_pending": true
+}

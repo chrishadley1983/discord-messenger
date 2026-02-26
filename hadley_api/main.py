@@ -5,12 +5,14 @@ Run with: uvicorn hadley_api.main:app --port 8100
 """
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from pydantic import BaseModel
 from fastapi.responses import JSONResponse, Response
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional
 from pathlib import Path
 import asyncio
+import json
 import os
 
 app = FastAPI(
@@ -24,6 +26,10 @@ from dotenv import load_dotenv
 load_dotenv()
 from hadley_api.task_routes import router as task_router
 app.include_router(task_router)
+from hadley_api.brain_routes import router as brain_graph_router
+app.include_router(brain_graph_router)
+from hadley_api.vinted_routes import router as vinted_router
+app.include_router(vinted_router)
 
 UK_TZ = ZoneInfo("Europe/London")
 
@@ -51,6 +57,41 @@ async def health():
 # ============================================================
 # Gmail Endpoints
 # ============================================================
+
+
+def _build_mime_message(body_text: str, attachment_paths: list[str] | None = None):
+    """Build a MIME message, with attachments if provided."""
+    import mimetypes
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.base import MIMEBase
+    from email import encoders
+
+    if not attachment_paths:
+        return MIMEText(body_text)
+
+    msg = MIMEMultipart()
+    msg.attach(MIMEText(body_text))
+
+    for file_path in attachment_paths:
+        p = Path(file_path)
+        if not p.is_file():
+            raise FileNotFoundError(f"Attachment not found: {file_path}")
+
+        content_type, _ = mimetypes.guess_type(str(p))
+        if content_type is None:
+            content_type = "application/octet-stream"
+        maintype, subtype = content_type.split("/", 1)
+
+        with open(p, "rb") as f:
+            part = MIMEBase(maintype, subtype)
+            part.set_payload(f.read())
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", "attachment", filename=p.name)
+        msg.attach(part)
+
+    return msg
+
 
 @app.get("/gmail/unread")
 async def gmail_unread(limit: int = Query(default=10, le=20)):
@@ -427,19 +468,19 @@ async def gmail_thread(id: str = Query(..., description="Thread ID")):
 async def gmail_draft(
     to: str = Query(..., description="Recipient email"),
     subject: str = Query(..., description="Email subject"),
-    body: str = Query(..., description="Email body text")
+    body: str = Query(..., description="Email body text"),
+    attachments: list[str] = Query(default=[], description="Local file paths to attach"),
 ):
-    """Create a draft email."""
+    """Create a draft email, optionally with file attachments."""
     from .google_auth import get_gmail_service
     import base64
-    from email.mime.text import MIMEText
 
     try:
         service = get_gmail_service()
         if not service:
             raise HTTPException(status_code=503, detail="Gmail not configured")
 
-        message = MIMEText(body)
+        message = _build_mime_message(body, attachments)
         message['to'] = to
         message['subject'] = subject
 
@@ -454,6 +495,7 @@ async def gmail_draft(
             "draft_id": draft['id'],
             "to": to,
             "subject": subject,
+            "attachments": [Path(a).name for a in attachments],
             "fetched_at": datetime.now(UK_TZ).isoformat()
         }
 
@@ -467,9 +509,10 @@ async def gmail_draft(
 async def gmail_send(
     to: str = Query(..., description="Recipient email"),
     subject: str = Query(..., description="Email subject"),
-    body: str = Query(..., description="Email body text")
+    body: str = Query(..., description="Email body text"),
+    attachments: list[str] = Query(default=[], description="Local file paths to attach"),
 ):
-    """Send an email."""
+    """Send an email, optionally with file attachments."""
     from .google_auth import get_gmail_service
     import base64
     from email.mime.text import MIMEText
@@ -479,7 +522,7 @@ async def gmail_send(
         if not service:
             raise HTTPException(status_code=503, detail="Gmail not configured")
 
-        message = MIMEText(body)
+        message = _build_mime_message(body, attachments)
         message['to'] = to
         message['subject'] = subject
 
@@ -494,6 +537,7 @@ async def gmail_send(
             "message_id": sent['id'],
             "to": to,
             "subject": subject,
+            "attachments": [Path(a).name for a in attachments],
             "fetched_at": datetime.now(UK_TZ).isoformat()
         }
 
@@ -761,9 +805,10 @@ async def calendar_create(
     start: str = Query(..., description="Start datetime (YYYY-MM-DDTHH:MM or YYYY-MM-DD for all-day)"),
     end: Optional[str] = Query(default=None, description="End datetime (optional, defaults to 1 hour after start)"),
     location: Optional[str] = Query(default=None, description="Event location"),
-    description: Optional[str] = Query(default=None, description="Event description")
+    description: Optional[str] = Query(default=None, description="Event description"),
+    attachments: list[str] = Query(default=[], description="Google Drive file URLs to attach"),
 ):
-    """Create a calendar event."""
+    """Create a calendar event, optionally with Drive file attachments."""
     from .google_auth import get_calendar_service
 
     try:
@@ -802,8 +847,14 @@ async def calendar_create(
             event_body['location'] = location
         if description:
             event_body['description'] = description
+        if attachments:
+            event_body['attachments'] = [{'fileUrl': url} for url in attachments]
 
-        event = service.events().insert(calendarId='primary', body=event_body).execute()
+        event = service.events().insert(
+            calendarId='primary',
+            body=event_body,
+            supportsAttachments=bool(attachments),
+        ).execute()
 
         return {
             "status": "created",
@@ -812,6 +863,7 @@ async def calendar_create(
             "start": start,
             "end": end or (start if is_all_day else (start_dt + timedelta(hours=1)).isoformat()),
             "link": event.get('htmlLink', ''),
+            "attachments": len(attachments),
             "fetched_at": datetime.now(UK_TZ).isoformat()
         }
 
@@ -882,9 +934,10 @@ async def calendar_update(
     start: Optional[str] = Query(default=None, description="New start datetime"),
     end: Optional[str] = Query(default=None, description="New end datetime"),
     location: Optional[str] = Query(default=None, description="New location"),
-    description: Optional[str] = Query(default=None, description="New description")
+    description: Optional[str] = Query(default=None, description="New description"),
+    attachments: list[str] = Query(default=[], description="Google Drive file URLs to attach (appended to existing)"),
 ):
-    """Update a calendar event."""
+    """Update a calendar event, optionally adding Drive file attachments."""
     from .google_auth import get_calendar_service
 
     try:
@@ -923,7 +976,17 @@ async def calendar_update(
                     end_dt = end_dt.replace(tzinfo=UK_TZ)
                 event['end'] = {'dateTime': end_dt.isoformat()}
 
-        updated = service.events().update(calendarId='primary', eventId=id, body=event).execute()
+        if attachments:
+            existing = event.get('attachments', [])
+            existing.extend({'fileUrl': url} for url in attachments)
+            event['attachments'] = existing
+
+        updated = service.events().update(
+            calendarId='primary',
+            eventId=id,
+            body=event,
+            supportsAttachments=bool(attachments),
+        ).execute()
 
         return {
             "status": "updated",
@@ -931,6 +994,7 @@ async def calendar_update(
             "summary": updated.get('summary', ''),
             "start": updated.get('start', {}).get('dateTime', updated.get('start', {}).get('date', '')),
             "end": updated.get('end', {}).get('dateTime', updated.get('end', {}).get('date', '')),
+            "attachments": len(updated.get('attachments', [])),
             "fetched_at": datetime.now(UK_TZ).isoformat()
         }
 
@@ -2239,9 +2303,12 @@ async def calendar_recurring(
     duration_mins: int = Query(default=60, description="Duration in minutes"),
     start_date: Optional[str] = Query(default=None, description="Start date (YYYY-MM-DD, default: today)"),
     end_date: Optional[str] = Query(default=None, description="End date (YYYY-MM-DD, optional)"),
-    location: Optional[str] = Query(default=None, description="Event location")
+    location: Optional[str] = Query(default=None, description="Event location"),
+    color_id: Optional[int] = Query(default=None, description="Google Calendar color (1=lavender,2=sage,3=grape,4=flamingo,5=banana,6=tangerine,7=peacock,8=graphite,9=blueberry,10=basil,11=tomato)"),
+    transparency: Optional[str] = Query(default=None, description="'transparent' (show as free) or 'opaque' (show as busy)"),
+    exclude_dates: Optional[str] = Query(default=None, description="Comma-separated dates (YYYY-MM-DD) to exclude (e.g. school holidays)")
 ):
-    """Create a recurring calendar event."""
+    """Create a recurring calendar event with optional color, free/busy, and exclusions."""
     from .google_auth import get_calendar_service
 
     try:
@@ -2260,20 +2327,33 @@ async def calendar_recurring(
         start_dt = base_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
         end_dt = start_dt + timedelta(minutes=duration_mins)
 
-        # Build recurrence rule
+        # Build recurrence rules
         rrule = f"RRULE:FREQ=WEEKLY;BYDAY={days.upper()}"
         if end_date:
             rrule += f";UNTIL={end_date.replace('-', '')}T235959Z"
+
+        recurrence = [rrule]
+
+        # Add EXDATE for excluded dates (e.g. school holidays)
+        if exclude_dates:
+            for date_str in exclude_dates.split(','):
+                date_str = date_str.strip()
+                if date_str:
+                    recurrence.append(f"EXDATE;TZID=Europe/London:{date_str.replace('-', '')}T{hour:02d}{minute:02d}00")
 
         event_body = {
             'summary': summary,
             'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'Europe/London'},
             'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Europe/London'},
-            'recurrence': [rrule]
+            'recurrence': recurrence
         }
 
         if location:
             event_body['location'] = location
+        if color_id is not None:
+            event_body['colorId'] = str(color_id)
+        if transparency:
+            event_body['transparency'] = transparency
 
         event = service.events().insert(calendarId='primary', body=event_body).execute()
 
@@ -2284,7 +2364,7 @@ async def calendar_recurring(
             "start_time": start_time,
             "days": days,
             "duration_mins": duration_mins,
-            "recurrence": rrule,
+            "recurrence": recurrence,
             "link": event.get('htmlLink', ''),
             "fetched_at": datetime.now(UK_TZ).isoformat()
         }
@@ -2343,14 +2423,26 @@ async def calendar_invite(
 # Drive Create & Share Endpoints
 # ============================================================
 
+class DriveCreateBody(BaseModel):
+    content: Optional[str] = None
+    folder_name: Optional[str] = None
+
+
 @app.post("/drive/create")
 async def drive_create(
     title: str = Query(..., description="Document title"),
     type: str = Query(default="document", description="Type: document, spreadsheet, presentation"),
-    folder_id: Optional[str] = Query(default=None, description="Parent folder ID (optional)")
+    folder_id: Optional[str] = Query(default=None, description="Parent folder ID (optional)"),
+    body: Optional[DriveCreateBody] = None
 ):
-    """Create a new Google Doc, Sheet, or Slides."""
+    """Create a new Google Doc, Sheet, or Slides — optionally with content.
+
+    Send a JSON body with 'content' to populate the document.
+    Use 'folder_name' in the body to place it in a folder by name (created if missing).
+    """
     from .google_auth import get_drive_service
+    import io
+    from googleapiclient.http import MediaIoBaseUpload
 
     try:
         service = get_drive_service()
@@ -2366,19 +2458,49 @@ async def drive_create(
             "slides": "application/vnd.google-apps.presentation"
         }
 
-        mime_type = mime_types.get(type.lower())
-        if not mime_type:
+        target_mime = mime_types.get(type.lower())
+        if not target_mime:
             raise HTTPException(status_code=400, detail=f"Unknown type: {type}. Use document, spreadsheet, or presentation")
 
-        file_metadata = {
-            'name': title,
-            'mimeType': mime_type
-        }
+        content = body.content if body else None
+        folder_name = body.folder_name if body else None
 
+        # Resolve folder_name → folder_id (find or create)
+        if folder_name and not folder_id:
+            query = (
+                f"name = '{folder_name.replace(chr(39), chr(92)+chr(39))}' "
+                f"and mimeType = 'application/vnd.google-apps.folder' "
+                f"and trashed = false"
+            )
+            results = service.files().list(q=query, fields='files(id,name)', pageSize=1).execute()
+            folders = results.get('files', [])
+            if folders:
+                folder_id = folders[0]['id']
+            else:
+                # Create the folder
+                folder_meta = {'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'}
+                folder = service.files().create(body=folder_meta, fields='id').execute()
+                folder_id = folder['id']
+
+        file_metadata = {'name': title, 'mimeType': target_mime}
         if folder_id:
             file_metadata['parents'] = [folder_id]
 
-        file = service.files().create(body=file_metadata, fields='id,name,webViewLink').execute()
+        if content:
+            # Upload content as HTML (preserves basic formatting) and convert to Google Doc
+            upload_mime = 'text/html' if '<' in content and '>' in content else 'text/plain'
+            media = MediaIoBaseUpload(
+                io.BytesIO(content.encode('utf-8')),
+                mimetype=upload_mime,
+                resumable=False
+            )
+            file = service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id,name,webViewLink'
+            ).execute()
+        else:
+            file = service.files().create(body=file_metadata, fields='id,name,webViewLink').execute()
 
         return {
             "status": "created",
@@ -2386,7 +2508,60 @@ async def drive_create(
             "name": file['name'],
             "type": type,
             "link": file.get('webViewLink', ''),
+            "has_content": bool(content),
+            "folder_id": folder_id or None,
             "fetched_at": datetime.now(UK_TZ).isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/drive/upload")
+async def drive_upload(
+    file_path: str = Query(..., description="Local file path to upload"),
+    folder_id: Optional[str] = Query(default=None, description="Parent folder ID (optional)"),
+    title: Optional[str] = Query(default=None, description="Override filename (optional)"),
+):
+    """Upload a local file to Google Drive. Returns file ID and link for use as calendar attachments etc."""
+    from .google_auth import get_drive_service
+    from googleapiclient.http import MediaFileUpload
+    import mimetypes
+
+    try:
+        service = get_drive_service()
+        if not service:
+            raise HTTPException(status_code=503, detail="Drive not configured")
+
+        p = Path(file_path)
+        if not p.is_file():
+            raise HTTPException(status_code=400, detail=f"File not found: {file_path}")
+
+        content_type, _ = mimetypes.guess_type(str(p))
+        if content_type is None:
+            content_type = "application/octet-stream"
+
+        file_metadata = {"name": title or p.name}
+        if folder_id:
+            file_metadata["parents"] = [folder_id]
+
+        media = MediaFileUpload(str(p), mimetype=content_type, resumable=False)
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id,name,webViewLink,webContentLink",
+        ).execute()
+
+        return {
+            "status": "uploaded",
+            "file_id": file["id"],
+            "name": file["name"],
+            "mime_type": content_type,
+            "link": file.get("webViewLink", ""),
+            "download_link": file.get("webContentLink", ""),
+            "fetched_at": datetime.now(UK_TZ).isoformat(),
         }
 
     except HTTPException:
@@ -3238,12 +3413,12 @@ async def youtube_search(
 @app.post("/gmail/reply")
 async def gmail_reply(
     message_id: str = Query(..., description="Message ID to reply to"),
-    body: str = Query(..., description="Reply text")
+    body: str = Query(..., description="Reply text"),
+    attachments: list[str] = Query(default=[], description="Local file paths to attach"),
 ):
-    """Reply to an email."""
+    """Reply to an email, optionally with file attachments."""
     from .google_auth import get_gmail_service
     import base64
-    from email.mime.text import MIMEText
 
     try:
         service = get_gmail_service()
@@ -3260,7 +3435,7 @@ async def gmail_reply(
         thread_id = original.get('threadId')
 
         # Build reply
-        message = MIMEText(body)
+        message = _build_mime_message(body, attachments)
         message['to'] = headers.get('From', '')
         subject = headers.get('Subject', '')
         message['subject'] = f"Re: {subject}" if not subject.startswith('Re:') else subject
@@ -3278,6 +3453,7 @@ async def gmail_reply(
             "original_id": message_id,
             "reply_id": sent['id'],
             "to": headers.get('From', ''),
+            "attachments": [Path(a).name for a in attachments],
             "fetched_at": datetime.now(UK_TZ).isoformat()
         }
 
@@ -5505,12 +5681,14 @@ async def nutrition_update_goals(
 
 
 @app.get("/nutrition/steps")
-async def nutrition_steps():
-    """Get today's step count from Garmin."""
+async def nutrition_steps(
+    date: str = Query(default=None, description="Date in YYYY-MM-DD format (default: today)")
+):
+    """Get step count from Garmin for a given date."""
     from domains.nutrition.services.garmin import get_steps
 
     try:
-        result = await get_steps()
+        result = await get_steps(date_str=date)
         return {
             **result,
             "fetched_at": datetime.now(UK_TZ).isoformat()
@@ -5551,6 +5729,28 @@ async def nutrition_weight_history(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/withings/status")
+async def withings_status():
+    """Check Withings token status and provide re-auth instructions."""
+    from domains.nutrition.services.withings import _tokens, TOKEN_FILE
+    has_tokens = bool(_tokens.get("access"))
+    file_exists = TOKEN_FILE.exists()
+
+    # Quick test
+    result = {}
+    if has_tokens:
+        from domains.nutrition.services.withings import get_weight
+        result = await get_weight(retry=True)
+
+    return {
+        "has_tokens": has_tokens,
+        "token_file_exists": file_exists,
+        "token_file_path": str(TOKEN_FILE),
+        "test_result": result,
+        "reauth_command": "python scripts/withings_auth.py"
+    }
 
 
 @app.get("/nutrition/favourites")
@@ -5666,22 +5866,24 @@ async def brain_search(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class BrainSaveRequest(BaseModel):
+    source: str
+    note: Optional[str] = None
+    tags: Optional[str] = None
+
+
 @app.post("/brain/save")
-async def brain_save(
-    source: str = Query(..., description="URL or text content to save"),
-    note: Optional[str] = Query(default=None, description="Optional user note"),
-    tags: Optional[str] = Query(default=None, description="Comma-separated tags"),
-):
+async def brain_save(body: BrainSaveRequest):
     """Save content to Second Brain."""
     from domains.second_brain import process_capture
     from domains.second_brain.types import CaptureType
 
     try:
-        user_tags = [t.strip() for t in tags.split(",")] if tags else None
+        user_tags = [t.strip() for t in body.tags.split(",")] if body.tags else None
         item = await process_capture(
-            source=source,
+            source=body.source,
             capture_type=CaptureType.EXPLICIT,
-            user_note=note,
+            user_note=body.note,
             user_tags=user_tags,
         )
         if not item:
@@ -5741,9 +5943,6 @@ async def get_schedule():
         raise HTTPException(status_code=404, detail="SCHEDULE.md not found")
     content = SCHEDULE_PATH.read_text(encoding="utf-8")
     return {"content": content, "path": str(SCHEDULE_PATH)}
-
-
-from pydantic import BaseModel
 
 
 class ScheduleUpdate(BaseModel):
@@ -5985,6 +6184,794 @@ async def delete_reminder(reminder_id: str):
 
 
 # ============================================================
+# Shopping List PDF Generator
+# ============================================================
+
+SHOPPING_LIST_DEFAULT_DIR = r"G:\My Drive\AI Work\Shopping Lists"
+
+
+class ShoppingListRequest(BaseModel):
+    categories: dict[str, list[str]]
+    title: str = "Shopping List"
+    output_dir: str | None = None
+
+
+@app.post("/shopping-list/generate")
+async def generate_shopping_list(req: ShoppingListRequest):
+    """Generate a printable shopping list PDF."""
+    import sys
+    from datetime import datetime as dt
+
+    # Import the generator
+    scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from generate_shopping_list import generate_shopping_list_pdf
+
+    out_dir = Path(req.output_dir) if req.output_dir else Path(SHOPPING_LIST_DEFAULT_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = dt.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"shopping_list_{timestamp}.pdf"
+    output_path = out_dir / filename
+
+    try:
+        result = await asyncio.to_thread(
+            generate_shopping_list_pdf, str(output_path), req.categories, req.title
+        )
+        return {
+            "status": "created",
+            "filename": filename,
+            "path": str(result),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {e}")
+
+
+# ============================================================
+# Meal Plan
+# ============================================================
+
+MEAL_PLAN_DEFAULT_SHEET = "11R7GRjGNA9oQkjWIXcDYrf_TEcebbu4pAff0R_xsVCo"
+
+
+class MealPlanCSVImport(BaseModel):
+    csv_data: str
+    ingredients_csv: str | None = None
+
+
+class MealPlanIngredientsUpdate(BaseModel):
+    ingredients: list[dict]
+
+
+@app.get("/meal-plan/current")
+async def meal_plan_current():
+    """Get the current week's meal plan with items and ingredients."""
+    from domains.nutrition.services.meal_plan_service import get_current_meal_plan
+
+    try:
+        plan = await get_current_meal_plan()
+        if not plan:
+            return {"plan": None, "message": "No meal plan found for this week"}
+        return {"plan": plan, "fetched_at": datetime.now(UK_TZ).isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/meal-plan/week")
+async def meal_plan_by_week(date: str = Query(default=None, description="Any date within the week (YYYY-MM-DD), defaults to today")):
+    """Get the meal plan for the week containing the given date."""
+    from domains.nutrition.services.meal_plan_service import get_meal_plan, _monday_of
+
+    try:
+        if date is None:
+            date = datetime.now(UK_TZ).date().isoformat()
+        week_start = _monday_of(date)
+        plan = await get_meal_plan(week_start)
+        if not plan:
+            return {"plan": None, "week_start": week_start, "message": "No meal plan found for this week"}
+        return {"plan": plan, "week_start": week_start, "fetched_at": datetime.now(UK_TZ).isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/meal-plan/{plan_id}")
+async def meal_plan_by_id(plan_id: str):
+    """Get a meal plan by its ID."""
+    from domains.nutrition.services.meal_plan_service import get_meal_plan_by_id
+
+    try:
+        plan = await get_meal_plan_by_id(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="Meal plan not found")
+        return {"plan": plan, "fetched_at": datetime.now(UK_TZ).isoformat()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/meal-plan/{plan_id}")
+async def meal_plan_delete(plan_id: str):
+    """Delete a meal plan and all its items/ingredients."""
+    from domains.nutrition.services.meal_plan_service import delete_meal_plan
+
+    try:
+        result = await delete_meal_plan(plan_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/meal-plan/import/sheets")
+async def meal_plan_import_sheets(
+    spreadsheet_id: str = Query(default=MEAL_PLAN_DEFAULT_SHEET, description="Google Sheet ID")
+):
+    """Import a meal plan from a Google Sheet.
+
+    Reads all tabs, parses meal plan data and optional ingredients tab.
+    Expected columns: Date, Day, Adults, Kids, Activities (or similar).
+    Ingredients tab: Category, Item, Quantity, Recipe (or similar).
+    """
+    from .google_auth import get_credentials
+    from googleapiclient.discovery import build
+    from domains.nutrition.services.meal_plan_service import (
+        upsert_meal_plan, upsert_meal_plan_items, set_meal_plan_ingredients
+    )
+    import re
+
+    try:
+        creds = get_credentials()
+        if not creds:
+            raise HTTPException(status_code=503, detail="Google auth not configured")
+
+        service = build('sheets', 'v4', credentials=creds)
+
+        # Get sheet info
+        spreadsheet = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        sheets = [s['properties']['title'] for s in spreadsheet.get('sheets', [])]
+
+        # Read all tabs
+        all_data = {}
+        for sheet_name in sheets:
+            result = service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=f"'{sheet_name}'!A1:Z100"
+            ).execute()
+            all_data[sheet_name] = result.get('values', [])
+
+        # Identify meal plan tab and ingredients tab
+        meal_rows = None
+        ingredient_rows = None
+        meal_tab_name = None
+        ingredient_tab_name = None
+
+        for tab_name, rows in all_data.items():
+            if not rows:
+                continue
+            header = [str(c).lower().strip() for c in rows[0]]
+            if any(h in header for h in ['adults', 'adult', 'dinner', 'meal']):
+                meal_rows = rows
+                meal_tab_name = tab_name
+            elif any(h in header for h in ['category', 'ingredient', 'aisle']):
+                ingredient_rows = rows
+                ingredient_tab_name = tab_name
+
+        if not meal_rows:
+            raise HTTPException(status_code=400, detail=f"No meal plan tab found. Tabs: {sheets}")
+
+        # Parse meal plan tab
+        header = [str(c).lower().strip() for c in meal_rows[0]]
+
+        # Find column indices
+        date_col = next((i for i, h in enumerate(header) if h in ('date', 'day', 'date/day')), None)
+        adults_col = next((i for i, h in enumerate(header) if h in ('adults', 'adult', 'dinner', 'meal', 'adults meal')), None)
+        kids_col = next((i for i, h in enumerate(header) if h in ('kids', 'kid', 'kids meal', 'children')), None)
+        activities_col = next((i for i, h in enumerate(header) if h in ('activities', 'activity', 'notes')), None)
+
+        if adults_col is None:
+            raise HTTPException(status_code=400, detail=f"Could not find adults/meal column. Headers: {header}")
+
+        # Parse rows into items
+        items = []
+        current_year = datetime.now().year
+        last_date = None
+
+        for row in meal_rows[1:]:
+            # Pad row to header length
+            row = row + [''] * (len(header) - len(row))
+
+            date_str = row[date_col].strip() if date_col is not None else ''
+            adults = row[adults_col].strip() if adults_col is not None else ''
+            kids = row[kids_col].strip() if kids_col is not None else ''
+
+            # Skip empty rows
+            if not adults and not kids:
+                continue
+
+            # Parse date (DD/MM or DD/MM/YYYY format)
+            if date_str:
+                date_match = re.match(r'(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?', date_str)
+                if date_match:
+                    day = int(date_match.group(1))
+                    month = int(date_match.group(2))
+                    year = int(date_match.group(3)) if date_match.group(3) else current_year
+                    if year < 100:
+                        year += 2000
+                    try:
+                        parsed_date = datetime(year, month, day).date()
+                        last_date = parsed_date
+                    except ValueError:
+                        if last_date:
+                            parsed_date = last_date
+                        else:
+                            continue
+                elif last_date:
+                    parsed_date = last_date
+                else:
+                    continue
+            elif last_date:
+                parsed_date = last_date
+            else:
+                continue
+
+            # Determine meal_slot (1 or 2 for same-date meals)
+            existing_slots = [i['meal_slot'] for i in items if i['date'] == parsed_date.isoformat()]
+            meal_slot = len(existing_slots) + 1
+
+            # Detect source_tag from Activities column (or adults meal as fallback)
+            source_tag = None
+            activities = row[activities_col].strip().lower() if activities_col is not None and len(row) > activities_col else ''
+            adults_lower = adults.lower()
+            if 'gousto' in activities or 'gousto' in adults_lower:
+                source_tag = 'gousto'
+            elif 'out' in activities or 'chris out' in adults_lower:
+                source_tag = 'chris_out'
+
+            items.append({
+                "date": parsed_date.isoformat(),
+                "meal_slot": meal_slot,
+                "adults_meal": adults or None,
+                "kids_meal": kids or None,
+                "source_tag": source_tag,
+                "recipe_url": None
+            })
+
+        if not items:
+            raise HTTPException(status_code=400, detail="No valid meal plan items found in sheet")
+
+        # Determine week_start from earliest date
+        earliest = min(i['date'] for i in items)
+        from domains.nutrition.services.meal_plan_service import _monday_of
+        week_start = _monday_of(earliest)
+
+        # Upsert plan
+        plan = await upsert_meal_plan(
+            week_start=week_start,
+            source="sheets",
+            sheet_id=spreadsheet_id
+        )
+
+        # Upsert items
+        upserted_items = await upsert_meal_plan_items(plan["id"], items)
+
+        # Parse ingredients — check for separate tab first, then same-tab "List" column
+        upserted_ingredients = []
+        if ingredient_rows and len(ingredient_rows) > 1:
+            ing_header = [str(c).lower().strip() for c in ingredient_rows[0]]
+            cat_col = next((i for i, h in enumerate(ing_header) if h in ('category', 'aisle', 'section')), None)
+            item_col = next((i for i, h in enumerate(ing_header) if h in ('item', 'ingredient', 'name')), None)
+            qty_col = next((i for i, h in enumerate(ing_header) if h in ('quantity', 'qty', 'amount')), None)
+            recipe_col = next((i for i, h in enumerate(ing_header) if h in ('recipe', 'for', 'for recipe', 'meal')), None)
+
+            if item_col is not None:
+                ingredients = []
+                for row in ingredient_rows[1:]:
+                    row = row + [''] * (len(ing_header) - len(row))
+                    item_name = row[item_col].strip() if item_col is not None else ''
+                    if not item_name:
+                        continue
+                    ingredients.append({
+                        "category": row[cat_col].strip() if cat_col is not None and row[cat_col].strip() else "Other",
+                        "item": item_name,
+                        "quantity": row[qty_col].strip() if qty_col is not None else None,
+                        "for_recipe": row[recipe_col].strip() if recipe_col is not None else None,
+                    })
+
+                if ingredients:
+                    upserted_ingredients = await set_meal_plan_ingredients(plan["id"], ingredients)
+
+        # Fallback: check for a "list" column on the same meal plan tab
+        if not upserted_ingredients and meal_rows:
+            from scripts.categorise_groceries import categorise_item
+
+            list_col = next((i for i, h in enumerate(header) if h in ('list', 'shopping list', 'shopping', 'ingredients')), None)
+            if list_col is not None:
+                ingredients = []
+                for row in meal_rows[1:]:
+                    row = row + [''] * (len(header) - len(row))
+                    item_name = row[list_col].strip() if list_col is not None else ''
+                    if not item_name:
+                        continue
+                    ingredients.append({
+                        "category": categorise_item(item_name),
+                        "item": item_name,
+                        "quantity": None,
+                        "for_recipe": None,
+                    })
+                if ingredients:
+                    upserted_ingredients = await set_meal_plan_ingredients(plan["id"], ingredients)
+
+        return {
+            "status": "imported",
+            "plan_id": plan["id"],
+            "week_start": week_start,
+            "items_count": len(upserted_items),
+            "ingredients_count": len(upserted_ingredients),
+            "tabs_found": {
+                "meal_plan": meal_tab_name,
+                "ingredients": ingredient_tab_name
+            },
+            "fetched_at": datetime.now(UK_TZ).isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sheet import failed: {e}")
+
+
+@app.post("/meal-plan/import/csv")
+async def meal_plan_import_csv(req: MealPlanCSVImport):
+    """Import a meal plan from CSV data.
+
+    CSV format: Date,Day,Adults,Kids,Activities
+    Optional ingredients_csv: Category,Item,Quantity,Recipe
+    """
+    import csv
+    import io
+    import re
+    from domains.nutrition.services.meal_plan_service import (
+        upsert_meal_plan, upsert_meal_plan_items, set_meal_plan_ingredients, _monday_of
+    )
+
+    try:
+        # Parse meal CSV
+        reader = csv.DictReader(io.StringIO(req.csv_data))
+        items = []
+        current_year = datetime.now().year
+        last_date = None
+
+        for row in reader:
+            # Normalise column names
+            normalised = {k.lower().strip(): v.strip() for k, v in row.items() if k}
+
+            adults = normalised.get('adults', normalised.get('adult', normalised.get('meal', normalised.get('dinner', ''))))
+            kids = normalised.get('kids', normalised.get('kid', normalised.get('children', '')))
+            date_str = normalised.get('date', normalised.get('day', ''))
+
+            if not adults and not kids:
+                continue
+
+            # Parse date
+            if date_str:
+                date_match = re.match(r'(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?', date_str)
+                if date_match:
+                    day = int(date_match.group(1))
+                    month = int(date_match.group(2))
+                    year = int(date_match.group(3)) if date_match.group(3) else current_year
+                    if year < 100:
+                        year += 2000
+                    try:
+                        parsed_date = datetime(year, month, day).date()
+                        last_date = parsed_date
+                    except ValueError:
+                        if last_date:
+                            parsed_date = last_date
+                        else:
+                            continue
+                elif last_date:
+                    parsed_date = last_date
+                else:
+                    continue
+            elif last_date:
+                parsed_date = last_date
+            else:
+                continue
+
+            existing_slots = [i['meal_slot'] for i in items if i['date'] == parsed_date.isoformat()]
+            meal_slot = len(existing_slots) + 1
+
+            source_tag = None
+            if 'gousto' in adults.lower():
+                source_tag = 'gousto'
+            elif 'chris out' in adults.lower() or 'out' == adults.lower():
+                source_tag = 'chris_out'
+
+            items.append({
+                "date": parsed_date.isoformat(),
+                "meal_slot": meal_slot,
+                "adults_meal": adults or None,
+                "kids_meal": kids or None,
+                "source_tag": source_tag,
+                "recipe_url": None
+            })
+
+        if not items:
+            raise HTTPException(status_code=400, detail="No valid items found in CSV")
+
+        earliest = min(i['date'] for i in items)
+        week_start = _monday_of(earliest)
+
+        plan = await upsert_meal_plan(week_start=week_start, source="csv")
+        upserted_items = await upsert_meal_plan_items(plan["id"], items)
+
+        # Parse ingredients CSV if provided
+        upserted_ingredients = []
+        if req.ingredients_csv:
+            ing_reader = csv.DictReader(io.StringIO(req.ingredients_csv))
+            ingredients = []
+            for row in ing_reader:
+                normalised = {k.lower().strip(): v.strip() for k, v in row.items() if k}
+                item_name = normalised.get('item', normalised.get('ingredient', normalised.get('name', '')))
+                if not item_name:
+                    continue
+                ingredients.append({
+                    "category": normalised.get('category', normalised.get('aisle', 'Other')) or 'Other',
+                    "item": item_name,
+                    "quantity": normalised.get('quantity', normalised.get('qty', None)),
+                    "for_recipe": normalised.get('recipe', normalised.get('for', None)),
+                })
+            if ingredients:
+                upserted_ingredients = await set_meal_plan_ingredients(plan["id"], ingredients)
+
+        return {
+            "status": "imported",
+            "plan_id": plan["id"],
+            "week_start": week_start,
+            "items_count": len(upserted_items),
+            "ingredients_count": len(upserted_ingredients),
+            "fetched_at": datetime.now(UK_TZ).isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"CSV import failed: {e}")
+
+
+@app.post("/meal-plan/import/gousto")
+async def meal_plan_import_gousto():
+    """Search Gmail for recent Gousto order confirmation emails and extract recipe names.
+
+    Matches extracted recipes against the current meal plan items tagged as 'gousto'.
+    """
+    from .google_auth import get_gmail_service
+    from domains.nutrition.services.meal_plan_service import get_current_meal_plan
+    import base64
+    import re
+    from html import unescape
+
+    try:
+        service = get_gmail_service()
+        if not service:
+            raise HTTPException(status_code=503, detail="Gmail not configured")
+
+        # Search for recent Gousto emails
+        results = service.users().messages().list(
+            userId='me',
+            q='from:gousto.co.uk newer_than:14d',
+            maxResults=5
+        ).execute()
+
+        messages = results.get('messages', [])
+        if not messages:
+            return {
+                "status": "no_emails",
+                "message": "No recent Gousto emails found (last 14 days)",
+                "recipes_found": [],
+                "fetched_at": datetime.now(UK_TZ).isoformat()
+            }
+
+        # Extract recipe names from order confirmation emails only
+        all_recipes = []
+        for msg in messages:
+            detail = service.users().messages().get(
+                userId='me',
+                id=msg['id'],
+                format='full'
+            ).execute()
+
+            # Only process order summary emails, skip marketing
+            msg_headers = {h['name']: h['value'] for h in detail.get('payload', {}).get('headers', [])}
+            subject = msg_headers.get('Subject', '').lower()
+            if 'summary' not in subject and 'your order' not in subject and 'your box' not in subject:
+                continue
+
+            # Extract plain text body
+            body_text = ""
+            payload = detail.get('payload', {})
+
+            def extract_text(parts):
+                text = ""
+                if isinstance(parts, list):
+                    for part in parts:
+                        if part.get('mimeType') == 'text/plain':
+                            data = part.get('body', {}).get('data', '')
+                            if data:
+                                text += base64.urlsafe_b64decode(data).decode('utf-8', errors='replace')
+                        elif part.get('parts'):
+                            text += extract_text(part['parts'])
+                return text
+
+            if payload.get('mimeType') == 'text/plain':
+                data = payload.get('body', {}).get('data', '')
+                if data:
+                    body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='replace')
+            elif payload.get('parts'):
+                body_text = extract_text(payload['parts'])
+
+            if not body_text:
+                # Try HTML fallback
+                def extract_html(parts):
+                    text = ""
+                    if isinstance(parts, list):
+                        for part in parts:
+                            if part.get('mimeType') == 'text/html':
+                                data = part.get('body', {}).get('data', '')
+                                if data:
+                                    html = base64.urlsafe_b64decode(data).decode('utf-8', errors='replace')
+                                    # Strip HTML tags
+                                    text += re.sub(r'<[^>]+>', ' ', unescape(html))
+                            elif part.get('parts'):
+                                text += extract_html(part['parts'])
+                    return text
+
+                body_text = extract_html(payload.get('parts', []))
+
+            if not body_text:
+                continue
+
+            # Parse Gousto recipe names from the email
+            # Gousto order summary emails list recipes in a structured block:
+            #   Recipe Name
+            #   Eat-by-date:
+            #   DD Mon - DD Mon
+            #   Cooking time: XX mins
+            #   See recipe
+            # We find lines immediately before "Cooking time:" — those are recipe names.
+            lines = [l.strip() for l in body_text.split('\n')]
+            for i, line in enumerate(lines):
+                if line.lower().startswith('cooking time:'):
+                    # Walk backwards to find the recipe name (skip eat-by-date lines, URLs)
+                    for j in range(i - 1, max(i - 8, -1), -1):
+                        candidate = lines[j].strip()
+                        if not candidate:
+                            continue
+                        # Skip date lines, "See recipe", "Eat-by-date:", URLs etc
+                        if re.match(r'^\d{1,2}\s+\w+\s*-?\s*$', candidate):
+                            continue  # partial date like "11 Feb" or "10 Feb -"
+                        if re.match(r'^\d{1,2}\s+\w+\s*-\s*\d{1,2}\s+\w+', candidate):
+                            continue  # full date range like "10 Feb - 11 Feb"
+                        if candidate.lower() in ('eat-by-date:', 'see recipe', 'start drooling'):
+                            continue
+                        if candidate.startswith('(') or candidate.startswith('http'):
+                            continue  # URL lines
+                        # This should be the recipe name
+                        if len(candidate) > 5 and candidate not in all_recipes:
+                            all_recipes.append(candidate)
+                        break
+
+        # Match against current meal plan
+        plan = await get_current_meal_plan()
+        matched = []
+        unmatched = list(all_recipes)
+
+        if plan and plan.get('items'):
+            gousto_items = [i for i in plan['items'] if i.get('source_tag') == 'gousto']
+            for recipe in all_recipes:
+                for item in gousto_items:
+                    meal_name = (item.get('adults_meal') or '').lower()
+                    if recipe.lower() in meal_name or meal_name in recipe.lower():
+                        matched.append({
+                            "recipe": recipe,
+                            "matched_meal": item.get('adults_meal'),
+                            "date": item.get('date')
+                        })
+                        if recipe in unmatched:
+                            unmatched.remove(recipe)
+                        break
+
+        return {
+            "status": "found" if all_recipes else "no_recipes",
+            "emails_checked": len(messages),
+            "recipes_found": all_recipes,
+            "matched": matched,
+            "unmatched": unmatched,
+            "plan_id": plan["id"] if plan else None,
+            "fetched_at": datetime.now(UK_TZ).isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gousto import failed: {e}")
+
+
+@app.get("/meal-plan/shopping-list")
+async def meal_plan_shopping_list(plan_id: str = Query(default=None, description="Plan ID (defaults to current week)")):
+    """Get meal plan ingredients as shopping-list-compatible categories."""
+    from domains.nutrition.services.meal_plan_service import (
+        get_current_meal_plan, get_shopping_list_categories
+    )
+
+    try:
+        if not plan_id:
+            plan = await get_current_meal_plan()
+            if not plan:
+                return {"categories": {}, "message": "No meal plan found for this week"}
+            plan_id = plan["id"]
+
+        categories = await get_shopping_list_categories(plan_id)
+
+        if not categories:
+            return {
+                "categories": {},
+                "message": "No ingredients found. Add ingredients to the meal plan or import from sheets.",
+                "plan_id": plan_id
+            }
+
+        total_items = sum(len(items) for items in categories.values())
+        return {
+            "categories": categories,
+            "category_count": len(categories),
+            "item_count": total_items,
+            "plan_id": plan_id,
+            "fetched_at": datetime.now(UK_TZ).isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/meal-plan/shopping-list/generate")
+async def meal_plan_shopping_list_generate(
+    plan_id: str = Query(default=None, description="Plan ID (defaults to current week)"),
+    title: str = Query(default=None, description="PDF title (auto-generated if not provided)")
+):
+    """Generate a shopping list PDF from the current meal plan's ingredients."""
+    import sys
+    from datetime import datetime as dt
+    from domains.nutrition.services.meal_plan_service import (
+        get_current_meal_plan, get_meal_plan_by_id, get_shopping_list_categories
+    )
+
+    try:
+        if plan_id:
+            plan = await get_meal_plan_by_id(plan_id)
+        else:
+            plan = await get_current_meal_plan()
+
+        if not plan:
+            raise HTTPException(status_code=404, detail="No meal plan found")
+
+        categories = await get_shopping_list_categories(plan["id"])
+        if not categories:
+            raise HTTPException(status_code=400, detail="No ingredients in this meal plan")
+
+        # Generate title from week_start if not provided
+        if not title:
+            from datetime import datetime as dt2
+            week_date = dt2.fromisoformat(plan["week_start"])
+            title = f"Meal Plan - w/c {week_date.strftime('%d %b %Y')}"
+
+        # Generate PDF using existing shopping list generator
+        scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        from generate_shopping_list import generate_shopping_list_pdf
+
+        out_dir = Path(SHOPPING_LIST_DEFAULT_DIR)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = dt.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"meal_plan_shopping_{timestamp}.pdf"
+        output_path = out_dir / filename
+
+        result = await asyncio.to_thread(
+            generate_shopping_list_pdf, str(output_path), categories, title
+        )
+
+        return {
+            "status": "created",
+            "filename": filename,
+            "path": str(result),
+            "plan_id": plan["id"],
+            "week_start": plan["week_start"],
+            "category_count": len(categories),
+            "item_count": sum(len(v) for v in categories.values())
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {e}")
+
+
+@app.post("/meal-plan/export-pdf")
+async def meal_plan_export_pdf(
+    plan_id: str = Query(default=None, description="Plan ID (defaults to current week)"),
+    title: str = Query(default=None, description="PDF title (auto-generated if not provided)")
+):
+    """Generate a landscape meal plan PDF showing the weekly grid."""
+    import sys
+    from datetime import datetime as dt
+    from domains.nutrition.services.meal_plan_service import (
+        get_current_meal_plan, get_meal_plan_by_id
+    )
+
+    try:
+        if plan_id:
+            plan = await get_meal_plan_by_id(plan_id)
+        else:
+            plan = await get_current_meal_plan()
+
+        if not plan:
+            raise HTTPException(status_code=404, detail="No meal plan found")
+
+        if not plan.get("items"):
+            raise HTTPException(status_code=400, detail="No meals in this plan")
+
+        # Import the generator
+        scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        from generate_meal_plan_pdf import generate_meal_plan_pdf
+
+        out_dir = Path(SHOPPING_LIST_DEFAULT_DIR)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = dt.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"meal_plan_{timestamp}.pdf"
+        output_path = out_dir / filename
+
+        result = await asyncio.to_thread(
+            generate_meal_plan_pdf, str(output_path), plan, title
+        )
+
+        return {
+            "status": "created",
+            "filename": filename,
+            "path": str(result),
+            "plan_id": plan["id"],
+            "week_start": plan["week_start"],
+            "days_count": len(plan.get("items", [])),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Meal plan PDF generation failed: {e}")
+
+
+@app.put("/meal-plan/{plan_id}/ingredients")
+async def meal_plan_update_ingredients(plan_id: str, req: MealPlanIngredientsUpdate):
+    """Replace all ingredients for a meal plan.
+
+    Each ingredient: {category, item, quantity?, for_recipe?}
+    """
+    from domains.nutrition.services.meal_plan_service import set_meal_plan_ingredients
+
+    try:
+        result = await set_meal_plan_ingredients(plan_id, req.ingredients)
+        return {
+            "status": "updated",
+            "plan_id": plan_id,
+            "ingredients_count": len(result),
+            "fetched_at": datetime.now(UK_TZ).isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
 # Hadley Bricks Proxy - forwards /hb/* to HB app on port 3000
 # ============================================================
 
@@ -6041,6 +7028,162 @@ async def hb_proxy(request: Request, path: str):
         raise HTTPException(status_code=504, detail="Hadley Bricks request timed out")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"HB proxy error: {str(e)}")
+
+
+# ============================================================
+# Investment ML Pipeline
+# ============================================================
+
+HB_PROJECT_DIR = os.environ.get(
+    "HADLEY_BRICKS_DIR",
+    r"C:\Users\Chris Hadley\hadley-bricks-inventory-management",
+)
+
+
+@app.post("/investment/retrain")
+async def investment_retrain(request: Request, step: Optional[str] = Query(None)):
+    """Trigger the Python LightGBM investment prediction pipeline.
+
+    Query params:
+        step: Optional - run a single step (build|features|train|score).
+              If omitted, runs the full pipeline.
+    """
+    import subprocess
+
+    ml_dir = os.path.join(HB_PROJECT_DIR, "scripts", "ml")
+    if not os.path.isdir(ml_dir):
+        raise HTTPException(status_code=500, detail=f"ML directory not found: {ml_dir}")
+
+    cmd = ["python", "run_pipeline.py"]
+    if step:
+        if step not in ("build", "features", "train", "score"):
+            raise HTTPException(status_code=400, detail=f"Invalid step: {step}. Must be build|features|train|score")
+        cmd.extend(["--step", step])
+
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            cwd=ml_dir,
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 minute timeout
+        )
+
+        return {
+            "status": "success" if result.returncode == 0 else "error",
+            "returncode": result.returncode,
+            "stdout": result.stdout[-5000:] if result.stdout else "",
+            "stderr": result.stderr[-2000:] if result.stderr else "",
+            "step": step or "full",
+        }
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Pipeline timed out after 10 minutes")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Pipeline error: {str(e)}")
+
+
+# ============================================================
+# Model Provider Management
+# ============================================================
+
+MODEL_CONFIG_PATH = Path(__file__).parent.parent / "data" / "model_config.json"
+
+VALID_PROVIDERS = ["claude_cc", "claude_cc2", "kimi"]
+
+MODEL_DEFAULT_STATE = {
+    "active_provider": "claude_cc",
+    "reason": "default",
+    "switched_at": None,
+    "auto_switch_enabled": True,
+    "kimi_requests": 0,
+    "failover_history": [],
+}
+
+
+def _read_model_config() -> dict:
+    """Read model config from data/model_config.json."""
+    try:
+        with open(MODEL_CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return MODEL_DEFAULT_STATE.copy()
+
+
+def _write_model_config(data: dict) -> None:
+    """Write model config atomically."""
+    import tempfile
+    MODEL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = MODEL_CONFIG_PATH.with_suffix(".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(str(tmp_path), str(MODEL_CONFIG_PATH))
+
+
+@app.get("/model/status")
+async def get_model_status():
+    """Get current model provider status."""
+    state = _read_model_config()
+    # Migrate legacy 'claude' → 'claude_cc'
+    if state.get("active_provider") == "claude":
+        state["active_provider"] = "claude_cc"
+    state["provider_priority"] = VALID_PROVIDERS
+    return state
+
+
+class ModelSwitchRequest(BaseModel):
+    provider: str
+    reason: str = "manual"
+
+
+@app.put("/model/switch")
+async def switch_model_provider(req: ModelSwitchRequest):
+    """Switch active model provider."""
+    # Accept legacy 'claude' as 'claude_cc'
+    provider = "claude_cc" if req.provider == "claude" else req.provider
+    if provider not in VALID_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider must be one of {VALID_PROVIDERS}"
+        )
+
+    state = _read_model_config()
+    old = state.get("active_provider", "claude_cc")
+    if old == "claude":
+        old = "claude_cc"
+    state["active_provider"] = provider
+    state["reason"] = req.reason
+    state["switched_at"] = datetime.now(UK_TZ).isoformat()
+    if provider.startswith("claude_"):
+        state["kimi_requests"] = 0
+
+    # Record in failover history
+    history = state.get("failover_history", [])
+    history.append({
+        "from": old,
+        "to": provider,
+        "reason": req.reason,
+        "at": datetime.now(UK_TZ).isoformat(),
+    })
+    state["failover_history"] = history[-20:]
+
+    _write_model_config(state)
+
+    return {"status": "ok", "switched": f"{old} → {provider}", "reason": req.reason}
+
+
+class AutoSwitchRequest(BaseModel):
+    enabled: bool
+
+
+@app.put("/model/auto-switch")
+async def toggle_auto_switch(req: AutoSwitchRequest):
+    """Toggle automatic provider switching."""
+    state = _read_model_config()
+    state["auto_switch_enabled"] = req.enabled
+    _write_model_config(state)
+
+    return {"status": "ok", "auto_switch_enabled": req.enabled}
 
 
 if __name__ == "__main__":

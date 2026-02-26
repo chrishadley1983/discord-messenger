@@ -9,7 +9,7 @@ import json
 import re
 import yaml
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Callable, Any
 from zoneinfo import ZoneInfo
@@ -20,7 +20,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from logger import logger
 from .response.pipeline import process as process_response
-from .config import USE_ROUTER_V2
+from .config import USE_ROUTER_V2, SECOND_BRAIN_SAVE_SKILLS
 
 # Import job history recording functions
 try:
@@ -71,7 +71,7 @@ class PeterbotScheduler:
     """Scheduler that reads SCHEDULE.md and executes skills via Claude Code."""
 
     # Job execution configuration
-    JOB_TIMEOUT_SECONDS = 180  # 3 minutes max per job
+    JOB_TIMEOUT_SECONDS = 1200  # 20 minutes max per job
     MAX_QUEUED_JOBS = 3  # Max jobs to queue when busy
 
     def __init__(self, bot, scheduler: AsyncIOScheduler, peterbot_channel_id: int):
@@ -107,9 +107,70 @@ class PeterbotScheduler:
         # Trigger file for API-initiated reloads
         self._reload_trigger_path = Path(__file__).parent.parent.parent / "data" / "schedule_reload.trigger"
 
+        # News article history log for deduplication
+        self._news_history_path = Path(__file__).parent.parent.parent / "data" / "news_history.jsonl"
+
     def set_data_fetchers(self, fetchers: dict[str, Callable]):
         """Set data fetcher functions for skills."""
         self.data_fetchers = fetchers
+
+    def _save_news_history(self, response: str) -> None:
+        """Append a successful news response to the history log."""
+        entry = {
+            "timestamp": datetime.now(UK_TZ).isoformat(),
+            "response": response,
+        }
+        try:
+            self._news_history_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._news_history_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception as e:
+            logger.debug(f"News history write failed: {e}")
+
+    def _load_news_history(self, days: int = 7) -> str:
+        """Load recent news history for deduplication context.
+
+        Returns a markdown section listing previously covered articles,
+        or empty string if no history exists.
+        """
+        if not self._news_history_path.exists():
+            return ""
+
+        cutoff = datetime.now(UK_TZ) - timedelta(days=days)
+        recent_entries = []
+
+        try:
+            with open(self._news_history_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        ts = datetime.fromisoformat(entry["timestamp"])
+                        if ts >= cutoff:
+                            recent_entries.append(entry)
+                    except (json.JSONDecodeError, KeyError, ValueError):
+                        continue
+        except Exception as e:
+            logger.debug(f"News history read failed: {e}")
+            return ""
+
+        if not recent_entries:
+            return ""
+
+        parts = [
+            "## Previously Covered Articles (last 7 days)",
+            "Do NOT repeat these stories. Find fresh news instead.",
+            "",
+        ]
+        for entry in recent_entries:
+            ts = datetime.fromisoformat(entry["timestamp"])
+            parts.append(f"### {ts.strftime('%A %d %b %H:%M')}")
+            parts.append(entry["response"])
+            parts.append("")
+
+        return "\n".join(parts)
 
     def load_schedule(self) -> int:
         """Load schedule from SCHEDULE.md and register jobs.
@@ -593,8 +654,13 @@ class PeterbotScheduler:
                 await self._post_to_channel(job, response, files=files_to_attach)
                 self.last_job_status[job.skill] = True
 
-                # 8. Capture to memory (async, fire-and-forget)
+                # 8. Capture to memory + Second Brain (async, fire-and-forget)
                 asyncio.create_task(self._capture_to_memory(job, response))
+                asyncio.create_task(self._capture_to_second_brain(job, response))
+
+                # 8b. Save news history for deduplication
+                if job.skill == "news":
+                    self._save_news_history(response)
 
                 if health_tracker:
                     health_tracker.record_job_result(
@@ -762,6 +828,12 @@ class PeterbotScheduler:
                 "```",
             ])
 
+        # Inject news history for deduplication
+        if job.skill == "news":
+            news_history = self._load_news_history()
+            if news_history:
+                parts.extend(["", news_history])
+
         parts.extend([
             "",
             "## CRITICAL OUTPUT RULES",
@@ -922,9 +994,10 @@ class PeterbotScheduler:
         return response
 
     async def _send_to_claude_code_v2(self, context: str, job: JobConfig = None, retry_on_empty: bool = True) -> str:
-        """Send context to Claude CLI and get response. No tmux, no session lock.
+        """Send context to LLM and get response. Routes via invoke_llm().
 
-        Uses router_v2.invoke_claude_cli() for independent process execution.
+        Uses router_v2.invoke_llm() which auto-fails over to Kimi if Claude
+        credits are exhausted.
 
         Args:
             context: Full context string to send
@@ -934,31 +1007,42 @@ class PeterbotScheduler:
         Returns:
             Response string, or empty string on failure
         """
-        from .router_v2 import invoke_claude_cli
+        from .router_v2 import invoke_llm
+        from .config import CLI_SCHEDULED_MAX_TURNS, CLI_SCHEDULED_MODEL
 
         skill_name = job.skill if job else "unknown"
         channel = job.channel if job else ""
 
-        response = await invoke_claude_cli(
+        response, provider = await invoke_llm(
             context=context,
             append_prompt="Execute the skill instructions. Produce output for Discord.",
             timeout=self.JOB_TIMEOUT_SECONDS,
             cost_source=f"scheduled:{skill_name}",
             cost_channel=channel,
             cost_message=f"[Skill: {skill_name}]",
+            max_turns=CLI_SCHEDULED_MAX_TURNS,
+            model=CLI_SCHEDULED_MODEL,
         )
 
         # Retry once if empty (not an error message)
         if not response.strip() and retry_on_empty:
             logger.warning(f"Empty response from CLI, retrying...")
-            response = await invoke_claude_cli(
+            response, provider = await invoke_llm(
                 context=context,
                 append_prompt="Execute the skill instructions. Produce output for Discord.",
                 timeout=self.JOB_TIMEOUT_SECONDS,
                 cost_source=f"scheduled:{skill_name}:retry",
                 cost_channel=channel,
                 cost_message=f"[Skill: {skill_name} RETRY]",
+                max_turns=CLI_SCHEDULED_MAX_TURNS,
+                model=CLI_SCHEDULED_MODEL,
             )
+
+        # Prepend fallback indicator for non-primary providers
+        if provider == "claude_cc2":
+            response = f"> *cc2 account*\n\n{response}"
+        elif provider == "kimi":
+            response = f"> *Kimi 2.5 fallback*\n\n{response}"
 
         return response
 
@@ -1041,8 +1125,12 @@ class PeterbotScheduler:
 
         channel_id = CHANNEL_IDS.get(channel_name)
         if not channel_id:
-            logger.error(f"Unknown channel: {channel_name}")
-            return
+            # Support raw channel IDs (e.g. "1466020068021240041" from SCHEDULE.md)
+            try:
+                channel_id = int(channel_name)
+            except (ValueError, TypeError):
+                logger.error(f"Unknown channel: {channel_name}")
+                return
 
         channel = self.bot.get_channel(channel_id)
         if not channel:
@@ -1116,6 +1204,40 @@ class PeterbotScheduler:
             logger.debug(f"Memory captured for scheduled job: {job.skill}")
         except Exception as e:
             logger.warning(f"Failed to capture scheduled job to memory: {e}")
+
+    async def _capture_to_second_brain(self, job: JobConfig, response: str):
+        """Auto-save scheduled skill output to Second Brain.
+
+        Only saves for skills in the SECOND_BRAIN_SAVE_SKILLS allow-list.
+        Tags with skill name and "scheduled" for easy filtering.
+
+        Args:
+            job: The job that was executed
+            response: The output response
+        """
+        if job.skill not in SECOND_BRAIN_SAVE_SKILLS:
+            return
+
+        try:
+            from domains.second_brain import process_capture, CaptureType
+
+            now = datetime.now(UK_TZ)
+            user_note = f"[Auto-saved from scheduled skill: {job.skill}] {now.strftime('%A, %d %B %Y %H:%M')}"
+            user_tags = ["scheduled", job.skill]
+
+            item = await process_capture(
+                source=response,
+                capture_type=CaptureType.EXPLICIT,
+                user_note=user_note,
+                user_tags=user_tags,
+            )
+
+            if item:
+                logger.info(f"Second Brain saved for {job.skill}: {item.id}")
+            else:
+                logger.warning(f"Second Brain save returned None for {job.skill}")
+        except Exception as e:
+            logger.warning(f"Failed to save {job.skill} to Second Brain: {e}")
 
     async def _send_whatsapp(self, message: str):
         """Send message via Twilio WhatsApp."""
@@ -1291,8 +1413,9 @@ class PeterbotScheduler:
                 self.last_job_status[job.skill] = True
                 logger.debug(f"Manual skill response: type={processed.response_type.value}")
 
-                # 8. Capture to memory (async, fire-and-forget)
+                # 8. Capture to memory + Second Brain (async, fire-and-forget)
                 asyncio.create_task(self._capture_to_memory(job, response))
+                asyncio.create_task(self._capture_to_second_brain(job, response))
             else:
                 await channel.send(f"⚠️ Skill `{job.skill}` returned no response")
                 self.last_job_status[job.skill] = False

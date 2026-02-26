@@ -1,0 +1,32 @@
+{
+  "participants": [
+    {
+      "name": "James"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Chris Hadley",
+      "timestamp_ms": 1723036166832,
+      "content": "Let me know if you are interested and I can provide some more details",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Chris Hadley",
+      "timestamp_ms": 1723036151836,
+      "content": "Hi James - hope you dont mind the direct message!  I love your channel and really enjoy your carboot / vinted content.  I currently sell Lego, Shoes and Clothes on eBay but simply have too much stuff and not enough time!  I am looking to niche down into Lego so have about 400 pairs of shoes that I am looking to shift.   Would you have any interest in a bulk purchase?  I have a spreadsheet listed of the shoes, their condition and size etc.  A combination of new and used, almost all in excellent condition and the sort of brands that you like (Converse, Nike, Timberland, Brooks etc).",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "James",
+  "is_still_participant": true,
+  "thread_path": "inbox/james_1482594966474875",
+  "magic_words": [
+    
+  ]
+}

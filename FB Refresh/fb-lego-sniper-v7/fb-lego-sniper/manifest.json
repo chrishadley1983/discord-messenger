@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "FB Group Sniper",
+  "version": "1.0",
+  "description": "Monitors Facebook group for new posts and sends Discord notifications",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.facebook.com/*",
+    "https://discord.com/api/webhooks/*",
+    "https://discordapp.com/api/webhooks/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.facebook.com/groups/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

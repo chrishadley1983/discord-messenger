@@ -1,0 +1,38 @@
+{
+  "participants": [
+    {
+      "name": "Instagram user"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1692424291763,
+      "content": "Hello there! Ocean enthusiast \u00f0\u009f\u008c\u008a\r\n\r\nWe're looking for ambassadors to represent our natural bracelets brand, @orckevibe \u00f0\u009f\u0090\u00b3, and we believe you'd be a great fit! As an ambassador for our shared love of the ocean and nature, you will have the opportunity to try out our one-of-a-kind pieces and become a member of an exclusive community.\r\n\r\nSimply send a direct message to our main page @orckevibe using the keyword \"ambassador\" and our team will get back to you with further details.\r\n\r\nThank you for taking the time to consider this opportunity; we hope to hear from you soon! \u00f0\u009f\u0092\u0099",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1692424289714,
+      "content": "Instagram user sent an attachment.",
+      "share": {
+        "link": "https://www.instagram.com/_u/orckevibe",
+        "profile_share_username": "orckevibe",
+        "profile_share_name": "Orcke"
+      },
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Instagram user",
+  "is_still_participant": true,
+  "thread_path": "message_requests/instagramuser_1232341068166934",
+  "magic_words": [
+    
+  ],
+  "is_pending": true
+}

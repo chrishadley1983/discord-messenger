@@ -1,0 +1,28 @@
+{
+  "participants": [
+    {
+      "name": "Dayton Henderson"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Dayton Henderson",
+      "timestamp_ms": 1662974748099,
+      "content": "You both are so cool. Really impressed!!!",
+      "share": {
+        "link": "https://www.instagram.com/stories/hadlinho/2925150261729208074"
+      },
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Dayton Henderson",
+  "is_still_participant": true,
+  "thread_path": "inbox/daytonhenderson_572706920797022",
+  "magic_words": [
+    
+  ]
+}

@@ -4,7 +4,7 @@ CHANNEL_ID = 1465294449038069912
 
 DAILY_TARGETS = {
     "calories": 2100,
-    "protein_g": 160,
+    "protein_g": 120,
     "carbs_g": 263,
     "fat_g": 70,
     "water_ml": 3500,
@@ -33,7 +33,7 @@ This isn't just numbers - it's about being fit and confident for an important fa
 
 ## Daily Targets (use get_goals tool to check current values)
 - Calories: 2,100 (slight deficit)
-- Protein: 160g (PRIORITY - muscle retention while cutting)
+- Protein: 120g (PRIORITY - muscle retention while cutting)
 - Carbs: 263g
 - Fat: 70g
 - Water: 3,500ml 💧

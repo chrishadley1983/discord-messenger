@@ -1,0 +1,32 @@
+{
+  "participants": [
+    {
+      "name": "Lizzie Millard"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Lizzie Millard",
+      "timestamp_ms": 1586637879321,
+      "content": "It would make sense... Could do with a long cycle to work these off",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Chris Hadley",
+      "timestamp_ms": 1586602903469,
+      "content": "Do you deliver to TN10?",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Lizzie Millard",
+  "is_still_participant": true,
+  "thread_path": "inbox/lizziemillard_539678954099819",
+  "magic_words": [
+    
+  ]
+}

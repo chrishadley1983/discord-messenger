@@ -140,11 +140,78 @@ async def get_health_digest_data() -> dict[str, Any]:
             "yesterday": yesterday
         }
 
+        # Sync yesterday's Garmin data to garmin_daily_summary table
+        # (fire-and-forget — don't let sync failures break the digest)
+        asyncio.create_task(_sync_garmin_to_supabase(yesterday, data))
+
         return data
 
     except Exception as e:
         logger.error(f"Health digest data fetch error: {e}")
         return {"error": str(e)}
+
+
+async def _sync_garmin_to_supabase(date_str: str, data: dict) -> None:
+    """Sync fetched Garmin data to garmin_daily_summary table.
+
+    Called after the morning health digest fetches live data.
+    Upserts yesterday's steps, sleep, and HR into Supabase so the
+    weekly/monthly summaries have data to read.
+    """
+    import httpx
+    from config import SUPABASE_URL, SUPABASE_KEY
+
+    try:
+        steps = data.get("steps") or {}
+        sleep = data.get("sleep") or {}
+        hr = data.get("heart_rate") or {}
+
+        # Only sync if we have at least some data
+        step_count = steps.get("steps")
+        sleep_hours = sleep.get("total_hours")
+        resting_hr = hr.get("resting")
+
+        if step_count is None and sleep_hours is None and resting_hr is None:
+            logger.info(f"Garmin sync: no data to sync for {date_str}")
+            return
+
+        record = {
+            "user_id": "chris",
+            "date": date_str,
+            "source": "garmin",
+        }
+        if step_count is not None:
+            record["steps"] = step_count
+            record["steps_goal"] = steps.get("goal", 15000)
+        if sleep_hours is not None:
+            record["sleep_hours"] = sleep_hours
+        if sleep.get("quality_score") is not None:
+            record["sleep_score"] = sleep["quality_score"]
+        if resting_hr is not None:
+            record["resting_hr"] = resting_hr
+
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates"
+        }
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{SUPABASE_URL}/rest/v1/garmin_daily_summary?on_conflict=user_id,date",
+                headers=headers,
+                json=record,
+                timeout=15
+            )
+
+        if resp.status_code in (200, 201):
+            logger.info(f"Garmin sync: upserted {date_str} — steps={step_count}, sleep={sleep_hours}h, rhr={resting_hr}")
+        else:
+            logger.warning(f"Garmin sync: upsert returned {resp.status_code}: {resp.text}")
+
+    except Exception as e:
+        logger.error(f"Garmin sync failed for {date_str}: {e}")
 
 
 async def get_weekly_health_data() -> dict[str, Any]:
@@ -760,6 +827,23 @@ async def _hadley_request(endpoint: str) -> dict[str, Any]:
         return {"error": str(e)}
 
 
+async def get_meal_plan_data() -> dict[str, Any]:
+    """Fetch current week's meal plan via Hadley API.
+
+    Returns:
+        Dict with meal plan data including items and ingredients
+    """
+    result = await _hadley_request("/meal-plan/current")
+    if "error" not in result:
+        plan = result.get("plan")
+        if plan:
+            items_count = len(plan.get("items", []))
+            logger.info(f"Meal plan fetch: {items_count} items for week {plan.get('week_start')}")
+        else:
+            logger.info("Meal plan fetch: no plan for this week")
+    return result
+
+
 async def get_email_summary_data() -> dict[str, Any]:
     """Fetch unread email summary via Hadley API."""
     result = await _hadley_request("/gmail/unread")
@@ -1338,6 +1422,14 @@ async def _download_pick_list_pdf(platform: str, dest_dir: Path) -> Optional[Pat
         return None
 
 
+async def get_vinted_collections_data() -> dict[str, Any]:
+    """Fetch Vinted collections ready to collect via Hadley API."""
+    result = await _hadley_request("/vinted/collections")
+    if "error" not in result:
+        logger.info(f"Vinted collections fetch: {result.get('new_count', 0)} new, {result.get('total_count', 0)} total")
+    return result
+
+
 # Map skill names to their data fetchers
 # Skills not in this dict use web search (news, etc.)
 SKILL_DATA_FETCHERS = {
@@ -1353,6 +1445,8 @@ SKILL_DATA_FETCHERS = {
     "morning-briefing": get_morning_briefing_data,
     "whatsapp-keepalive": get_whatsapp_keepalive_data,
     "football-scores": get_football_scores_data,
+    # Meal plan
+    "meal-plan": get_meal_plan_data,
     # Phase 8a
     "email-summary": get_email_summary_data,
     "schedule-today": get_schedule_today_data,
@@ -1364,6 +1458,8 @@ SKILL_DATA_FETCHERS = {
     # Self-Improving Parser
     "morning-quality-report": get_morning_quality_data,
     "parser-improve": run_parser_improvement_cycle,
+    # Vinted
+    "vinted-collections": get_vinted_collections_data,
     # Hadley Bricks - Tier 1 (Daily Operations)
     "hb-dashboard": get_hb_dashboard_data,
     "hb-pick-list": get_hb_pick_list_data,

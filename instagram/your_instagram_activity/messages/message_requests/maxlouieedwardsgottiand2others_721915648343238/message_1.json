@@ -1,0 +1,46 @@
+{
+  "participants": [
+    {
+      "name": "Max"
+    },
+    {
+      "name": "Louie Edwards"
+    },
+    {
+      "name": "Gotti"
+    },
+    {
+      "name": "Instagram user"
+    },
+    {
+      "name": "Thomas Celis"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1585516754426,
+      "content": "Instagram user sent an attachment.",
+      "share": {
+        "link": "http://grlsclck.site/1pHLHFXD",
+        "share_text": "Visit the page to see this album : Wanna more? Just click ;)"
+      },
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Max, Louie Edwards, Gotti and 2 others",
+  "is_still_participant": true,
+  "thread_path": "message_requests/maxlouieedwardsgottiand2others_721915648343238",
+  "magic_words": [
+    
+  ],
+  "joinable_mode": {
+    "mode": 1,
+    "link": ""
+  },
+  "is_pending": true
+}

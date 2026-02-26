@@ -83,3 +83,4 @@ docs/task-dashboard.jsx
 # Draft/temp files (implemented in peterbot-mem)
 *-temp.json
 *-updated.ts
+scripts/google_auth.js

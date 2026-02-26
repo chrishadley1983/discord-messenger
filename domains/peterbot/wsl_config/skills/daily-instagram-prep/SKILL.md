@@ -1,0 +1,207 @@
+---
+name: daily-instagram-prep
+description: >
+  Daily Instagram post preparation for Hadley Bricks. Sources 3 candidate images,
+  applies the Instagram photo optimizer to each, posts the optimized images to Discord
+  at 9pm for Chris to pick one to post the next day. Use when the skill is triggered
+  by schedule or when the user says "instagram prep", "prepare insta", "daily instagram",
+  or "instagram tomorrow".
+scheduled: true
+conversational: false
+channel: "#peterbot"
+---
+
+# Daily Instagram Prep
+
+Runs every evening at 9pm. Sources 3 great images for Hadley Bricks Instagram, optimizes each for Instagram, and posts all the variants to Discord so Chris can pick one to post the next day.
+
+## Purpose
+
+Each evening:
+1. Decide on **3 content concepts** (varied — not just product listings)
+2. Source **1 image per concept** from Unsplash/Pixabay
+3. Run the **Instagram photo optimizer** on each image (produces 4 variants per image)
+4. Post all **12 images** (3 × 4 variants) to Discord
+5. Post a **caption + hashtags** for each concept
+6. Chris picks one and posts it tomorrow
+
+---
+
+## Step 1: Decide 3 Content Concepts
+
+Pick 3 varied content types from this list — **never all product listings**:
+
+| Pillar | Examples |
+|--------|---------|
+| Product Showcase | Specific LEGO set for sale (use inventory) |
+| Behind the Scenes | Sorting bricks, checking condition, packing orders |
+| LEGO Nostalgia | Classic set from the 90s/00s, throwback vibes |
+| Community / Culture | AFOLs, fan creations, convention energy |
+| Educational | Interesting LEGO fact, history, set detail |
+| Lifestyle | LEGO on a shelf, desk, in a room — aspirational |
+| LEGO News | Recent release, upcoming set, retirement news |
+| Collection Highlight | Beautiful display, MOC, impressive collection |
+
+Rules:
+- At most 1 Product Showcase per day
+- Rotate pillars — check what was posted recently if possible (query Supabase)
+- Think about what's visually interesting and scroll-stopping
+
+For each concept, decide:
+- **Concept name** (short, e.g. "millennium-falcon-detail")
+- **Search query** for image sourcing (e.g. "LEGO Millennium Falcon space ship")
+- **Headline** (2-6 bold punchy words for the 4x5 text overlay)
+- **Kicker** (4-10 words supporting line)
+- **Caption** (60-120 words, Hadley Bricks voice — see tone rules below)
+- **Hashtags** (20-25 tags — see hashtag rules below)
+
+---
+
+## Step 2: Source Images
+
+For each of the 3 concepts, search Unsplash + Pixabay using the search query.
+
+Use the config at `/mnt/c/Users/Chris Hadley/.claude/skills/unsplash/unsplash_config.json` (or the glob path used in the unsplash skill).
+
+Write and run a Python script that:
+1. Loads the config
+2. Searches Unsplash and Pixabay in parallel for the query
+3. Picks the **best single image** from results — prefer:
+   - High resolution (width > 1000px)
+   - Landscape or portrait orientation (avoid very wide panoramas)
+   - Good description match
+   - Visually interesting (not generic stock photo energy)
+4. Downloads it to `/tmp/instagram_prep/<concept-name>/source.<ext>`
+5. Triggers the Unsplash download event if applicable
+
+Do this for all 3 concepts. If a query returns no results from either source, try a simplified or alternative query.
+
+---
+
+## Step 3: Run Instagram Photo Optimizer
+
+For each downloaded image, run the optimizer script. The script is at:
+
+```
+/mnt/c/Users/Chris Hadley/.claude/skills/instagram-photo-optimizer/scripts/optimize.py
+```
+
+```bash
+pip install Pillow --break-system-packages -q
+
+python "/mnt/c/Users/Chris Hadley/.claude/skills/instagram-photo-optimizer/scripts/optimize.py" \
+  --input "/tmp/instagram_prep/<concept-name>/source.<ext>" \
+  --output-dir "/tmp/instagram_prep/<concept-name>/" \
+  --name "<concept-name>" \
+  --headline "<headline>" \
+  --kicker "<kicker>"
+```
+
+This produces 4 files per image:
+- `<concept-name>_4x5_text.jpg` — Feed post with text overlay
+- `<concept-name>_4x5.jpg` — Clean feed post
+- `<concept-name>_1x1.jpg` — Square crop
+- `<concept-name>_9x16.jpg` — Story/Reel format
+
+Run this for all 3 concepts = **12 output files total**.
+
+---
+
+## Step 4: Post to Discord
+
+Post the following to Discord in the #peterbot channel:
+
+### Header message:
+```
+📸 **Instagram Prep — [Day, Date]**
+
+3 concepts ready for tomorrow. Pick your favourite and I'll caption it up.
+```
+
+### For each concept (3 total):
+
+Post a section:
+```
+**Option [1/2/3] — [Pillar Name]**
+[Brief 1-line description of the concept]
+```
+
+Then attach all 4 optimized images for that concept as a single Discord message (Discord shows them as a grid).
+
+After all images, post the pre-written caption:
+```
+**Caption:**
+[full caption text]
+
+**Hashtags:**
+[hashtag string]
+```
+
+---
+
+## Step 5: Await Chris's Choice
+
+End with:
+```
+Reply with **1**, **2**, or **3** to confirm which one you'll post tomorrow, or say **none** to skip.
+```
+
+When Chris replies, save the chosen concept to Supabase as a draft post (use the same schema as `weekly-instagram-batch` — see that skill for the INSERT SQL).
+
+---
+
+## Tone Rules (CRITICAL)
+
+Same as weekly-instagram-batch — short, punchy, geeky, fun:
+
+- **60-120 words MAX**. No waffle.
+- Geeky and fun. Lean into LEGO nerd culture.
+- Conversational. Like talking to a fellow AFOL.
+- 2-4 emoji max. 🧱 and theme-relevant ones only.
+- **Never** use "we're thrilled to announce" or similar corporate speak.
+- Vary opening style: questions, statements, nostalgia, hot takes, scarcity
+
+### Caption Structure
+1. **Hook** — Scroll-stopping first line
+2. **The Good Stuff** — 2-4 lines of what makes this interesting
+3. **CTA** — Rotate: "Link in bio 👆" / "DM us!" / "Drop a 🧱" / "Tag someone" / "Save for later 🔖"
+
+For Product Showcase posts, mention price and platform naturally.
+
+---
+
+## Hashtag Rules
+
+20-25 tags per post.
+
+**Core tags (always):**
+`#LEGO #LEGOCollection #LEGOForSale #BrickCollector #AFOLCommunity #AdultFanOfLEGO #LEGODeals #SetCollector #HadleyBricks`
+
+**Theme-specific (3-5 based on content):**
+- Star Wars: `#LEGOStarWars #StarWarsLEGO #MayTheForceBeWithYou`
+- Technic: `#LEGOTechnic #TechnicLEGO #MOCBuilder`
+- Behind scenes: `#BrickLife #LEGOSeller #BrickBusiness`
+- Nostalgia: `#ClassicLEGO #VintageLEGO #LEGONostalgia`
+- Community: `#LEGOCommunity #BrickFans #AFOLLife`
+- Educational: `#LEGOFacts #BrickHistory #LEGOTrivia`
+
+**Engagement tags (3-4):**
+`#BrickNetwork #BrickPhotography #LEGOInvestment #RetiredLEGO #LEGOBargain #BricksAndBuilds`
+
+---
+
+## Error Handling
+
+- If image sourcing fails for a concept, try an alternative query before giving up
+- If the optimizer script fails, post the raw downloaded image with a note
+- If Supabase is unavailable when saving the choice, just confirm verbally and Chris can add it later
+- If no concepts can be sourced, tell Chris and suggest manual alternatives
+
+---
+
+## Notes
+
+- Output directory: `/tmp/instagram_prep/` — cleaned up after each run
+- Always credit photographers in the Discord message (name + source)
+- This is a preview/prep step — **no automatic posting to Instagram**
+- Chris confirms the choice and posts manually from their phone

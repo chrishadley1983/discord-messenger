@@ -1,0 +1,106 @@
+{
+  "media": [
+    
+  ],
+  "label_values": [
+    {
+      "label": "Name",
+      "vec": [
+        {
+          "value": "Administrative services"
+        },
+        {
+          "value": "Android: 360-degree media supported"
+        },
+        {
+          "value": "Arts, entertainment, sport and media"
+        },
+        {
+          "value": "Birthday in November"
+        },
+        {
+          "value": "Computation and mathematics"
+        },
+        {
+          "value": "Facebook Page admins"
+        },
+        {
+          "value": "Facebook access (browser): Chrome"
+        },
+        {
+          "value": "Facebook access (mobile): Android devices"
+        },
+        {
+          "value": "Facebook access (mobile): all mobile devices"
+        },
+        {
+          "value": "Facebook access (mobile): smartphones and tablets"
+        },
+        {
+          "value": "Facebook access (mobile): tablets"
+        },
+        {
+          "value": "Facebook access (network type): Wi-Fi"
+        },
+        {
+          "value": "Frequent international travellers"
+        },
+        {
+          "value": "Frequent travellers"
+        },
+        {
+          "value": "Friends of men with a birthday in 0-7 days"
+        },
+        {
+          "value": "Friends of men with a birthday in 7-30 days"
+        },
+        {
+          "value": "Friends of people with birthdays in a month"
+        },
+        {
+          "value": "Friends of people with birthdays in a week"
+        },
+        {
+          "value": "Friends of those who live abroad"
+        },
+        {
+          "value": "Friends of women with a birthday in 0-7 days"
+        },
+        {
+          "value": "Friends of women with a birthday in 7-30 days"
+        },
+        {
+          "value": "IT and technical services"
+        },
+        {
+          "value": "Life, physical and social sciences"
+        },
+        {
+          "value": "Management"
+        },
+        {
+          "value": "Mobile network or device users"
+        },
+        {
+          "value": "Parents (All)"
+        },
+        {
+          "value": "Potential mobile network or device change"
+        },
+        {
+          "value": "Recent mobile network or device change"
+        },
+        {
+          "value": "Sales"
+        },
+        {
+          "value": "Uses a mobile device (25 months+)"
+        },
+        {
+          "value": "Wi-Fi usage"
+        }
+      ]
+    }
+  ],
+  "fbid": "17841400756690625"
+}

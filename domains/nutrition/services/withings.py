@@ -1,7 +1,9 @@
 """Withings service for weight tracking."""
 
+import json
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import httpx
 
@@ -15,11 +17,50 @@ from config import (
 )
 from logger import logger
 
+# Persistent token file (survives service restarts)
+TOKEN_FILE = Path(os.getenv("LOCALAPPDATA", ".")) / "discord-assistant" / "withings_tokens.json"
+
 # Token storage (in-memory, refreshed as needed)
 _tokens = {
     "access": WITHINGS_ACCESS_TOKEN,
     "refresh": WITHINGS_REFRESH_TOKEN
 }
+
+
+def _load_tokens():
+    """Load tokens from persistent file, falling back to env vars."""
+    global _tokens
+    if TOKEN_FILE.exists():
+        try:
+            saved = json.loads(TOKEN_FILE.read_text())
+            if saved.get("access") and saved.get("refresh"):
+                _tokens["access"] = saved["access"]
+                _tokens["refresh"] = saved["refresh"]
+                logger.info("Loaded Withings tokens from persistent file")
+                return
+        except Exception as e:
+            logger.warning(f"Failed to load Withings token file: {e}")
+    # Fall back to env vars (initial setup)
+    _tokens["access"] = WITHINGS_ACCESS_TOKEN
+    _tokens["refresh"] = WITHINGS_REFRESH_TOKEN
+
+
+def _save_tokens():
+    """Persist current tokens to file so they survive restarts."""
+    try:
+        TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        TOKEN_FILE.write_text(json.dumps({
+            "access": _tokens["access"],
+            "refresh": _tokens["refresh"],
+            "updated_at": datetime.now().isoformat()
+        }))
+        logger.info(f"Withings tokens saved to {TOKEN_FILE}")
+    except Exception as e:
+        logger.warning(f"Failed to save Withings tokens: {e}")
+
+
+# Load persisted tokens on module import
+_load_tokens()
 
 
 async def _refresh_token() -> bool:
@@ -43,7 +84,8 @@ async def _refresh_token() -> bool:
                 _tokens["access"] = data["body"]["access_token"]
                 _tokens["refresh"] = data["body"]["refresh_token"]
 
-                # Update environment variables for persistence
+                # Persist to file AND env for current process
+                _save_tokens()
                 os.environ["WITHINGS_ACCESS_TOKEN"] = _tokens["access"]
                 os.environ["WITHINGS_REFRESH_TOKEN"] = _tokens["refresh"]
 

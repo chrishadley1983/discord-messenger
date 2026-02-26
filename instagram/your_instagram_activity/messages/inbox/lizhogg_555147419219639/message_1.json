@@ -1,0 +1,30 @@
+{
+  "participants": [
+    {
+      "name": "Liz Hogg"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Liz Hogg",
+      "timestamp_ms": 1752006740498,
+      "content": "Liz sent an attachment.",
+      "share": {
+        "link": "https://www.instagram.com/p/DL3Du-CiQlGC-TT5znpXintDBLmuB5hBwi-WWI0/?carousel_share_child_media_id=3672420442993920326_27681167",
+        "share_text": "Visiting friends in the UK has been a special core memory for our little ones this holiday. Very blessed. No matter how many years pass between visits it always seems like yesterday we last saw everyone.",
+        "original_content_owner": "house_of_hoggs"
+      },
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Liz Hogg",
+  "is_still_participant": true,
+  "thread_path": "inbox/lizhogg_555147419219639",
+  "magic_words": [
+    
+  ]
+}

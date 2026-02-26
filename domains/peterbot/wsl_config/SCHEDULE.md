@@ -10,6 +10,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Job | Skill | Schedule | Channel | Enabled |
 |-----|-------|----------|---------|---------|
 | Parser Improvement | parser-improve | 02:00 UK | #peter-heartbeat!quiet | yes |
+| Morning Laughs | morning-laughs | 06:30 UK | #peterbot | yes |
 | Morning Quality Report | morning-quality-report | 06:45 UK | #peter-heartbeat | yes |
 | Morning Briefing | morning-briefing | 07:00 UK | #ai-briefings | yes |
 | Morning News | news | 07:02 UK | #news | yes |
@@ -21,6 +22,7 @@ Run `!reload-schedule` after editing to apply changes.
 | School Pickup (Mon,Tue,Thu,Fri) | school-pickup | Mon,Tue,Thu,Fri 14:55 UK | #traffic-reports+WhatsApp | yes |
 | School Pickup (Wed) | school-pickup | Wed 16:50 UK | #traffic-reports+WhatsApp | yes |
 | Daily Nutrition Summary | nutrition-summary | 21:00 UK | #food-log | yes |
+| Daily Instagram Prep | daily-instagram-prep | 21:05 UK | #peterbot | yes |
 | Weekly Health Summary | weekly-health | Sunday 09:10 UK | #food-log | yes |
 | Monthly Health Summary | monthly-health | 1st 09:15 UK | #food-log | yes |
 | WhatsApp Keepalive | whatsapp-keepalive | 06:00,22:00 UK | #peterbot!quiet | yes |
@@ -31,7 +33,6 @@ Run `!reload-schedule` after editing to apply changes.
 | Notion Todos | notion-todos | 08:06 UK | #peterbot | yes |
 | Balance Monitor | balance-monitor | hourly+3 UK | #api-costs | yes |
 | Heartbeat | heartbeat | half-hourly+1 UK | #peter-heartbeat!quiet | yes |
-| Email Purchase Import | hb-email-purchases | 02:17 UK | 1466020068021240041!quiet | yes |
 | HB Full Sync + Print | hb-full-sync-print | 09:35 UK | #peterbot | yes |
 
 ## Interval Jobs

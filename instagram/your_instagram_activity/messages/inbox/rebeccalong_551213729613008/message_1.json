@@ -1,0 +1,32 @@
+{
+  "participants": [
+    {
+      "name": "Rebecca Long"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Rebecca Long",
+      "timestamp_ms": 1577194402093,
+      "content": "Yes we do but Unfortunately were out of stock due to high demand! Maybe next year ;)",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Chris Hadley",
+      "timestamp_ms": 1577192404720,
+      "content": "Do you guys do delivery?",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Rebecca Long",
+  "is_still_participant": true,
+  "thread_path": "inbox/rebeccalong_551213729613008",
+  "magic_words": [
+    
+  ]
+}

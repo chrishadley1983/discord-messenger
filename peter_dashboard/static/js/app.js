@@ -3626,24 +3626,48 @@ const MemoryView = {
     `;
   },
 
+  // Second Brain state
+  brainOffset: 0,
+  brainLimit: 30,
+  brainTotal: 0,
+  brainContentType: '',
+  brainTopic: '',
+  brainSearchMode: false,
+
   renderSecondBrain() {
     return `
-      <div class="mb-md">
-        <div class="data-table-search" style="max-width: 400px;">
+      <div class="mb-md" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+        <div class="data-table-search" style="max-width: 300px; flex: 1;">
           <span class="data-table-search-icon">${Icons.search}</span>
-          <input type="text" placeholder="Search second brain..."
+          <input type="text" placeholder="Semantic search..."
                  id="brain-search" onkeyup="if(event.key==='Enter')MemoryView.searchBrain(this.value)">
         </div>
+        <select id="brain-filter-type" onchange="MemoryView.filterBrain()" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px;">
+          <option value="">All types</option>
+          <option value="article">Article</option>
+          <option value="recipe">Recipe</option>
+          <option value="reference">Reference</option>
+          <option value="conversation">Conversation</option>
+          <option value="note">Note</option>
+          <option value="tutorial">Tutorial</option>
+          <option value="news">News</option>
+        </select>
+        <select id="brain-filter-topic" onchange="MemoryView.filterBrain()" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px;">
+          <option value="">All topics</option>
+        </select>
       </div>
       <div id="brain-results">
-        <p class="text-muted">Enter a search query to find content</p>
+        <div class="flex justify-center py-lg"><div class="spinner"></div></div>
       </div>
+      <div id="brain-pagination" style="display: flex; justify-content: center; gap: 12px; padding: 16px 0;"></div>
     `;
   },
 
   async loadData() {
     this.loadPeterbotMemories();
     this.loadClaudeMemories();
+    this.loadBrainItems();
+    this.loadBrainTopics();
   },
 
   async loadPeterbotMemories() {
@@ -3780,11 +3804,122 @@ const MemoryView = {
   },
 
   async searchBrain(query) {
-    if (!query.trim()) return;
+    if (!query.trim()) {
+      this.brainSearchMode = false;
+      this.brainOffset = 0;
+      this.loadBrainItems();
+      return;
+    }
+    this.brainSearchMode = true;
+    const container = document.getElementById('brain-results');
+    const pagination = document.getElementById('brain-pagination');
+    container.innerHTML = '<div class="flex justify-center py-lg"><div class="spinner"></div></div>';
+    if (pagination) pagination.innerHTML = '';
     try {
-      const results = await API.get(`/api/search/second-brain?query=${encodeURIComponent(query)}`);
-      this.renderSearchResults('brain-results', results.results || []);
+      const results = await API.get(`/api/search/second-brain?query=${encodeURIComponent(query)}&limit=20`);
+      if (!results.success || !results.items || !results.items.length) {
+        container.innerHTML = '<p class="text-muted">No results found</p>';
+        return;
+      }
+      container.innerHTML = `
+        <div style="margin-bottom: 8px;">
+          <a href="#" onclick="event.preventDefault(); document.getElementById('brain-search').value=''; MemoryView.searchBrain('');" style="font-size: 13px; color: var(--primary);">&larr; Back to browse</a>
+          <span class="text-muted text-sm" style="margin-left: 8px;">${results.items.length} semantic match${results.items.length !== 1 ? 'es' : ''}</span>
+        </div>
+        ${results.items.map(item => this._renderBrainCard(item, true)).join('')}
+      `;
     } catch (error) { Toast.error('Error', `Search failed: ${error.message}`); }
+  },
+
+  async loadBrainItems() {
+    const container = document.getElementById('brain-results');
+    if (!container) return;
+    try {
+      let url = `/api/search/second-brain/list?limit=${this.brainLimit}&offset=${this.brainOffset}`;
+      if (this.brainContentType) url += `&content_type=${encodeURIComponent(this.brainContentType)}`;
+      if (this.brainTopic) url += `&topic=${encodeURIComponent(this.brainTopic)}`;
+      const data = await API.get(url);
+      if (!data.success) throw new Error(data.error || 'Unknown error');
+      this.brainTotal = data.total || 0;
+      this.updateBadge(2, this.brainTotal);
+      this.renderBrainItems(data.items || []);
+      this.renderBrainPagination();
+    } catch (error) {
+      console.error('Error loading brain items:', error);
+      container.innerHTML = `<p class="text-error">Failed to load: ${error.message}</p>`;
+    }
+  },
+
+  async loadBrainTopics() {
+    try {
+      const data = await API.get('/api/search/second-brain/stats');
+      if (!data.success || !data.topics) return;
+      const select = document.getElementById('brain-filter-topic');
+      if (!select) return;
+      const current = select.value;
+      select.innerHTML = '<option value="">All topics</option>' +
+        data.topics.map(t => `<option value="${Utils.escapeHtml(t.topic)}"${t.topic === current ? ' selected' : ''}>${Utils.escapeHtml(t.topic)} (${t.count})</option>`).join('');
+    } catch (e) { console.error('Failed to load brain topics:', e); }
+  },
+
+  filterBrain() {
+    this.brainContentType = document.getElementById('brain-filter-type')?.value || '';
+    this.brainTopic = document.getElementById('brain-filter-topic')?.value || '';
+    this.brainOffset = 0;
+    this.brainSearchMode = false;
+    this.loadBrainItems();
+  },
+
+  renderBrainItems(items) {
+    const container = document.getElementById('brain-results');
+    if (!container) return;
+    if (!items.length) { container.innerHTML = '<p class="text-muted">No items found</p>'; return; }
+    container.innerHTML = items.map(item => this._renderBrainCard(item, false)).join('');
+  },
+
+  _renderBrainCard(item, isSearch) {
+    const typeColors = { article: '#3b82f6', recipe: '#f59e0b', reference: '#8b5cf6', conversation: '#10b981', note: '#6b7280', tutorial: '#ec4899', news: '#ef4444' };
+    const typeBg = typeColors[item.content_type] || '#6b7280';
+    const similarity = isSearch && item.similarity ? `<span style="font-size: 11px; color: var(--text-muted); background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px;">${(item.similarity * 100).toFixed(0)}% match</span>` : '';
+    const captureLabel = item.capture_type ? `<span style="font-size: 10px; color: var(--text-muted);">${item.capture_type}</span>` : '';
+    const topics = (item.topics || []).slice(0, 4).map(t =>
+      `<span style="display: inline-block; font-size: 11px; color: var(--text-muted); background: var(--bg-tertiary); padding: 1px 6px; border-radius: 10px;">${Utils.escapeHtml(t)}</span>`
+    ).join(' ');
+
+    return `
+      <div style="background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            ${item.content_type ? `<span style="font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px; background: ${typeBg}; color: white; text-transform: uppercase;">${item.content_type}</span>` : ''}
+            ${captureLabel}
+            ${similarity}
+          </div>
+          <span style="font-size: 12px; color: var(--text-muted); white-space: nowrap;">${Format.datetime(item.created_at)}</span>
+        </div>
+        <div style="font-weight: 500; margin-bottom: 4px;">${Utils.escapeHtml(item.title || 'Untitled')}</div>
+        ${item.summary ? `<div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">${Utils.escapeHtml(item.summary)}</div>` : ''}
+        ${isSearch && item.excerpts && item.excerpts.length ? `<div style="font-size: 12px; color: var(--text-muted); border-left: 2px solid var(--border); padding-left: 8px; margin-bottom: 6px;">${Utils.escapeHtml(item.excerpts[0])}</div>` : ''}
+        ${topics ? `<div style="display: flex; gap: 4px; flex-wrap: wrap;">${topics}</div>` : ''}
+      </div>
+    `;
+  },
+
+  renderBrainPagination() {
+    const container = document.getElementById('brain-pagination');
+    if (!container) return;
+    if (this.brainSearchMode || this.brainTotal <= this.brainLimit) { container.innerHTML = ''; return; }
+    const page = Math.floor(this.brainOffset / this.brainLimit) + 1;
+    const totalPages = Math.ceil(this.brainTotal / this.brainLimit);
+    container.innerHTML = `
+      <button class="btn btn-secondary btn-sm" onclick="MemoryView.brainPage(-1)" ${page <= 1 ? 'disabled' : ''} style="padding: 4px 12px; font-size: 13px;">&larr; Prev</button>
+      <span class="text-sm text-muted" style="line-height: 32px;">Page ${page} of ${totalPages} (${this.brainTotal} items)</span>
+      <button class="btn btn-secondary btn-sm" onclick="MemoryView.brainPage(1)" ${page >= totalPages ? 'disabled' : ''} style="padding: 4px 12px; font-size: 13px;">Next &rarr;</button>
+    `;
+  },
+
+  brainPage(direction) {
+    this.brainOffset = Math.max(0, this.brainOffset + direction * this.brainLimit);
+    this.loadBrainItems();
   },
 
   renderSearchResults(containerId, results) {

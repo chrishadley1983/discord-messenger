@@ -120,16 +120,27 @@ def main():
     refresh_token = data["body"]["refresh_token"]
     expires_in = data["body"]["expires_in"]
 
+    # Save to persistent token file (used by withings.py on startup)
+    import json
+    from pathlib import Path
+    token_file = Path(os.getenv("LOCALAPPDATA", ".")) / "discord-assistant" / "withings_tokens.json"
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_file.write_text(json.dumps({
+        "access": access_token,
+        "refresh": refresh_token,
+        "updated_at": __import__("datetime").datetime.now().isoformat()
+    }))
+
     print()
     print("=" * 60)
-    print("SUCCESS! Add these to your .env file:")
+    print("SUCCESS! Tokens saved.")
     print("=" * 60)
     print()
-    print(f"WITHINGS_ACCESS_TOKEN={access_token}")
+    print(f"Persistent file: {token_file}")
+    print(f"(Access token expires in {expires_in} seconds, auto-refreshes)")
     print()
-    print(f"WITHINGS_REFRESH_TOKEN={refresh_token}")
-    print()
-    print(f"(Access token expires in {expires_in} seconds, but will auto-refresh)")
+    print("Restart HadleyAPI to pick up the new tokens:")
+    print("  nssm restart HadleyAPI  (run as admin)")
     print()
 
 

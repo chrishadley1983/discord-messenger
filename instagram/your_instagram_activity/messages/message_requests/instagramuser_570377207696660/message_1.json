@@ -1,0 +1,30 @@
+{
+  "participants": [
+    {
+      "name": "Instagram user"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1568210736951,
+      "content": "Instagram user sent an attachment.",
+      "share": {
+        "link": "http://babygirlphoto.com/s",
+        "share_text": "Alle meine intimen Fotos und Videos hier\u00f0\u009f\u0098\u0098 Klicken Sie auf das Bild und registrieren Sie sich"
+      },
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Instagram user",
+  "is_still_participant": true,
+  "thread_path": "message_requests/instagramuser_570377207696660",
+  "magic_words": [
+    
+  ],
+  "is_pending": true
+}

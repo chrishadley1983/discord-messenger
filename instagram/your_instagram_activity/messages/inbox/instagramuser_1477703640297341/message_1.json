@@ -1,0 +1,95 @@
+{
+  "participants": [
+    {
+      "name": "Instagram user"
+    },
+    {
+      "name": "Chris Hadley"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Chris Hadley",
+      "timestamp_ms": 1742135106168,
+      "content": "You sent an attachment.",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Chris Hadley",
+      "timestamp_ms": 1742061503388,
+      "content": "You sent an attachment.",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Chris Hadley",
+      "timestamp_ms": 1737754239479,
+      "content": "Why are you insulting me? I really don't understand",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1737754189304,
+      "content": "Melt",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1737754184953,
+      "content": "I bet your missus fucks you",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Chris Hadley",
+      "timestamp_ms": 1737754153306,
+      "content": "I didn't disregard it.  You suggested that bad things didn't happen to innocent people in the past which just isn't true",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Chris Hadley",
+      "timestamp_ms": 1737754060501,
+      "content": "Why are you so angry?",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1737753972295,
+      "content": "Has anyone told you that you look like a lesbian? You tried to disregard a massacre of innocent young British girls and try to compare it to the IRA, because you sit down to piss and are a pathetic excuse for a man. For a father of a girl, you are a disgrace. Your problem is that you have lived a sheltered life and aren\u00e2\u0080\u0099t aware of the real world. I pray for you.",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Chris Hadley",
+      "timestamp_ms": 1737710033469,
+      "content": "You sent an attachment.",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Chris Hadley",
+      "timestamp_ms": 1737661252809,
+      "content": "You sent an attachment.",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Chris Hadley",
+      "timestamp_ms": 1722459622590,
+      "content": "You sent an attachment.",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Instagram user",
+  "is_still_participant": true,
+  "thread_path": "inbox/instagramuser_1477703640297341",
+  "magic_words": [
+    
+  ]
+}

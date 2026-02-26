@@ -52,6 +52,7 @@ Discord Bot → tmux session (claude-peterbot) → screen capture → parser.py 
 | Memory Worker | 37777 | Windows | claude-mem persistent memory |
 | Claude Code | - | WSL2 CLI | AI responses via `claude -p` (v2) or tmux (v1 fallback) |
 | Hadley Bricks | 3000 | (External) | LEGO inventory management API |
+| Peter Voice | - | Windows (tray) | Voice I/O desktop client (STT/TTS) |
 
 ---
 
@@ -694,4 +695,57 @@ The original tmux approach required 50+ regex patterns across parser.py (813 lin
 
 ---
 
-*Last updated: 2026-02-06 — Router V2 (CLI --print mode) now default*
+---
+
+## 14. Peter Voice Desktop Client
+
+A standalone Windows system tray app that adds voice I/O to Peter. Peter's codebase is unmodified — voice is a layer on top.
+
+### Architecture
+
+```
+Microphone → sounddevice → Moonshine STT → Discord Webhook ("Chris (Voice)")
+                                                    ↓
+                                              Peter (bot.py)
+                                                    ↓
+                              REST API polling ← Discord API → TTS (Kokoro) → Speakers
+```
+
+### Components
+
+| File | Purpose |
+|------|---------|
+| `peter-voice/peter_voice.pyw` | Main entry (.pyw = no console window) |
+| `peter-voice/config.py` | Config from parent .env + local config.json |
+| `peter-voice/audio.py` | Microphone capture (16kHz mono float32) |
+| `peter-voice/stt.py` | Moonshine ONNX speech-to-text |
+| `peter-voice/tts.py` | Kokoro ONNX text-to-speech |
+| `peter-voice/discord_comms.py` | Webhook send + REST API reply polling |
+| `peter-voice/hotkey.py` | Global hotkeys (Ctrl+Space, Ctrl+Shift+Space) |
+| `peter-voice/wake.py` | silero-vad wake word detection |
+| `peter-voice/sounds.py` | Programmatic audio feedback tones |
+| `peter-voice/tray.py` | System tray icon + menu (pystray) |
+
+### Key Design Decisions
+
+- **Separate venv** (Python 3.13) — heavy ML dependencies (torch, onnxruntime) isolated from bot
+- **REST polling** for replies — NOT gateway (would conflict with main bot's single-token connection)
+- **Webhook sends** as "Chris (Voice)" — Peter sees these as normal text messages
+- **float32 audio** throughout — both Moonshine and silero-vad expect float32 at 16kHz
+
+### Modes
+
+| Mode | Trigger | Behaviour |
+|------|---------|-----------|
+| PTT | Ctrl+Space (hold) | Record while held, transcribe on release |
+| Wake Word | Say "Peter, ..." | Continuous VAD listening, transcribe on speech end |
+| Muted | Tray menu | No input, no output |
+
+### Setup
+
+```powershell
+cd peter-voice
+powershell -ExecutionPolicy Bypass -File setup.ps1
+```
+
+*Last updated: 2026-02-06 — Router V2 (CLI --print mode) now default, Peter Voice added*

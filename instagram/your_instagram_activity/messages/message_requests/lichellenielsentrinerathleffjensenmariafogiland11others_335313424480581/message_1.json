@@ -1,0 +1,72 @@
+{
+  "participants": [
+    {
+      "name": "Lichelle Nielsen"
+    },
+    {
+      "name": "Trine Rathleff Jensen"
+    },
+    {
+      "name": "\u00f0\u009d\u0091\u0080\u00f0\u009d\u0090\u00b4\u00f0\u009d\u0091\u0085\u00f0\u009d\u0090\u00bc\u00f0\u009d\u0090\u00b4 \u00f0\u009d\u0090\u00b9\u00f0\u009d\u0091\u0082\u00f0\u009d\u0090\u00ba\u00f0\u009d\u0090\u00bc\u00f0\u009d\u0090\u00bf"
+    },
+    {
+      "name": "Chris Hadley"
+    },
+    {
+      "name": "Martin Ask\u00c3\u00b8 Jensen"
+    },
+    {
+      "name": "Carmen Caramell"
+    },
+    {
+      "name": "Jemi"
+    },
+    {
+      "name": "Instagram user"
+    },
+    {
+      "name": "Haukur Sverrisson"
+    },
+    {
+      "name": "Kate Jacobsen"
+    },
+    {
+      "name": "Maja Gee"
+    },
+    {
+      "name": "Morten Tamstrup"
+    },
+    {
+      "name": "Jorge Velez"
+    },
+    {
+      "name": "Kristina Otto"
+    },
+    {
+      "name": "Tove Johannes"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Instagram user",
+      "timestamp_ms": 1613809448085,
+      "content": "https://bnc.lt/BeSDUnyw0db",
+      "share": {
+        "link": "https://bnc.lt/BeSDUnyw0db"
+      },
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "title": "Lichelle Nielsen, Trine Rathleff Jensen, \u00f0\u009d\u0091\u0080\u00f0\u009d\u0090\u00b4\u00f0\u009d\u0091\u0085\u00f0\u009d\u0090\u00bc\u00f0\u009d\u0090\u00b4 \u00f0\u009d\u0090\u00b9\u00f0\u009d\u0091\u0082\u00f0\u009d\u0090\u00ba\u00f0\u009d\u0090\u00bc\u00f0\u009d\u0090\u00bf and 11 others",
+  "is_still_participant": true,
+  "thread_path": "message_requests/lichellenielsentrinerathleffjensenmariafogiland11others_335313424480581",
+  "magic_words": [
+    
+  ],
+  "joinable_mode": {
+    "mode": 1,
+    "link": ""
+  },
+  "is_pending": true
+}
