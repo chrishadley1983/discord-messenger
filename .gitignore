@@ -84,3 +84,26 @@ docs/task-dashboard.jsx
 *-temp.json
 *-updated.ts
 scripts/google_auth.js
+
+# Chrome extensions (contain API keys / webhook URLs)
+FB Refresh/
+fb-marketplace-sniper/
+
+# Personal data exports
+instagram/
+
+# Voice assistant (separate project)
+peter-voice/
+
+# One-off scripts not part of core bot
+scripts/backfill_exit_dates.*
+scripts/categorise_groceries.py
+scripts/check_csv*.ps1
+scripts/generate_meal_plan_pdf.py
+scripts/generate_shopping_list.py
+scripts/kill_*.sh
+scripts/restart_hadley.ps1
+scripts/run_backfill.ps1
+scripts/scrape_vercel_usage.py
+scripts/split_batches.ps1
+scripts/sql_batches/
