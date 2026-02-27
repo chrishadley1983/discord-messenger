@@ -478,7 +478,7 @@ async def on_message(message):
 
             def _build_status_embed(turn: int, elapsed: float, finished: bool = False) -> discord.Embed:
                 if finished:
-                    title = f"✅ Completed · {_format_elapsed(elapsed)} · {turn} turns"
+                    title = f"Completed · {_format_elapsed(elapsed)} · {turn} turns"
                     colour = 0x2ECC71  # green
                 else:
                     title = f"⏱️ {_format_elapsed(elapsed)} · Turn {turn}"
@@ -486,14 +486,14 @@ async def on_message(message):
 
                 embed = discord.Embed(title=title, colour=colour)
 
-                # Build activity log — use -# (subtext) for smaller font
+                # Build activity log inside a code block for contained "code window" look
                 visible = status_lines[-15:]
-                lines = [f"-# {l}" for l in visible]
                 if len(status_lines) > 15:
-                    lines.insert(0, f"-# *... {len(status_lines) - 15} earlier steps*")
+                    visible = [f"... {len(status_lines) - 15} earlier steps"] + visible
 
-                if lines:
-                    embed.description = "\n".join(lines)
+                if visible:
+                    code_body = "\n".join(visible)
+                    embed.description = f"```\n{code_body}\n```"
 
                 return embed
 
@@ -503,14 +503,13 @@ async def on_message(message):
 
                 # Handle string messages (credit exhaustion, kimi fallback, etc.)
                 if isinstance(info, str):
-                    status_lines.append(f"⚠️ {info}" if not info.startswith("⚠️") else info)
+                    status_lines.append(f"!! {info}" if not info.startswith("⚠️") else info)
                 elif isinstance(info, dict):
-                    emoji = info.get("emoji", "🔧")
                     tool_name = info.get("tool_name", "")
                     context = info.get("context", "")
-                    # Short display name for the tool
+                    # Short display name for the tool (no emojis — inside code block)
                     short_name = tool_name.split("__")[-1] if "__" in tool_name else tool_name
-                    line = f"{emoji} {short_name}"
+                    line = short_name
                     if context:
                         line += f"  {context}"
                     status_lines.append(line)
