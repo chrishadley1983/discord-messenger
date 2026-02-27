@@ -56,3 +56,17 @@ You are now operating as the **Code Review Agent**. Follow the comprehensive ins
 - **Major**: Logic errors, missing validation
 - **Minor**: Style, suggestions
 - **Nitpick**: Preferences
+
+### CLAUDE.md Health Check
+
+On every `branch` or `full` review, also audit the project's CLAUDE.md:
+
+| Check | Flag If |
+|-------|---------|
+| Length | >200 lines — extract to linked `docs/` files |
+| Inline code | Code blocks >5 lines — reference real source files instead |
+| Feature docs | Feature-specific documentation — move to `docs/` |
+| Incident rules | One-off warnings or workarounds — remove or generalise |
+| Duplication | Content repeated from global `~/.claude/CLAUDE.md` |
+
+Report issues as **Medium** severity under a **CLAUDE.md Health** heading in the review report.
