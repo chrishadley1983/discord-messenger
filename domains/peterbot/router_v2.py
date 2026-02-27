@@ -374,7 +374,10 @@ async def _stream_response(
     non_json_lines = []  # Capture non-JSON output for credit error detection
     start_time = time.monotonic()
     tool_call_counts: dict[str, int] = {}  # Track repeated tool calls for loop detection
-    TOOL_REPEAT_LIMIT = 3  # Abort if same tool+context called this many times
+    TOOL_REPEAT_LIMIT = 4  # Abort if same tool+context called this many times
+    # Only detect loops on tools that can fail in retry-worthy ways.
+    # Read/Glob/Grep are idempotent and safe to repeat (Claude re-reads files normally).
+    LOOP_DETECT_TOOLS = {"Bash", "WebFetch", "WebSearch", "mcp__searxng__search"}
 
     async for raw_line in proc.stdout:
         line = raw_line.decode("utf-8", errors="replace").strip()
@@ -424,11 +427,12 @@ async def _stream_response(
                     tool_input = block.get("input", {})
                     meta.tools_used.append(tool_name)
 
-                    # Loop detection: build a signature from tool name + key input
+                    # Loop detection: only for tools that can fail in retry-worthy ways
                     sig_context = _tool_context(tool_name, tool_input)
                     call_sig = f"{tool_name}:{sig_context}"
-                    tool_call_counts[call_sig] = tool_call_counts.get(call_sig, 0) + 1
-                    if tool_call_counts[call_sig] >= TOOL_REPEAT_LIMIT:
+                    if tool_name in LOOP_DETECT_TOOLS:
+                        tool_call_counts[call_sig] = tool_call_counts.get(call_sig, 0) + 1
+                    if tool_call_counts.get(call_sig, 0) >= TOOL_REPEAT_LIMIT:
                         logger.warning(
                             f"Loop detected: {call_sig!r} called {TOOL_REPEAT_LIMIT} times — "
                             f"aborting at turn {meta.num_turns}"
