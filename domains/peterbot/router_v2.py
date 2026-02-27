@@ -298,8 +298,19 @@ def _cleanup_stale_pids() -> None:
         logger.debug(f"Stale PID cleanup failed: {e}")
 
 
+_DEFAULT_APPEND_PROMPT = (
+    "Respond to the user message in the Current Message section. "
+    "RESILIENCE RULES: "
+    "If a tool call, API endpoint, or command fails, do NOT retry the same thing more than twice. "
+    "After 2 failures, STOP and try an alternative approach: use a different tool, build the missing "
+    "functionality yourself, work around the problem, or tell the user what went wrong and what you tried. "
+    "You have full autonomy — you can create files, write code, build endpoints, install packages. "
+    "Never burn turns retrying something that is clearly broken."
+)
+
+
 def _build_cli_command(
-    append_prompt: str = "Respond to the user message in the Current Message section.",
+    append_prompt: str = _DEFAULT_APPEND_PROMPT,
     config_dir: str = "",
     model: str = "",
 ) -> tuple[list[str], str]:
@@ -362,6 +373,8 @@ async def _stream_response(
     last_assistant_text = ""  # Fallback: last text from assistant events
     non_json_lines = []  # Capture non-JSON output for credit error detection
     start_time = time.monotonic()
+    tool_call_counts: dict[str, int] = {}  # Track repeated tool calls for loop detection
+    TOOL_REPEAT_LIMIT = 3  # Abort if same tool+context called this many times
 
     async for raw_line in proc.stdout:
         line = raw_line.decode("utf-8", errors="replace").strip()
@@ -410,6 +423,23 @@ async def _stream_response(
                     tool_name = block.get("name", "")
                     tool_input = block.get("input", {})
                     meta.tools_used.append(tool_name)
+
+                    # Loop detection: build a signature from tool name + key input
+                    sig_context = _tool_context(tool_name, tool_input)
+                    call_sig = f"{tool_name}:{sig_context}"
+                    tool_call_counts[call_sig] = tool_call_counts.get(call_sig, 0) + 1
+                    if tool_call_counts[call_sig] >= TOOL_REPEAT_LIMIT:
+                        logger.warning(
+                            f"Loop detected: {call_sig!r} called {TOOL_REPEAT_LIMIT} times — "
+                            f"aborting at turn {meta.num_turns}"
+                        )
+                        abort_msg = (
+                            f"⚠️ I got stuck retrying the same action ({tool_name}: {sig_context}). "
+                            "I've stopped to avoid wasting turns. "
+                            "Could you rephrase or tell me how to approach this differently?"
+                        )
+                        meta.result_text = abort_msg
+                        return meta
 
                     if interim_callback:
                         elapsed = time.monotonic() - start_time
@@ -484,7 +514,7 @@ async def _stream_response(
 
 async def invoke_claude_cli(
     context: str,
-    append_prompt: str = "Respond to the user message in the Current Message section.",
+    append_prompt: str = _DEFAULT_APPEND_PROMPT,
     timeout: int = CLI_TOTAL_TIMEOUT,
     interim_callback: Optional[Callable[[Union[str, dict]], Awaitable[None]]] = None,
     cost_source: str = "unknown",
@@ -633,7 +663,7 @@ PROVIDER_LABELS = {
 
 async def invoke_llm(
     context: str,
-    append_prompt: str = "Respond to the user message in the Current Message section.",
+    append_prompt: str = _DEFAULT_APPEND_PROMPT,
     timeout: int = CLI_TOTAL_TIMEOUT,
     interim_callback: Optional[Callable[[Union[str, dict]], Awaitable[None]]] = None,
     cost_source: str = "unknown",
@@ -842,7 +872,7 @@ async def handle_message(
         # 4. Send to LLM (routes to Claude or Kimi based on active provider)
         response, provider_used = await invoke_llm(
             context=full_context,
-            append_prompt="Respond to the user message in the Current Message section.",
+            append_prompt=_DEFAULT_APPEND_PROMPT,
             interim_callback=interim_callback,
             cost_source="conversation",
             cost_channel=channel_name,
