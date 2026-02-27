@@ -69,7 +69,7 @@ CLI_MAX_TURNS = 50            # Max agentic turns for conversations (quality ove
 CLI_SCHEDULED_MAX_TURNS = 15  # Max agentic turns for scheduled jobs (may need more tools)
 # No --max-budget-usd flag needed: CLI runs on subscription, not API billing.
 # The subscription's own rate limits are the safety net.
-CLI_MODEL = "claude-sonnet-4-6"    # Sonnet 4.6 for conversations (fast with large context)
+CLI_MODEL = "opus"                # Opus for conversations (better at autonomous multi-step tasks)
 CLI_SCHEDULED_MODEL = "claude-opus-4-6"  # Opus 4.6 for scheduled jobs (smaller context, quality matters)
 CLI_COMMAND = os.environ.get("PETERBOT_CLI_COMMAND", "claude")  # CLI binary
 CLI_WORKING_DIR = PETERBOT_SESSION_PATH  # ~/peterbot (where CLAUDE.md lives)

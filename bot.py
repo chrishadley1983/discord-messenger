@@ -5,7 +5,10 @@ Routes messages to domain handlers based on channel.
 """
 
 import asyncio
+import io
 import os
+import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -585,6 +588,44 @@ async def on_message(message):
             for embed_data in processed.embeds:
                 embed_obj = discord.Embed.from_dict(embed_data)
                 await message.channel.send(embed=embed_obj)
+
+            # Detect file paths in response and attach them
+            # Matches WSL paths like /tmp/..., /home/..., or Windows paths
+            file_paths = re.findall(
+                r'(?:^|[\s`(])(/(?:tmp|home|mnt)[^\s`),\]]+\.(?:jpg|jpeg|png|gif|webp|pdf|csv|txt|json|zip))',
+                raw_response or "",
+                re.IGNORECASE,
+            )
+            # Deduplicate while preserving order
+            seen = set()
+            unique_paths = []
+            for fp in file_paths:
+                if fp not in seen:
+                    seen.add(fp)
+                    unique_paths.append(fp)
+
+            if unique_paths:
+                discord_files = []
+                for wsl_path in unique_paths[:10]:  # Cap at 10 files
+                    try:
+                        result = subprocess.run(
+                            ["wsl", "cat", wsl_path],
+                            capture_output=True, timeout=10,
+                        )
+                        if result.returncode == 0 and result.stdout:
+                            filename = wsl_path.rsplit("/", 1)[-1]
+                            discord_files.append(
+                                discord.File(io.BytesIO(result.stdout), filename=filename)
+                            )
+                    except Exception as e:
+                        logger.warning(f"Failed to read WSL file {wsl_path}: {e}")
+
+                # Send files in batches of 10 (Discord limit per message)
+                if discord_files:
+                    try:
+                        await message.channel.send(files=discord_files)
+                    except Exception as e:
+                        logger.warning(f"Failed to send file attachments: {e}")
 
             # Add reactions if specified (for alerts)
             if processed.reactions:
