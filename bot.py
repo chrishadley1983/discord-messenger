@@ -466,26 +466,39 @@ async def on_message(message):
                 if history_messages:
                     populate_buffer_from_history(message.channel.id, history_messages)
 
-            # Live status message that updates in place with tool activity
+            # Live status embed that updates in place with tool activity
             status_msg = None
             status_lines = []
             status_start = time.monotonic()
+            GOLD = 0xFFD700
 
             def _format_elapsed(seconds: float) -> str:
                 m, s = divmod(int(seconds), 60)
                 return f"{m}m {s:02d}s" if m else f"{s}s"
 
-            def _build_status_text(turn: int, elapsed: float) -> str:
-                header = f"🎫 Working on your request...\n⏱️ {_format_elapsed(elapsed)} · Turn {turn}\n"
-                # Show last 15 lines to stay within Discord 2000 char limit
+            def _build_status_embed(turn: int, elapsed: float, finished: bool = False) -> discord.Embed:
+                if finished:
+                    title = f"✅ Completed · {_format_elapsed(elapsed)} · {turn} turns"
+                    colour = 0x2ECC71  # green
+                else:
+                    title = f"⏱️ {_format_elapsed(elapsed)} · Turn {turn}"
+                    colour = GOLD
+
+                embed = discord.Embed(title=title, colour=colour)
+
+                # Build activity log — use -# (subtext) for smaller font
                 visible = status_lines[-15:]
-                body = "\n".join(visible)
+                lines = [f"-# {l}" for l in visible]
                 if len(status_lines) > 15:
-                    body = f"*... {len(status_lines) - 15} earlier steps*\n" + body
-                return (header + "\n" + body) if body else header
+                    lines.insert(0, f"-# *... {len(status_lines) - 15} earlier steps*")
+
+                if lines:
+                    embed.description = "\n".join(lines)
+
+                return embed
 
             async def post_interim(info):
-                """Post/update live status message with tool activity."""
+                """Post/update live status embed with tool activity."""
                 nonlocal status_msg
 
                 # Handle string messages (credit exhaustion, kimi fallback, etc.)
@@ -504,13 +517,13 @@ async def on_message(message):
 
                 turn = info.get("turn", 0) if isinstance(info, dict) else 0
                 elapsed = info.get("elapsed_seconds", 0) if isinstance(info, dict) else (time.monotonic() - status_start)
-                text = _build_status_text(max(turn, 1), elapsed)
+                embed = _build_status_embed(max(turn, 1), elapsed)
 
                 try:
                     if status_msg is None:
-                        status_msg = await message.channel.send(text)
+                        status_msg = await message.channel.send(embed=embed)
                     else:
-                        await status_msg.edit(content=text)
+                        await status_msg.edit(embed=embed)
                 except Exception:
                     pass  # Don't let status updates break the main flow
 
@@ -539,10 +552,13 @@ async def on_message(message):
                 attachment_urls=attachment_urls if attachment_urls else None
             )
 
-            # Delete the live status message now that we have the full response
+            # Update status embed to show completion
             if status_msg is not None:
                 try:
-                    await status_msg.delete()
+                    elapsed = time.monotonic() - status_start
+                    turn = len(status_lines)
+                    embed = _build_status_embed(max(turn, 1), elapsed, finished=True)
+                    await status_msg.edit(embed=embed)
                 except Exception:
                     pass
 
