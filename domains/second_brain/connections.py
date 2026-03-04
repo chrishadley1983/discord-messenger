@@ -28,7 +28,6 @@ from .db import (
     semantic_search,
     get_recent_items,
     insert_connection,
-    connection_exists,
     get_connections_for_item,
     get_unsurfaced_connections,
     mark_connection_surfaced,

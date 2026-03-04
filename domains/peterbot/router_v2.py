@@ -848,14 +848,9 @@ async def handle_message(
             attachment_urls, temp_files = await _download_attachments(attachment_urls)
 
     try:
-        # 2. Fetch memory context (graceful degradation)
-        try:
-            memory_context = await memory.get_memory_context(query=message)
-        except Exception as e:
-            logger.warning(f"Memory context fetch failed: {e}")
-            memory_context = ""
-
-        # 2b. Fetch Second Brain knowledge context (graceful degradation)
+        # 2. Fetch Second Brain knowledge context (graceful degradation)
+        # Single semantic search via surfacing module (has decay filtering,
+        # access boosting, and pre-filtering via should_surface)
         knowledge_context = ""
         try:
             from domains.second_brain.surfacing import get_context_for_message
@@ -867,7 +862,7 @@ async def handle_message(
         channel_name = CHANNEL_ID_TO_NAME.get(channel_id, f"Channel {channel_id}")
         full_context = memory.build_full_context(
             message,
-            memory_context,
+            "",  # memory_context removed — surfacing handles semantic search
             channel_id,
             channel_name,
             knowledge_context=knowledge_context,

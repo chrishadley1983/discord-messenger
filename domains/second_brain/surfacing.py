@@ -136,35 +136,6 @@ def format_context_for_claude(results: list[SearchResult]) -> str:
     return "\n".join(lines)
 
 
-def format_context_compact(results: list[SearchResult]) -> str:
-    """Format results in a more compact form for token efficiency.
-
-    Args:
-        results: Search results to format
-
-    Returns:
-        Compact formatted string
-    """
-    if not results:
-        return ""
-
-    lines = ["[CONTEXT]"]
-
-    for result in results:
-        item = result.item
-        title = item.title or "Untitled"
-        if len(title) > 50:
-            title = title[:47] + "..."
-
-        # One line per item: title | summary
-        summary = (item.summary or "")[:150]
-        lines.append(f"• {title}: {summary}")
-
-    lines.append("[/CONTEXT]")
-
-    return "\n".join(lines)
-
-
 async def should_surface(message: str) -> bool:
     """Quick check if surfacing might be useful for this message.
 

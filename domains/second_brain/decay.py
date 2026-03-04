@@ -63,66 +63,6 @@ def calculate_decay_score(
     return base_priority * base_decay * access_boost
 
 
-def estimate_days_until_threshold(
-    current_decay: float,
-    threshold: float = 0.1,
-    access_count: int = 0,
-    base_priority: float = 1.0,
-) -> int:
-    """Estimate days until an item falls below a decay threshold.
-
-    Useful for "fading items" detection.
-
-    Args:
-        current_decay: Current decay score
-        threshold: Score threshold (default 0.1)
-        access_count: Current access count
-        base_priority: Base priority
-
-    Returns:
-        Estimated days until threshold, or -1 if already below
-    """
-    if current_decay <= threshold:
-        return -1
-
-    access_boost = 1 + math.log2(access_count + 1)
-
-    # Solve for days: threshold = priority * 0.5^(d/90) * access_boost
-    # 0.5^(d/90) = threshold / (priority * access_boost)
-    # d/90 = log(threshold / (priority * access_boost)) / log(0.5)
-    # d = 90 * log(threshold / (priority * access_boost)) / log(0.5)
-
-    target_decay = threshold / (base_priority * access_boost)
-
-    if target_decay >= 1:
-        return 0  # Already above threshold with just priority
-
-    days = DECAY_HALF_LIFE_DAYS * math.log(target_decay) / math.log(0.5)
-    return max(0, int(days))
-
-
-def decay_score_at_days(
-    days: int,
-    access_count: int = 0,
-    base_priority: float = 1.0,
-) -> float:
-    """Calculate what the decay score will be after N days.
-
-    Assumes no additional accesses.
-
-    Args:
-        days: Days in the future
-        access_count: Current access count
-        base_priority: Base priority
-
-    Returns:
-        Predicted decay score
-    """
-    base_decay = math.pow(0.5, days / DECAY_HALF_LIFE_DAYS)
-    access_boost = 1 + math.log2(access_count + 1)
-    return base_priority * base_decay * access_boost
-
-
 def is_fading(
     decay_score: float,
     threshold: float = 0.3,
@@ -139,35 +79,3 @@ def is_fading(
     return decay_score < threshold
 
 
-def calculate_access_boost_needed(
-    current_decay: float,
-    target_decay: float,
-    base_priority: float = 1.0,
-    base_decay: float = 1.0,
-) -> int:
-    """Calculate how many accesses needed to reach a target score.
-
-    Args:
-        current_decay: Current decay score
-        target_decay: Target decay score
-        base_priority: Base priority
-        base_decay: Current time-based decay component
-
-    Returns:
-        Number of additional accesses needed, or 0 if already met
-    """
-    if current_decay >= target_decay:
-        return 0
-
-    # target = priority * base_decay * (1 + log2(n + 1))
-    # (1 + log2(n + 1)) = target / (priority * base_decay)
-    # log2(n + 1) = target / (priority * base_decay) - 1
-    # n + 1 = 2^(target / (priority * base_decay) - 1)
-    # n = 2^(target / (priority * base_decay) - 1) - 1
-
-    needed_boost = target_decay / (base_priority * base_decay)
-    if needed_boost <= 1:
-        return 0
-
-    access_needed = math.pow(2, needed_boost - 1) - 1
-    return max(0, int(math.ceil(access_needed)))

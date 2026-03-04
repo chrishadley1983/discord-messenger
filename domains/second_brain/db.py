@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -211,13 +211,13 @@ async def boost_access(item_id: UUID) -> None:
             from .decay import calculate_decay_score
             new_decay = calculate_decay_score(
                 created_at=item.created_at,
-                last_accessed_at=datetime.utcnow(),
+                last_accessed_at=datetime.now(timezone.utc),
                 access_count=new_count,
                 base_priority=item.base_priority,
             )
             await update_knowledge_item(
                 item_id,
-                last_accessed_at=datetime.utcnow().isoformat(),
+                last_accessed_at=datetime.now(timezone.utc).isoformat(),
                 access_count=new_count,
                 decay_score=new_decay,
             )
@@ -534,7 +534,7 @@ async def mark_connection_surfaced(connection_id: UUID) -> None:
             headers=_get_headers(),
             json={
                 "surfaced": True,
-                "surfaced_at": datetime.utcnow().isoformat(),
+                "surfaced_at": datetime.now(timezone.utc).isoformat(),
             },
         )
         response.raise_for_status()

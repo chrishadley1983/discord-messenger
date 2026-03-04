@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 
 from domains.second_brain.decay import (
     calculate_decay_score,
-    decay_score_at_days,
     is_fading,
 )
 from domains.second_brain.config import DECAY_HALF_LIFE_DAYS
@@ -106,16 +105,6 @@ class TestPriorityScore:
 
 class TestHelperFunctions:
     """Test helper functions."""
-
-    def test_decay_score_at_days(self):
-        """Should predict future decay score."""
-        # At day 0, score should be ~1.0
-        day0 = decay_score_at_days(0)
-        assert day0 == pytest.approx(1.0, rel=0.01)
-
-        # At half-life, score should be ~0.5
-        half_life = decay_score_at_days(DECAY_HALF_LIFE_DAYS)
-        assert half_life == pytest.approx(0.5, rel=0.01)
 
     def test_is_fading(self):
         """Should detect fading items."""
