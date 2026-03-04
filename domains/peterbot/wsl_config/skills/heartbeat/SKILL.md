@@ -23,7 +23,36 @@ Run these checks:
 
 If any check fails → Include failure in status output
 
-### 2. To-Do Processing (if healthy)
+### 2. Peter Queue Tasks (if healthy)
+
+Check the pre-fetched `ptasks` data (injected automatically by the data fetcher).
+
+If ptasks exist, pick the **first one** (already sorted by priority) and:
+
+1. Note the task ID, title, and description
+2. Set status to `in_progress`:
+   ```bash
+   curl -s -X POST "http://172.19.64.1:8100/ptasks/<task_id>/status" \
+     -H "Content-Type: application/json" -d '{"status": "in_progress"}'
+   ```
+3. **Work on the task** — research, create files, implement, whatever it needs
+4. When complete, set status to `review`:
+   ```bash
+   curl -s -X POST "http://172.19.64.1:8100/ptasks/<task_id>/status" \
+     -H "Content-Type: application/json" -d '{"status": "review"}'
+   ```
+5. Add a comment with your results:
+   ```bash
+   curl -s -X POST "http://172.19.64.1:8100/ptasks/<task_id>/comments" \
+     -H "Content-Type: application/json" -d '{"content": "<summary of what you did>"}'
+   ```
+6. Use dual-channel output format (see below)
+
+**Only process ONE task per heartbeat.** If multiple are queued, the rest wait for next run.
+
+### 3. HEARTBEAT.md Fallback (if no ptasks)
+
+If there are no ptasks to process, fall back to the HEARTBEAT.md file.
 
 Read the file `HEARTBEAT.md` in your working directory and look for pending items.
 
@@ -51,7 +80,18 @@ Health: ✅ | Memory: ✅ | No pending tasks
 Health: ✅ | Memory: ❌ | Check failed: [reason]
 ```
 
-**With task completion - USE DUAL-CHANNEL FORMAT:**
+**With ptask completion - USE DUAL-CHANNEL FORMAT:**
+```
+---HEARTBEAT---
+💚 **Heartbeat** - [time]
+Health: ✅ | Memory: ✅ | Completed ptask: [task title]
+---PETERBOT---
+[Full task output here - research results, created files, etc.]
+
+Task moved to review ✓
+```
+
+**With HEARTBEAT.md task completion - USE DUAL-CHANNEL FORMAT:**
 ```
 ---HEARTBEAT---
 💚 **Heartbeat** - [time]
@@ -74,7 +114,8 @@ This keeps the heartbeat channel clean (status only) while delivering useful con
 
 - **ALWAYS output something** - no more NO_REPLY
 - Health checks first, quick verification only
-- If pending to-do items exist, pick ONE and work on it
+- **Priority: ptasks first**, then HEARTBEAT.md fallback
+- If pending items exist, pick ONE and work on it
 - **TRY TO IMPLEMENT IT YOURSELF** - You have full Claude Code capabilities!
 - Only punt to Chris if it genuinely requires Hadley API changes or core bot code
 - Work until done, don't stop mid-task
@@ -130,11 +171,11 @@ If you encounter something that needs Chris's input:
 Health: ✅ | Memory: ✅ | No pending tasks
 ```
 
-**Example 2: Task completed**
+**Example 2: Ptask completed**
 ```
 ---HEARTBEAT---
 💚 **Heartbeat** - 14:00
-Health: ✅ | Memory: ✅ | Completed: Japan travel research
+Health: ✅ | Memory: ✅ | Completed ptask: Research Japan travel options
 ---PETERBOT---
 🇯🇵 **Japan Travel Research**
 
@@ -146,6 +187,19 @@ Health: ✅ | Memory: ✅ | Completed: Japan travel research
 - Avoid Golden Week (late April - early May)
 - JR Pass: Calculate per itinerary, regional passes often better
 - Book popular spots 12 months ahead
+
+Task moved to review ✓
+```
+
+**Example 3: HEARTBEAT.md task completed**
+```
+---HEARTBEAT---
+💚 **Heartbeat** - 16:30
+Health: ✅ | Memory: ✅ | Completed: Update skill docs
+---PETERBOT---
+📝 **Skill Docs Update**
+
+Updated 3 skill files with missing trigger keywords.
 
 HEARTBEAT.md updated ✓
 ```

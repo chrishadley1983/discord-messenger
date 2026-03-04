@@ -190,6 +190,15 @@ def process(
     else:
         content = formatted
 
+    # Safety fallback: if formatter produced nothing (no content, no embeds),
+    # fall back to conversational formatting of the original text.
+    # This prevents classifiers like IMAGE_RESULTS from silently eating content
+    # when extract_image_results finds no .jpg/.png URLs (e.g. Google Drive links).
+    if not content and not embed and not embeds and sanitised.strip():
+        content = format_conversational(sanitised, {'user_prompt': ctx.user_prompt})
+        if isinstance(content, str):
+            content = strip_trailing_meta(content)
+
     # Stage 4: Chunk
     if content:
         chunks = chunk(content)

@@ -66,11 +66,11 @@ USE_ROUTER_V2 = os.environ.get("PETERBOT_ROUTER_V2", "1").lower() not in ("0", "
 # CLI execution settings
 CLI_TOTAL_TIMEOUT = 1200      # Max seconds for conversation CLI execution (20 min)
 CLI_MAX_TURNS = 50            # Max agentic turns for conversations (quality over speed)
-CLI_SCHEDULED_MAX_TURNS = 15  # Max agentic turns for scheduled jobs (may need more tools)
+CLI_SCHEDULED_MAX_TURNS = 50  # Max agentic turns for scheduled jobs (same as conversations)
 # No --max-budget-usd flag needed: CLI runs on subscription, not API billing.
 # The subscription's own rate limits are the safety net.
 CLI_MODEL = "opus"                # Opus for conversations (better at autonomous multi-step tasks)
-CLI_SCHEDULED_MODEL = "claude-opus-4-6"  # Opus 4.6 for scheduled jobs (smaller context, quality matters)
+CLI_SCHEDULED_MODEL = "opus"  # Opus for scheduled jobs (4.6 hangs on open-ended skills like self-reflect)
 CLI_COMMAND = os.environ.get("PETERBOT_CLI_COMMAND", "claude")  # CLI binary
 CLI_WORKING_DIR = PETERBOT_SESSION_PATH  # ~/peterbot (where CLAUDE.md lives)
 

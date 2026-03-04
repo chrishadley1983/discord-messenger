@@ -197,6 +197,19 @@
     "description": "Inventory valuation and breakdown",
     "channel": null
   },
+  "hb-minifig-removals": {
+    "triggers": [
+      "minifig removals",
+      "pending removals",
+      "approve removals",
+      "minifig sold",
+      "removal queue"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Review and approve minifig cross-platform removal queue",
+    "channel": null
+  },
   "hb-orders": {
     "triggers": [
       "pending orders",
@@ -376,6 +389,27 @@
     "description": "Post water intake and step progress with motivation",
     "channel": null
   },
+  "instagram-concepts": {
+    "triggers": [
+      "instagram concepts",
+      "post ideas"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Generate 5 Instagram post concepts for Hadley Bricks",
+    "channel": null
+  },
+  "instagram-processing": {
+    "triggers": [
+      "instagram processing",
+      "process instagram",
+      "write captions"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Process images and write captions for approved Instagram concepts",
+    "channel": null
+  },
   "knowledge-digest": {
     "triggers": [
       "knowledge digest",
@@ -525,7 +559,7 @@
     "triggers": [],
     "conversational": false,
     "scheduled": true,
-    "description": "Scheduled self-improvement review - add items to HEARTBEAT.md",
+    "description": "Review recent memories and activity to proactively identify useful tasks",
     "channel": "#alerts"
   },
   "shopping-list-pdf": {

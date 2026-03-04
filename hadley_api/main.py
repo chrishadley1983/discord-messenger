@@ -33,6 +33,39 @@ app.include_router(vinted_router)
 
 UK_TZ = ZoneInfo("Europe/London")
 
+# Calendars to query for read endpoints (primary + shared)
+CALENDAR_IDS = [
+    'primary',
+    'aehadley86@gmail.com',
+    'family04516641497623508871@group.calendar.google.com',
+]
+
+CALENDAR_LABELS = {
+    'primary': 'Chris',
+    'aehadley86@gmail.com': 'Abby',
+    'family04516641497623508871@group.calendar.google.com': 'Family',
+}
+
+
+def _fetch_all_calendars(service, **kwargs):
+    """Fetch events from all configured calendars and merge results.
+
+    Accepts the same kwargs as service.events().list() except calendarId.
+    Returns a flat list of event dicts with an added 'calendar' field.
+    """
+    all_events = []
+    for cal_id in CALENDAR_IDS:
+        try:
+            result = service.events().list(calendarId=cal_id, **kwargs).execute()
+            label = CALENDAR_LABELS.get(cal_id, cal_id)
+            for event in result.get('items', []):
+                event['_calendar'] = label
+                all_events.append(event)
+        except Exception:
+            # Skip calendars that error (permissions, etc.)
+            pass
+    return all_events
+
 
 # ============================================================
 # Health Check
@@ -565,16 +598,16 @@ async def calendar_today():
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_of_day = start_of_day + timedelta(days=1)
 
-        events_result = service.events().list(
-            calendarId='primary',
+        all_items = _fetch_all_calendars(
+            service,
             timeMin=start_of_day.isoformat(),
             timeMax=end_of_day.isoformat(),
             singleEvents=True,
             orderBy='startTime'
-        ).execute()
+        )
 
         events = []
-        for event in events_result.get('items', []):
+        for event in all_items:
             start = event.get('start', {})
             end = event.get('end', {})
 
@@ -584,8 +617,12 @@ async def calendar_today():
                 "start": start.get('dateTime') or start.get('date'),
                 "end": end.get('dateTime') or end.get('date'),
                 "location": event.get('location'),
-                "all_day": 'date' in start
+                "all_day": 'date' in start,
+                "calendar": event.get('_calendar', 'Chris')
             })
+
+        # Sort merged events by start time
+        events.sort(key=lambda e: e['start'] or '')
 
         return {
             "date": now.strftime("%A %d %B %Y"),
@@ -614,17 +651,17 @@ async def calendar_week():
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=7)
 
-        events_result = service.events().list(
-            calendarId='primary',
+        all_items = _fetch_all_calendars(
+            service,
             timeMin=start.isoformat(),
             timeMax=end.isoformat(),
             singleEvents=True,
             orderBy='startTime'
-        ).execute()
+        )
 
         # Group by day
         events_by_day = {}
-        for event in events_result.get('items', []):
+        for event in all_items:
             event_start = event.get('start', {})
             start_str = event_start.get('dateTime') or event_start.get('date')
 
@@ -637,8 +674,13 @@ async def calendar_week():
                 events_by_day[day_key].append({
                     "title": event.get('summary', '(no title)'),
                     "start": start_str,
-                    "location": event.get('location')
+                    "location": event.get('location'),
+                    "calendar": event.get('_calendar', 'Chris')
                 })
+
+        # Sort events within each day by start time
+        for day_events in events_by_day.values():
+            day_events.sort(key=lambda e: e['start'] or '')
 
         return {
             "start_date": start.strftime("%A %d %B"),
@@ -677,17 +719,17 @@ async def calendar_free(
         start_of_day = check_date.replace(hour=9, minute=0, second=0, microsecond=0)
         end_of_day = check_date.replace(hour=17, minute=30, second=0, microsecond=0)
 
-        events_result = service.events().list(
-            calendarId='primary',
+        all_items = _fetch_all_calendars(
+            service,
             timeMin=start_of_day.isoformat(),
             timeMax=end_of_day.isoformat(),
             singleEvents=True,
             orderBy='startTime'
-        ).execute()
+        )
 
         # Find gaps between events
         busy_times = []
-        for event in events_result.get('items', []):
+        for event in all_items:
             start = event.get('start', {}).get('dateTime')
             end = event.get('end', {}).get('dateTime')
             if start and end:
@@ -754,36 +796,31 @@ async def calendar_range(
         start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=UK_TZ)
         end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, tzinfo=UK_TZ)
 
-        # Paginate through all events
+        # Fetch from all calendars
+        all_items = _fetch_all_calendars(
+            service,
+            timeMin=start.isoformat(),
+            timeMax=end.isoformat(),
+            singleEvents=True,
+            orderBy='startTime',
+            maxResults=min(250, limit)
+        )
+
         events = []
-        page_token = None
+        for event in all_items[:limit]:
+            start_time = event.get('start', {}).get('dateTime', event.get('start', {}).get('date', ''))
+            end_time = event.get('end', {}).get('dateTime', event.get('end', {}).get('date', ''))
+            events.append({
+                "id": event['id'],
+                "summary": event.get('summary', '(No title)'),
+                "start": start_time,
+                "end": end_time,
+                "location": event.get('location', ''),
+                "description": event.get('description', '')[:200] if event.get('description') else '',
+                "calendar": event.get('_calendar', 'Chris')
+            })
 
-        while len(events) < limit:
-            events_result = service.events().list(
-                calendarId='primary',
-                timeMin=start.isoformat(),
-                timeMax=end.isoformat(),
-                singleEvents=True,
-                orderBy='startTime',
-                maxResults=min(250, limit - len(events)),
-                pageToken=page_token
-            ).execute()
-
-            for event in events_result.get('items', []):
-                start_time = event.get('start', {}).get('dateTime', event.get('start', {}).get('date', ''))
-                end_time = event.get('end', {}).get('dateTime', event.get('end', {}).get('date', ''))
-                events.append({
-                    "id": event['id'],
-                    "summary": event.get('summary', '(No title)'),
-                    "start": start_time,
-                    "end": end_time,
-                    "location": event.get('location', ''),
-                    "description": event.get('description', '')[:200] if event.get('description') else ''
-                })
-
-            page_token = events_result.get('nextPageToken')
-            if not page_token:
-                break
+        events.sort(key=lambda e: e['start'] or '')
 
         return {
             "start_date": start_date,
@@ -3614,25 +3651,28 @@ async def calendar_search(
             raise HTTPException(status_code=503, detail="Calendar not configured")
 
         now = datetime.now(UK_TZ)
-        events_result = service.events().list(
-            calendarId='primary',
+        all_items = _fetch_all_calendars(
+            service,
             timeMin=(now - timedelta(days=365)).isoformat(),
             timeMax=(now + timedelta(days=365)).isoformat(),
             q=q,
             singleEvents=True,
             orderBy='startTime',
             maxResults=limit
-        ).execute()
+        )
 
         events = []
-        for event in events_result.get('items', []):
+        for event in all_items[:limit]:
             events.append({
                 "id": event['id'],
                 "summary": event.get('summary', '(No title)'),
                 "start": event.get('start', {}).get('dateTime', event.get('start', {}).get('date', '')),
                 "end": event.get('end', {}).get('dateTime', event.get('end', {}).get('date', '')),
-                "location": event.get('location', '')
+                "location": event.get('location', ''),
+                "calendar": event.get('_calendar', 'Chris')
             })
+
+        events.sort(key=lambda e: e['start'] or '')
 
         return {
             "query": q,
@@ -3688,23 +3728,27 @@ async def calendar_next(limit: int = Query(default=5, le=10)):
             raise HTTPException(status_code=503, detail="Calendar not configured")
 
         now = datetime.now(UK_TZ)
-        events_result = service.events().list(
-            calendarId='primary',
+        all_items = _fetch_all_calendars(
+            service,
             timeMin=now.isoformat(),
             singleEvents=True,
             orderBy='startTime',
             maxResults=limit
-        ).execute()
+        )
 
         events = []
-        for event in events_result.get('items', []):
+        for event in all_items:
             start = event.get('start', {}).get('dateTime', event.get('start', {}).get('date', ''))
             events.append({
                 "id": event['id'],
                 "summary": event.get('summary', '(No title)'),
                 "start": start,
-                "location": event.get('location', '')
+                "location": event.get('location', ''),
+                "calendar": event.get('_calendar', 'Chris')
             })
+
+        events.sort(key=lambda e: e['start'] or '')
+        events = events[:limit]
 
         return {
             "count": len(events),
@@ -7036,7 +7080,7 @@ async def hb_proxy(request: Request, path: str):
 
 HB_PROJECT_DIR = os.environ.get(
     "HADLEY_BRICKS_DIR",
-    r"C:\Users\Chris Hadley\hadley-bricks-inventory-management",
+    r"C:\Users\Chris Hadley\claude-projects\hadley-bricks-inventory-management",
 )
 
 

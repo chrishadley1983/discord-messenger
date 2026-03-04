@@ -44,6 +44,7 @@ CHANNEL_IDS = {
     "#news": 1465277483866788037,
     "#youtube": 1465277483866788037,
     "#peter-heartbeat": 1467553740570755105,
+    "#alerts": 1466019126194606286,
 }
 
 # UK timezone
@@ -52,6 +53,38 @@ UK_TZ = ZoneInfo("Europe/London")
 # Quiet hours (no jobs)
 QUIET_START = 23  # 11pm
 QUIET_END = 6     # 6am
+
+
+# --- Reasoning Leak Detection ---
+# Detects when a scheduled skill's output is internal narration/reasoning
+# instead of actual formatted content for Discord.
+
+# Patterns that indicate the response is reasoning, not output
+_REASONING_PREFIXES = re.compile(
+    r"^(?:"
+    r"(?:Now |OK,? |Alright,? )?(?:let me|I(?:'ll| will| need to| should| can))"
+    r"|(?:First|Next|Then),? (?:let me|I(?:'ll| will| need to))"
+    r"|I(?:'m going to|'ve (?:completed|finished|updated|downloaded|run))"
+    r"|Let me (?:update|run|check|fetch|download|process|create|search|source)"
+    r"|(?:Running|Processing|Downloading|Fetching|Checking|Searching|Updating)"
+    r"|The (?:script|optimizer|image|download|search|API) "
+    r")",
+    re.IGNORECASE,
+)
+
+def is_reasoning_leak(response: str, min_length: int = 200) -> bool:
+    """Detect if a response looks like leaked internal reasoning.
+
+    Returns True if the response is short AND starts with narration patterns,
+    which indicates the model described its process instead of producing output.
+
+    Long responses (>min_length chars) are assumed to contain real content
+    even if they start with a reasoning-like sentence.
+    """
+    if not response or len(response.strip()) > min_length:
+        return False
+    first_line = response.strip().split("\n")[0]
+    return bool(_REASONING_PREFIXES.match(first_line))
 
 
 @dataclass
@@ -648,6 +681,12 @@ class PeterbotScheduler:
                 is_garbage, garbage_patterns = is_garbage_response(response)
                 if is_garbage:
                     logger.warning(f"Garbage response detected for {job.name}: {garbage_patterns}")
+
+            # 6b. Check for reasoning leak (model narrated its process instead of producing output)
+            if not is_garbage and response and is_reasoning_leak(response):
+                logger.warning(f"Reasoning leak detected for {job.name}: {response[:120]!r}")
+                response = f"⚠️ **{job.skill}** ran but didn't produce clean output. Will retry next run."
+                is_garbage = False  # Post the fallback message, don't suppress
 
             # 7. Post to Discord channel (with optional file attachments)
             if response and not is_garbage:

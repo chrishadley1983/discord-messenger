@@ -1,7 +1,7 @@
 # NSSM Service Setup Script
 # Run this script as Administrator to set up the services
 
-$ProjectDir = "C:\Users\Chris Hadley\Discord-Messenger"
+$ProjectDir = "C:\Users\Chris Hadley\claude-projects\Discord-Messenger"
 $PythonExe = "C:\Users\Chris Hadley\AppData\Local\Python\pythoncore-3.14-64\python.exe"
 $LogDir = "$ProjectDir\logs"
 $LocalAppData = "C:\Users\Chris Hadley\AppData\Local"

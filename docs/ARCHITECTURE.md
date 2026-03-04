@@ -62,7 +62,7 @@ Discord Bot → tmux session (claude-peterbot) → screen capture → parser.py 
 
 | Component | Windows Path | WSL Path | Notes |
 |-----------|--------------|----------|-------|
-| Bot code | `C:\Users\Chris Hadley\Discord-Messenger\` | N/A | Runs on Windows |
+| Bot code | `C:\Users\Chris Hadley\claude-projects\Discord-Messenger\` | N/A | Runs on Windows |
 | Peterbot config | `domains\peterbot\wsl_config\` | `/home/chris_hadley/peterbot/` | Symlinked to Windows |
 | Claude Code (v2) | N/A | `claude -p` per-request | Independent process, no session |
 | Claude Code (v1) | N/A | tmux session `claude-peterbot` | Legacy fallback only |
@@ -255,11 +255,11 @@ Scheduled jobs follow a different flow, using pre-fetched data:
 The `wsl_config/` directory is symlinked into WSL so Claude Code can read skills and instructions directly:
 
 ```
-Windows:  C:\Users\Chris Hadley\Discord-Messenger\domains\peterbot\wsl_config\
+Windows:  C:\Users\Chris Hadley\claude-projects\Discord-Messenger\domains\peterbot\wsl_config\
           |
           | (symlink in WSL)
           v
-WSL:      /home/chris_hadley/peterbot -> /mnt/c/Users/Chris Hadley/Discord-Messenger/domains/peterbot/wsl_config
+WSL:      /home/chris_hadley/peterbot -> /mnt/c/Users/Chris Hadley/claude-projects/Discord-Messenger/domains/peterbot/wsl_config
 ```
 
 ### Benefits
@@ -273,7 +273,7 @@ WSL:      /home/chris_hadley/peterbot -> /mnt/c/Users/Chris Hadley/Discord-Messe
 
 ```bash
 # In WSL
-ln -s "/mnt/c/Users/Chris Hadley/Discord-Messenger/domains/peterbot/wsl_config" ~/peterbot
+ln -s "/mnt/c/Users/Chris Hadley/claude-projects/Discord-Messenger/domains/peterbot/wsl_config" ~/peterbot
 ```
 
 ### Verification
@@ -748,4 +748,71 @@ cd peter-voice
 powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
-*Last updated: 2026-02-06 — Router V2 (CLI --print mode) now default, Peter Voice added*
+---
+
+## 12. MCP Server — Second Brain Access
+
+An MCP (Model Context Protocol) server provides direct access to the Second Brain from Claude Desktop and Claude Code sessions, without needing to go through the Hadley API.
+
+### Architecture
+
+```
+Claude Desktop / Claude Code
+        │
+        │ stdio transport
+        v
+mcp_servers/second_brain_mcp.py
+        │
+        │ imports domains.second_brain.db
+        v
+    Supabase (knowledge_items, knowledge_chunks)
+```
+
+### Tools (6)
+
+| Tool | Type | Purpose |
+|------|------|---------|
+| `search_knowledge` | Read | Semantic search with query, limit, min_similarity |
+| `get_recent_items` | Read | Browse items by date |
+| `browse_topics` | Read | List all topics with counts |
+| `get_item_detail` | Read | Full item with text, summary, connections |
+| `save_to_brain` | Write | Save content (URL or text) via pipeline |
+| `list_items` | Read | Paginated browse by content_type or topic |
+
+### Configuration
+
+- **Claude Code**: `.mcp.json` in project root
+- **Claude Desktop**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+### Chat History Ingestion
+
+`scripts/ingest_claude_history.py` processes Anthropic JSON exports into both memory systems:
+- **peterbot-mem**: Preferences, decisions, personal facts
+- **Second Brain**: Knowledge, research, explanations
+
+Pipeline: Parse → Chunk by topic → Classify → Deduplicate (SHA-256 in SQLite) → Route
+
+---
+
+## 13. Scheduled Seeding & Maintenance
+
+### Incremental Seed Import (daily at 1am UK)
+
+Registered in `bot.py` via `jobs/incremental_seed.py`. Imports:
+- Calendar events (50 items, ~5 weeks back)
+- Emails (100 items, ~5 weeks back)
+- GitHub projects (30 items)
+- Garmin activities (30 items, ~1 week back)
+
+### Reprocess Pending Items (every 6 hours)
+
+Registered as `__reprocess_pending` infrastructure job. Upgrades passive captures (status=pending) to full items with embeddings and topics.
+
+### Diagnostics
+
+Run `python scripts/diagnose_memory_health.py` to check:
+- Peterbot-mem worker health
+- Second Brain item counts and decay distribution
+- Pending items needing reprocessing
+
+*Last updated: 2026-03-04 — MCP server, chat history ingestion, seeding fixes added*

@@ -85,8 +85,7 @@ MONITORED_SERVICES = {
     },
     "peterbot_session": {
         "name": "Peterbot Session",
-        "check_type": "tmux",  # Check via tmux session
-        "tmux_session": "claude-peterbot",
+        "check_type": "router_v2",  # Router V2: on-demand CLI processes (no persistent tmux)
         "critical": True,
     },
 }
@@ -256,6 +255,11 @@ async def _check_service_health(service_id: str, config: dict) -> bool:
             tmux_session_name = config.get("tmux_session")
             sessions = get_tmux_sessions()
             return any(s["name"] == tmux_session_name for s in sessions)
+        elif check_type == "router_v2":
+            # Router V2: on-demand processes, no persistent session
+            # Up if the Discord bot is running (it spawns CLI processes per-message)
+            bot_status = service_manager.get_service_status("discord_bot")
+            return bot_status.get("status") == "running"
         elif check_type == "http_any":
             # Accept any HTTP response — just check if port is open
             async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
@@ -432,7 +436,7 @@ CONFIG = {
     "hadley_api_url": "http://localhost:8100",
     "claude_mem_url": "http://localhost:37777",
     "wsl_peterbot_path": "/home/chris_hadley/peterbot",
-    "windows_project_path": r"C:\Users\Chris Hadley\Discord-Messenger",
+    "windows_project_path": r"C:\Users\Chris Hadley\claude-projects\Discord-Messenger",
 }
 
 # Key files to monitor
@@ -670,6 +674,10 @@ async def get_system_status():
 
     peterbot_session = next((s for s in sessions if s["name"] == "claude-peterbot"), None)
 
+    # Router V2: peterbot is up when discord bot is running (on-demand CLI, no persistent session)
+    discord_bot_running = svc_status.get("discord_bot", {}).get("status") == "running"
+    peterbot_up = peterbot_session is not None or discord_bot_running
+
     # Helper to get last restart - prefer actual process start time, fall back to tracked time
     def get_last_restart(service_key):
         return svc_status.get(service_key, {}).get("started_at") or _last_restart_time.get(service_key)
@@ -695,13 +703,14 @@ async def get_system_status():
             },
             "claude_mem": {**mem_status, "last_restart": _last_restart_time.get("claude_mem")},
             "discord_bot": {
-                "status": "up" if svc_status.get("discord_bot", {}).get("status") == "running" else "down",
+                "status": "up" if discord_bot_running else "down",
                 "pid": svc_status.get("discord_bot", {}).get("pid"),
                 "process_status": svc_status.get("discord_bot", {}).get("status", "unknown"),
                 "last_restart": get_last_restart("discord_bot")
             },
             "peterbot_session": {
-                "status": "up" if peterbot_session else "down",
+                "status": "up" if peterbot_up else "down",
+                "mode": "tmux" if peterbot_session else "router_v2",
                 "attached": peterbot_session["attached"] if peterbot_session else False,
                 "last_restart": _last_restart_time.get("peterbot_session")
             }
@@ -935,6 +944,18 @@ async def restart_service_endpoint(request: Request, service: str):
         run_wsl_command("tmux send-keys -t claude-peterbot 'source ~/.profile && claude --permission-mode bypassPermissions' Enter")
         _save_restart_time(service)  # Record restart time
         return {"status": "restarting", "message": "Peterbot session recreated"}
+
+    elif service == "peter_dashboard":
+        # Self-restart: respond first, then exit after a short delay.
+        # NSSM will auto-restart the process, picking up new env vars.
+        _save_restart_time(service)
+
+        async def _delayed_exit():
+            await asyncio.sleep(1)
+            os._exit(0)
+
+        asyncio.create_task(_delayed_exit())
+        return {"status": "restarting", "message": "Dashboard restarting in 1s (NSSM auto-restart)"}
 
     else:
         raise HTTPException(400, f"Unknown service: {service}")

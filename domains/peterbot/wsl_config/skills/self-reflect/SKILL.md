@@ -1,6 +1,6 @@
 ---
 name: self-reflect
-description: Scheduled self-improvement review - add items to HEARTBEAT.md
+description: Review recent memories and activity to proactively identify useful tasks
 trigger: []
 scheduled: true
 conversational: false
@@ -11,57 +11,70 @@ channel: "#alerts"
 
 ## Purpose
 
-3x daily (12:00, 18:00, 23:00 UK), review recent activity and add improvement items to HEARTBEAT.md.
+3x daily (12:00, 18:00, 23:00 UK), review what Chris has been doing, what Peter has learned, and proactively identify tasks that would be useful. Add actionable items to HEARTBEAT.md for the heartbeat skill to pick up.
 
-## Context Sources
+**You are Peter's initiative engine.** The heartbeat skill does the work — self-reflect decides WHAT work is worth doing.
 
-Think about what you've observed since the last reflection:
+## Pre-fetched Data
 
-1. **Recent conversations**
-   - What did people ask that you couldn't handle well?
-   - What took longer than it should have?
-   - What questions came up repeatedly?
+You receive four data sources:
 
-2. **Errors & failures**
-   - Tool calls that failed
-   - APIs that timed out
-   - Skills that produced poor output
+### 1. `recent_memories` — Peterbot-mem observations
+What Peter learned from recent conversations with Chris. Look for:
+- Preferences Chris expressed ("I want X", "I prefer Y")
+- Problems Chris mentioned or encountered
+- Topics Chris seems interested in
+- Requests that could become recurring automations
+- Things Chris had to repeat (automation opportunity)
 
-3. **Patterns**
-   - Requests that could become skills
-   - Information you had to search for repeatedly
-   - Workflows that could be automated
+### 2. `recent_brain_saves` — Second Brain activity
+Content recently saved to Chris's knowledge base. Look for:
+- Topics Chris is researching (travel, fitness, business)
+- Patterns in what's being saved (e.g. lots of LEGO articles = content opportunity)
+- Saved content that could be synthesised into something useful
 
-4. **Memory observations**
-   - Info that seems outdated
-   - Missing context that would have helped
-   - Things worth remembering for next time
+### 3. `job_stats_24h` / `recent_failures` — Job execution health
+How scheduled jobs performed. Look for:
+- Jobs that failed repeatedly (needs fixing)
+- Jobs that never ran (broken registration)
+- Missing coverage (times of day with no automation)
+
+### 4. `current_heartbeat` — What's already tracked
+Current HEARTBEAT.md content. **Do NOT duplicate items already listed.**
+
+## What Makes a Good Proactive Task
+
+**DO add:**
+- Research Chris would find useful based on recent interests
+- Content Chris could use (meal ideas, travel tips, business insights)
+- Fixes for broken jobs or skills
+- New skill ideas triggered by repeated requests
+- Summaries or digests of topics Chris has been exploring
+- Follow-ups on things Chris mentioned wanting to do
+
+**DO NOT add:**
+- Vague items ("improve things", "check stuff")
+- Items already in HEARTBEAT.md
+- Hadley API changes (tag as [INTEGRATION] if needed, but don't add to Pending)
+- Items that require Chris's input to even start
 
 ## Categories
 
 Tag items with their type:
 
-- `[SKILL]` - New skill or skill improvement (you can implement these!)
-- `[INTEGRATION]` - New Hadley API endpoint needed (requires Chris - explain WHY)
-- `[IDEAS]` - Speculative improvements worth exploring
-- `[FIX]` - Bug or issue to address (try to fix it yourself first!)
-- `[MEMORY]` - Observation to add/update in memory
-
-**IMPORTANT:** You have full Claude Code capabilities. Most items you can implement yourself!
-Only use `[INTEGRATION]` for Hadley API changes (Python FastAPI code you can't access).
-
-When adding `[INTEGRATION]` items, you MUST include:
-1. **What triggered this** - What was the user trying to do?
-2. **Why it's needed** - What problem does this solve?
-3. **Proposed endpoint** - What should the API look like?
-4. **Current workaround** - What can be done without it?
+- `[PROACTIVE]` - Useful task Peter can do unprompted (research, content, analysis)
+- `[SKILL]` - New skill or skill improvement Peter can implement
+- `[FIX]` - Bug or broken job to address
+- `[INTEGRATION]` - Needs Hadley API changes (explain why, don't add to Pending)
+- `[IDEAS]` - Speculative, worth exploring but lower priority
 
 ## Process
 
-1. **Review** the context sources above
-2. **Identify** actionable improvements (be selective - quality over quantity)
-3. **Update HEARTBEAT.md** - Add items under Pending with appropriate tags
-4. **Post summary** to Discord
+1. **Review** all pre-fetched data
+2. **Identify** 0-3 genuinely useful items (quality over quantity)
+3. **Check** they're not already in HEARTBEAT.md
+4. **Update HEARTBEAT.md** — Add items under Pending with tags
+5. **Post summary** to Discord
 
 ## Output
 
@@ -71,19 +84,14 @@ When adding `[INTEGRATION]` items, you MUST include:
 📝 **Self-Reflect** (12:00)
 
 **Added to HEARTBEAT.md:**
+- [PROACTIVE] Research best LEGO sets retiring in 2026 — Chris saved 3 retirement articles this week
+- [FIX] Balance monitor failing since yesterday — auth session expired
 
-**To-Do:**
-- [SKILL] Add error handling to morning-briefing when Garmin API times out
-- [INTEGRATION] Research Audible API - asked about audiobook progress twice
-
-**Ideas:**
-- [SKILL] "what's for dinner" skill - could use FamilyFuel integration
-
-**Won't Do:**
-- Weather skill - already covered by school-run, not worth separate skill
+**Considered but skipped:**
+- Weather skill — already covered by school-run
 
 ---
-_3 items added | Next: 18:00_
+_2 items added | Next: 18:00_
 ```
 
 ### If nothing to add:
@@ -91,7 +99,7 @@ _3 items added | Next: 18:00_
 ```
 📝 **Self-Reflect** (12:00)
 
-No items to add.
+No items to add. Recent activity looks routine, nothing actionable.
 
 ---
 _Next: 18:00_
@@ -99,9 +107,10 @@ _Next: 18:00_
 
 ## Rules
 
-- Be selective - only add genuinely useful items
-- Include reasoning in the item description
-- "Won't Do" shows good judgment - use it when you considered something but decided against it
-- Don't add items just to have something to report
-- If the last reflection was recent and nothing's changed, "No items" is fine
+- **Be selective** — 0-3 items max. "No items" is a perfectly good outcome.
+- Items must be specific and actionable, not vague
+- Always check current_heartbeat first to avoid duplicates
 - Update HEARTBEAT.md BEFORE posting the summary
+- The heartbeat skill runs every 30 mins and will pick up your items
+- Include brief reasoning (what triggered this idea)
+- `[INTEGRATION]` items go in the output summary only, NOT in HEARTBEAT.md Pending

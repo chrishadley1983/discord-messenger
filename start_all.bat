@@ -2,7 +2,7 @@
 REM Start all Peterbot services on Windows startup
 REM Place shortcut to this file in shell:startup
 
-cd /d "C:\Users\Chris Hadley\Discord-Messenger"
+cd /d "C:\Users\Chris Hadley\claude-projects\Discord-Messenger"
 
 echo Starting Peterbot Services...
 echo ==============================

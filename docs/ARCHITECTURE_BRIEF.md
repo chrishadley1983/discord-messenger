@@ -30,7 +30,7 @@ A personal AI assistant ecosystem centered around a Discord bot ("Peter") that i
 
 All services: auto-start on boot, auto-restart on crash (5s delay), log rotation at 10MB.
 
-**Logs**: `C:\Users\Chris Hadley\Discord-Messenger\logs\`
+**Logs**: `C:\Users\Chris Hadley\claude-projects\Discord-Messenger\logs\`
 
 ### WSL Components
 

@@ -1,5 +1,5 @@
 # Claude Code Task Management Functions
-# Add to your PowerShell profile: . "C:\Users\Chris Hadley\Discord-Messenger\scripts\claude-task-functions.ps1"
+# Add to your PowerShell profile: . "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\scripts\claude-task-functions.ps1"
 #
 # Or add these functions directly to your $PROFILE file:
 #   notepad $PROFILE
@@ -40,7 +40,7 @@ function Start-HadleyBricksFeature {
         [string]$FeatureName
     )
     Set-ClaudeTaskList "hb-$FeatureName"
-    Set-Location "C:\Users\Chris Hadley\hadley-bricks-inventory-management"
+    Set-Location "C:\Users\Chris Hadley\claude-projects\hadley-bricks-inventory-management"
     Write-Host "Working directory: $(Get-Location)" -ForegroundColor DarkGray
 }
 
@@ -50,7 +50,7 @@ function Start-PeterbotFeature {
         [string]$FeatureName
     )
     Set-ClaudeTaskList "pb-$FeatureName"
-    Set-Location "C:\Users\Chris Hadley\Discord-Messenger"
+    Set-Location "C:\Users\Chris Hadley\claude-projects\Discord-Messenger"
     Write-Host "Working directory: $(Get-Location)" -ForegroundColor DarkGray
 }
 

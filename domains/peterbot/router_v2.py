@@ -374,7 +374,7 @@ async def _stream_response(
     non_json_lines = []  # Capture non-JSON output for credit error detection
     start_time = time.monotonic()
     tool_call_counts: dict[str, int] = {}  # Track repeated tool calls for loop detection
-    TOOL_REPEAT_LIMIT = 4  # Abort if same tool+context called this many times
+    TOOL_REPEAT_LIMIT = 10  # Abort if same tool+context called this many times
     # Only detect loops on tools that can fail in retry-worthy ways.
     # Read/Glob/Grep are idempotent and safe to repeat (Claude re-reads files normally).
     LOOP_DETECT_TOOLS = {"Bash", "WebFetch", "WebSearch", "mcp__searxng__search"}

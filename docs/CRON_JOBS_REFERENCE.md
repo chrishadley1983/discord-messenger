@@ -217,7 +217,7 @@ C:\Users\Chris Hadley\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Star
 
 **Manual start:**
 ```batch
-cd "C:\Users\Chris Hadley\Discord-Messenger"
+cd "C:\Users\Chris Hadley\claude-projects\Discord-Messenger"
 python bot.py
 ```
 

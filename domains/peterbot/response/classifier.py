@@ -237,10 +237,12 @@ def classify(text: str, context: Optional[dict] = None) -> ResponseType:
             return ResponseType.NUTRITION_LOG
 
     # Priority 2: Search results (Brave API)
-    if signals.brave_search_detected or signals.has_url_list:
+    # Require brave_search_detected OR url_list with search-like structure.
+    # has_url_list alone is too broad (catches Google Drive links, etc.)
+    if signals.brave_search_detected or (signals.has_url_list and _looks_like_search_results(text)):
         if signals.news_indicators:
             return ResponseType.NEWS_RESULTS
-        if signals.image_indicators:
+        if signals.image_indicators and _has_image_urls(text):
             return ResponseType.IMAGE_RESULTS
         if signals.local_indicators:
             return ResponseType.LOCAL_RESULTS
@@ -354,6 +356,26 @@ def get_classification_confidence(text: str, assigned_type: ResponseType) -> flo
         return 0.9 if special_patterns == 0 else 0.6
 
     return 0.5
+
+
+# =============================================================================
+# CLASSIFIER HELPERS
+# =============================================================================
+
+def _looks_like_search_results(text: str) -> bool:
+    """Check if text has search-result structure (numbered results with links)."""
+    # Numbered link patterns: **1. [Title](url)** or 1. [Title](url)
+    numbered_links = re.findall(r'\*?\*?\d+\.?\s*\[', text)
+    return len(numbered_links) >= 2
+
+
+def _has_image_urls(text: str) -> bool:
+    """Check if text contains actual image file URLs (.jpg, .png, etc.)."""
+    return bool(re.search(
+        r'https?://[^\s<>\])"\']+\.(?:jpg|jpeg|png|gif|webp)',
+        text,
+        re.IGNORECASE,
+    ))
 
 
 # =============================================================================

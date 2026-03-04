@@ -102,7 +102,7 @@ SERVICES = {
         pid_file="hadley_bricks.pid",
         port=3000,
         start_cmd=["cmd", "/c", "npm", "run", "dev"],
-        cwd=r"C:\Users\Chris Hadley\hadley-bricks-inventory-management",
+        cwd=r"C:\Users\Chris Hadley\claude-projects\hadley-bricks-inventory-management",
         process_pattern="next"  # Next.js process pattern
     ),
     "peter_dashboard": ServiceConfig(

@@ -13,7 +13,7 @@ $Sessions = @(
     },
     @{
         Name = "claude-discord"
-        Path = "/mnt/c/Users/Chris Hadley/Discord-Messenger"
+        Path = "/mnt/c/Users/Chris Hadley/claude-projects/Discord-Messenger"
         Command = "claude --dangerously-skip-permissions"
     }
 )

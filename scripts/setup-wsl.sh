@@ -1,6 +1,6 @@
 #!/bin/bash
 # Full WSL setup script for Discord-Messenger with Claude Code Remote
-# Run this in WSL after installing: bash /mnt/c/Users/Chris\ Hadley/Discord-Messenger/scripts/setup-wsl.sh
+# Run this in WSL after installing: bash /mnt/c/Users/Chris\ Hadley/claude-projects/Discord-Messenger/scripts/setup-wsl.sh
 
 set -e
 
@@ -15,7 +15,7 @@ sudo apt install -y tmux jq python3 python3-pip python3-venv curl
 # Step 2: Copy project to home directory
 echo ""
 echo "[2/5] Copying project to ~/Discord-Messenger..."
-cp -r "/mnt/c/Users/Chris Hadley/Discord-Messenger" ~/Discord-Messenger
+cp -r "/mnt/c/Users/Chris Hadley/claude-projects/Discord-Messenger" ~/Discord-Messenger
 cd ~/Discord-Messenger
 
 # Step 3: Set up Python virtual environment and install dependencies

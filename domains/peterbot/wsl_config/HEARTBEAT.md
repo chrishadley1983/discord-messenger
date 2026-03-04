@@ -49,6 +49,8 @@ Chris can add items here for Peter to work on in the background.
 
 ### Done
 
+_Japan guides cleared 2026-03-03 — emailed guides were tangential to website work._
+
 _Archived 28 items from Jan 31 – Feb 6 (2026-02-22 cleanup). See git history for details._
 
 ---

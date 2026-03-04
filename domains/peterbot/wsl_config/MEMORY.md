@@ -4,7 +4,7 @@ Peter has two memory systems for different purposes.
 
 ## Overview
 
-- **Peterbot-mem**: Conversation memory — things learned from past chats with Chris
+- **Peterbot-mem**: Conversation memory — things learned from past chats with Chris (auto-injected via hooks)
 - **Second Brain**: Saved knowledge — articles, ideas, notes Chris saved or were passively captured
 
 ---
@@ -13,43 +13,27 @@ Peter has two memory systems for different purposes.
 
 Contains observations extracted from past conversations: preferences, decisions, facts about Chris's life/work/projects.
 
-### MCP Tools
+### How It Works
 
-Use the 3-layer workflow to minimize token usage:
+Peterbot-mem runs as a **claude-mem plugin** with lifecycle hooks. It does NOT expose MCP tools.
 
-**Layer 1: Search** — Get an index of matching observations
-```
-mcp__claude-mem__search
-  query: "keyword or phrase"
-  project: "peterbot"
-  limit: 10
-```
-Returns observation IDs and summaries (~50-100 tokens each).
+- **Auto-injection**: Relevant memories are automatically injected into your context at session start
+- **Auto-capture**: Observations are automatically extracted from conversations via PostToolUse hooks
+- **No manual search**: You cannot query peterbot-mem on demand — it works passively
 
-**Layer 2: Timeline** — Get context around interesting results
-```
-mcp__claude-mem__timeline
-  anchor: <observation_id from search>
-  depth_before: 3
-  depth_after: 3
-  project: "peterbot"
-```
-Shows what happened before/after a specific observation.
+### API Endpoint (for manual search when needed)
 
-**Layer 3: Get Observations** — Fetch full details
+If you need to actively search conversation memory, use the claude-mem worker API:
 ```
-mcp__claude-mem__get_observations
-  ids: [<id1>, <id2>, ...]
-  project: "peterbot"
+GET http://172.19.64.1:37777/api/context/inject?project=peterbot&query=<query>
 ```
-Only fetch full details for filtered, relevant IDs.
 
-### When to Use
+### When It Helps
 
-- "What did Chris decide about X?"
-- "What's Chris's preference for Y?"
-- "What did we discuss regarding Z?"
 - Context about Chris's routines, family, work, projects
+- Previous decisions and preferences
+- Things discussed in past conversations
+- Automatically provided — no action needed in most cases
 
 ---
 
@@ -57,27 +41,30 @@ Only fetch full details for filtered, relevant IDs.
 
 Contains articles, notes, ideas, and content Chris explicitly saved or that was passively captured from conversations.
 
-### API Endpoint (use this mid-response)
+### API Endpoints (use curl mid-response)
 
 **Search saved knowledge:**
+```bash
+curl "http://172.19.64.1:8100/brain/search?query=<query>&limit=5"
 ```
-GET http://localhost:8100/brain/search?query=<query>&limit=5
+Returns JSON with titles, excerpts, similarity scores.
+
+**Save new content:**
+```bash
+curl -X POST http://172.19.64.1:8100/brain/save \
+  -H "Content-Type: application/json" \
+  -d '{"source": "<text>", "note": "<optional>", "tags": "<optional comma-separated>"}'
 ```
-Returns JSON with titles, excerpts, similarity scores. Use this when you need to search while composing a response.
+
+**Get stats:**
+```bash
+curl http://172.19.64.1:8100/brain/stats
+```
 
 ### Discord Commands (user-facing)
 
-**Search saved knowledge:**
-```
-/recall <query>
-```
-Semantic search across all saved content. Returns titles, excerpts, similarity scores.
-
-**Save new content:**
-```
-/save <url or text>
-```
-Explicitly save an article, idea, or note.
+- `/recall <query>` — Semantic search across all saved content
+- `/save <url or text>` — Explicitly save an article, idea, or note
 
 **Passive surfacing** happens automatically — relevant knowledge is injected into your context without action needed.
 
@@ -92,15 +79,26 @@ Explicitly save an article, idea, or note.
 
 ## Which System to Use
 
-| Question Type | Use |
-|--------------|-----|
-| "What did Chris say/decide/prefer" | Peterbot-mem (MCP) |
-| "What article/note/content was saved" | Second Brain (/brain/search) |
-| Not sure | Try peterbot-mem first, then /brain/search |
+| Question Type | How to Access |
+|--------------|---------------|
+| "What did Chris say/decide/prefer" | Auto-injected by peterbot-mem hooks |
+| "What article/note/content was saved" | `curl http://172.19.64.1:8100/brain/search?query=...` |
+| Not sure | Check auto-injected context first, then curl /brain/search |
 
 ### Important
 
-- **Peterbot-mem**: Use MCP tools only (never curl)
-- **Second Brain**: Use `/brain/search` API mid-response, or `/recall` for user-facing queries
-- Always specify `project: "peterbot"` for MCP tools
-- Start with search before fetching full details
+- **Peterbot-mem**: Passive — context is auto-injected. Use the worker API at 172.19.64.1:37777 only if you need to actively search.
+- **Second Brain**: Use `curl` to the HadleyAPI at `172.19.64.1:8100`. Use the `/brain/search` endpoint.
+- Both systems use `172.19.64.1` (Windows host IP from WSL), NOT `localhost`.
+
+---
+
+## MCP Server Access (Claude Desktop & Claude Code)
+
+The Second Brain is also accessible via MCP (Model Context Protocol) from Claude Desktop and Claude Code sessions outside the bot. This provides direct tool access without needing curl or the Hadley API.
+
+**Available tools:** `search_knowledge`, `get_recent_items`, `browse_topics`, `get_item_detail`, `save_to_brain`, `list_items`
+
+Configuration is in `.mcp.json` (Claude Code) and `%APPDATA%\Claude\claude_desktop_config.json` (Claude Desktop).
+
+Note: Peterbot-mem is NOT accessible via MCP — it uses lifecycle hooks and auto-injection only.

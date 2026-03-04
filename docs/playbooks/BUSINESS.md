@@ -114,11 +114,14 @@ Auth is handled automatically — just call the endpoints.
 | Arbitrage summary | `/hb/arbitrage/summary` | GET | |
 | Tasks today | `/hb/workflow/tasks/today` | GET | |
 | Upcoming pickups | `/hb/pickups/upcoming` | GET | |
+| Pending minifig removals | `/hb/minifigs/sync/removals` | GET | |
 
 ### Write Endpoints
 
 | Action | Endpoint | Method | Body |
 |--------|----------|--------|------|
+| Approve minifig removal | `/hb/minifigs/sync/removals/approve` | POST | `{"removalId": "<uuid>"}` |
+| Bulk approve removals | `/hb/minifigs/sync/removals/bulk-approve` | POST | — |
 | Add purchase | `/hb/purchases` | POST | `{purchase_date, short_description, cost, source?, payment_method?}` |
 | Add inventory item | `/hb/inventory` | POST | `{set_number, item_name?, condition?, cost?, purchase_id?, storage_location?}` |
 | Bulk add inventory | `/hb/service/inventory` | POST | `{items: [{set_number, name, condition, cost, purchase_id, ...}]}` |
@@ -146,6 +149,7 @@ Auth is handled automatically — just call the endpoints.
 | `hb-set-lookup` | "look up 75192", "price check" | LEGO set info and pricing |
 | `hb-stock-check` | "how many 75192", "do I have" | Check stock for a set |
 | `hb-tasks` | "tasks today", "what needs doing" | Workflow tasks |
+| `hb-minifig-removals` | "minifig removals", "approve removals" | Approve cross-platform minifig delistings |
 
 **Note:** Skills pre-fetch current month data. Use direct API endpoints for custom date ranges.
 

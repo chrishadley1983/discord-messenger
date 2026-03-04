@@ -62,7 +62,7 @@ netstat -ano | findstr ":8100 :5000"
 
 ```powershell
 # Create log directory
-New-Item -ItemType Directory -Path "C:\Users\Chris Hadley\Discord-Messenger\logs" -Force
+New-Item -ItemType Directory -Path "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\logs" -Force
 ```
 
 ### Step 4: Install Hadley API Service
@@ -72,11 +72,11 @@ New-Item -ItemType Directory -Path "C:\Users\Chris Hadley\Discord-Messenger\logs
 nssm install HadleyAPI "C:\Users\Chris Hadley\AppData\Local\Programs\Python\Python312\python.exe" "-m uvicorn hadley_api.main:app --host 0.0.0.0 --port 8100"
 
 # Set working directory
-nssm set HadleyAPI AppDirectory "C:\Users\Chris Hadley\Discord-Messenger"
+nssm set HadleyAPI AppDirectory "C:\Users\Chris Hadley\claude-projects\Discord-Messenger"
 
 # Configure logging
-nssm set HadleyAPI AppStdout "C:\Users\Chris Hadley\Discord-Messenger\logs\hadley_api.log"
-nssm set HadleyAPI AppStderr "C:\Users\Chris Hadley\Discord-Messenger\logs\hadley_api.log"
+nssm set HadleyAPI AppStdout "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\logs\hadley_api.log"
+nssm set HadleyAPI AppStderr "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\logs\hadley_api.log"
 nssm set HadleyAPI AppStdoutCreationDisposition 4
 nssm set HadleyAPI AppStderrCreationDisposition 4
 nssm set HadleyAPI AppRotateFiles 1
@@ -99,11 +99,11 @@ nssm start HadleyAPI
 nssm install DiscordBot "C:\Users\Chris Hadley\AppData\Local\Programs\Python\Python312\python.exe" "bot.py"
 
 # Set working directory
-nssm set DiscordBot AppDirectory "C:\Users\Chris Hadley\Discord-Messenger"
+nssm set DiscordBot AppDirectory "C:\Users\Chris Hadley\claude-projects\Discord-Messenger"
 
 # Configure logging
-nssm set DiscordBot AppStdout "C:\Users\Chris Hadley\Discord-Messenger\logs\discord_bot.log"
-nssm set DiscordBot AppStderr "C:\Users\Chris Hadley\Discord-Messenger\logs\discord_bot.log"
+nssm set DiscordBot AppStdout "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\logs\discord_bot.log"
+nssm set DiscordBot AppStderr "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\logs\discord_bot.log"
 nssm set DiscordBot AppStdoutCreationDisposition 4
 nssm set DiscordBot AppStderrCreationDisposition 4
 nssm set DiscordBot AppRotateFiles 1
@@ -126,11 +126,11 @@ nssm start DiscordBot
 nssm install PeterDashboard "C:\Users\Chris Hadley\AppData\Local\Programs\Python\Python312\python.exe" "peter_dashboard/app.py"
 
 # Set working directory
-nssm set PeterDashboard AppDirectory "C:\Users\Chris Hadley\Discord-Messenger"
+nssm set PeterDashboard AppDirectory "C:\Users\Chris Hadley\claude-projects\Discord-Messenger"
 
 # Configure logging
-nssm set PeterDashboard AppStdout "C:\Users\Chris Hadley\Discord-Messenger\logs\peter_dashboard.log"
-nssm set PeterDashboard AppStderr "C:\Users\Chris Hadley\Discord-Messenger\logs\peter_dashboard.log"
+nssm set PeterDashboard AppStdout "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\logs\peter_dashboard.log"
+nssm set PeterDashboard AppStderr "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\logs\peter_dashboard.log"
 nssm set PeterDashboard AppStdoutCreationDisposition 4
 nssm set PeterDashboard AppStderrCreationDisposition 4
 nssm set PeterDashboard AppRotateFiles 1
@@ -159,7 +159,7 @@ Invoke-RestMethod -Uri "http://localhost:8100/health"
 Invoke-RestMethod -Uri "http://localhost:5000/" -Method Head
 
 # Check logs
-Get-Content "C:\Users\Chris Hadley\Discord-Messenger\logs\hadley_api.log" -Tail 20
+Get-Content "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\logs\hadley_api.log" -Tail 20
 ```
 
 ### Step 8: Remove Old Startup Scripts
@@ -169,8 +169,8 @@ Get-Content "C:\Users\Chris Hadley\Discord-Messenger\logs\hadley_api.log" -Tail 
 Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Peterbot*" -Force -ErrorAction SilentlyContinue
 
 # Optionally archive old scripts
-Move-Item "C:\Users\Chris Hadley\Discord-Messenger\start_all.bat" "C:\Users\Chris Hadley\Discord-Messenger\archive\start_all.bat.old" -Force
-Move-Item "C:\Users\Chris Hadley\Discord-Messenger\start_all_silent.vbs" "C:\Users\Chris Hadley\Discord-Messenger\archive\start_all_silent.vbs.old" -Force
+Move-Item "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\start_all.bat" "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\archive\start_all.bat.old" -Force
+Move-Item "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\start_all_silent.vbs" "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\archive\start_all_silent.vbs.old" -Force
 ```
 
 ---
@@ -201,9 +201,9 @@ Stop-Service HadleyAPI, DiscordBot, PeterDashboard
 
 ```powershell
 # Tail logs in real-time
-Get-Content "C:\Users\Chris Hadley\Discord-Messenger\logs\hadley_api.log" -Wait -Tail 50
-Get-Content "C:\Users\Chris Hadley\Discord-Messenger\logs\discord_bot.log" -Wait -Tail 50
-Get-Content "C:\Users\Chris Hadley\Discord-Messenger\logs\peter_dashboard.log" -Wait -Tail 50
+Get-Content "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\logs\hadley_api.log" -Wait -Tail 50
+Get-Content "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\logs\discord_bot.log" -Wait -Tail 50
+Get-Content "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\logs\peter_dashboard.log" -Wait -Tail 50
 ```
 
 ### Edit Service Configuration
@@ -259,7 +259,7 @@ Get-EventLog -LogName Application -Source "nssm" -Newest 10
 nssm status HadleyAPI
 
 # Check log file for errors
-Get-Content "C:\Users\Chris Hadley\Discord-Messenger\logs\hadley_api.log" -Tail 50
+Get-Content "C:\Users\Chris Hadley\claude-projects\Discord-Messenger\logs\hadley_api.log" -Tail 50
 ```
 
 ### Port already in use

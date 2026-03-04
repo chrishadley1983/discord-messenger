@@ -4,7 +4,7 @@
 **Author:** Define Done Agent + Chris
 **Status:** APPROVED
 **Project:** Discord Personal Assistant (new project)
-**Location:** `C:\Users\Chris Hadley\Discord-Messenger`
+**Location:** `C:\Users\Chris Hadley\claude-projects\Discord-Messenger`
 
 ## Feature Summary
 

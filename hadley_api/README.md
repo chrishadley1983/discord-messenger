@@ -2,6 +2,8 @@
 
 Local API proxy for Peter's real-time queries. Full CRUD access to Google services.
 
+> **Alternative access**: The Second Brain (`/brain/*` endpoints) is also available via MCP server for Claude Desktop and Claude Code. See `mcp_servers/second_brain_mcp.py` and `.mcp.json`.
+
 ## Setup
 
 ```bash

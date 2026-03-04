@@ -169,7 +169,7 @@ def get_default_status(list_type: TaskListType) -> TaskStatus:
 # Valid status transitions per list type
 VALID_TRANSITIONS = {
     TaskListType.peter_queue: {
-        TaskStatus.queued: [TaskStatus.heartbeat_scheduled, TaskStatus.in_heartbeat, TaskStatus.cancelled],
+        TaskStatus.queued: [TaskStatus.heartbeat_scheduled, TaskStatus.in_heartbeat, TaskStatus.in_progress, TaskStatus.cancelled],
         TaskStatus.heartbeat_scheduled: [TaskStatus.queued, TaskStatus.in_heartbeat, TaskStatus.cancelled],
         TaskStatus.in_heartbeat: [TaskStatus.in_progress, TaskStatus.queued],
         TaskStatus.in_progress: [TaskStatus.review, TaskStatus.in_heartbeat],

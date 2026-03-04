@@ -241,6 +241,30 @@ async def on_ready():
     )
     logger.info("Periodic restart registered (every 6h)")
 
+    # Incremental seed import — daily at 1am UK, loads calendar/email/GitHub/Garmin
+    from jobs.incremental_seed import register_incremental_seed
+    register_incremental_seed(scheduler)
+    logger.info("Incremental seed job registered (daily at 1:00 AM UK)")
+
+    # Reprocess pending passive captures — every 6 hours
+    async def reprocess_pending():
+        """Upgrade passive captures to full items with embeddings."""
+        try:
+            from domains.second_brain.pipeline import reprocess_pending_items
+            count = await reprocess_pending_items(limit=20)
+            logger.info(f"Reprocessed {count} pending items")
+        except Exception as e:
+            logger.error(f"Reprocess pending failed: {e}")
+
+    scheduler.add_job(
+        reprocess_pending,
+        IntervalTrigger(hours=6),
+        id="__reprocess_pending",
+        max_instances=1,
+        replace_existing=True,
+    )
+    logger.info("Reprocess pending items registered (every 6h)")
+
     # Vercel usage scraper — runs 06:45 UK, 15min before the 7am cron
     from apscheduler.triggers.cron import CronTrigger
 

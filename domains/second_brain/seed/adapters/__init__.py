@@ -5,6 +5,7 @@ from .bookmarks import BookmarksAdapter
 from .garmin import GarminActivitiesAdapter
 from .calendar import CalendarEventsAdapter
 from .email import EmailImportAdapter
+from .claude_history import ClaudeHistoryAdapter
 
 __all__ = [
     "GitHubProjectsAdapter",
@@ -12,4 +13,5 @@ __all__ = [
     "GarminActivitiesAdapter",
     "CalendarEventsAdapter",
     "EmailImportAdapter",
+    "ClaudeHistoryAdapter",
 ]

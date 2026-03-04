@@ -1,7 +1,7 @@
 @echo off
 REM Discord-Messenger Bot Startup Script
 
-cd /d "C:\Users\Chris Hadley\Discord-Messenger"
+cd /d "C:\Users\Chris Hadley\claude-projects\Discord-Messenger"
 
 REM Activate virtual environment if exists
 if exist "venv\Scripts\activate.bat" (

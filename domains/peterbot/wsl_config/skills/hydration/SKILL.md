@@ -15,7 +15,7 @@ channel: #food-log
 
 ## Purpose
 
-Check-in every 2 hours (9am-9pm UK) with water intake and step progress. Provide contextual motivation based on time of day and progress.
+Hourly check-in (7am-9pm UK) with water intake and step progress. Target: 250ml per hour. Provide contextual motivation based on time of day and progress.
 
 ## Pre-fetched Data
 

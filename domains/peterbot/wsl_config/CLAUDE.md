@@ -47,6 +47,24 @@ Playbooks contain process, format, quality standards, AND API endpoints.
 **Multiple playbooks may apply.** E.g., "recommend restaurants in Osaka" → TRAVEL + RESEARCH.
 If unsure whether quick lookup or deep response, default to depth.
 
+### Critical: Water & Food Logging
+
+**NEVER say "Logged" without executing a real curl command first.**
+When Chris says "250ml water" or any water amount:
+1. `curl -s "http://172.19.64.1:8100/nutrition/today"` — note `water_ml` BEFORE
+2. `curl -s -X POST "http://172.19.64.1:8100/nutrition/log-water?ml=250"` — log it
+3. `curl -s "http://172.19.64.1:8100/nutrition/today"` — check `water_ml` AFTER
+4. If after == before, the log FAILED — report error, do NOT say "Logged"
+
+Same rule applies to meal logging — always execute the curl, never hallucinate a success.
+
+### Critical: Email Sending
+
+**ALWAYS use Hadley API for emails. NEVER use Gmail MCP for sending.**
+- Send: `curl -X POST "http://172.19.64.1:8100/gmail/send?to=...&subject=...&body=..."`
+- Draft: `curl -X POST "http://172.19.64.1:8100/gmail/draft?to=...&subject=...&body=..."`
+- The Gmail MCP tools only support drafts — they CANNOT send. Use the Hadley API.
+
 ### Hadley API
 
 Base URL: `http://172.19.64.1:8100`

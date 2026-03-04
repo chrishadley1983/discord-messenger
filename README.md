@@ -21,7 +21,7 @@ A modular Discord bot with AI coaching/assistance via Claude API.
 ### 1. Clone and Install
 
 ```powershell
-cd C:\Users\Chris Hadley\Discord-Messenger
+cd C:\Users\Chris Hadley\claude-projects\Discord-Messenger
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt

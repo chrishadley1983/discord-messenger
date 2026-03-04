@@ -259,13 +259,13 @@ Set-Alias -Name ctaskclear -Value Clear-ClaudeTaskList
 function Start-HadleyBricksFeature {
     param([string]$FeatureName)
     Set-ClaudeTaskList "hb-$FeatureName"
-    cd "C:\Users\Chris Hadley\hadley-bricks-inventory-management"
+    cd "C:\Users\Chris Hadley\claude-projects\hadley-bricks-inventory-management"
 }
 
 function Start-PeterbotFeature {
     param([string]$FeatureName)
     Set-ClaudeTaskList "pb-$FeatureName"
-    cd "C:\Users\Chris Hadley\Discord-Messenger"
+    cd "C:\Users\Chris Hadley\claude-projects\Discord-Messenger"
 }
 ```
 

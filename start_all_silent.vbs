@@ -2,7 +2,7 @@
 ' Add shortcut to this file in shell:startup for auto-start on boot
 
 Set WshShell = CreateObject("WScript.Shell")
-strPath = "C:\Users\Chris Hadley\Discord-Messenger"
+strPath = "C:\Users\Chris Hadley\claude-projects\Discord-Messenger"
 
 ' Start Hadley API
 WshShell.CurrentDirectory = strPath

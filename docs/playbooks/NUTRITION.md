@@ -123,10 +123,16 @@ Example: `curl -X PATCH "http://172.19.64.1:8100/nutrition/goals?protein_target_
 
 ## Water Logging
 
+**STOP. DO NOT output any text until you have executed the curl command below.**
+**If you respond with "Logged" without running the curl, the water is NOT saved and Chris's daily total will be wrong.**
+
 When Chris says "500ml water" or any water amount:
-1. MUST execute: `curl -s -X POST "http://172.19.64.1:8100/nutrition/log-water?ml=500"`
-2. Check the JSON response for `today_total_ml` and `progress_pct`
-3. Use ONLY the API response values for the confirmation — never calculate from memory
+1. CHECK BEFORE: `curl -s "http://172.19.64.1:8100/nutrition/today" | jq .water_ml` — note the current total
+2. LOG: `curl -s -X POST "http://172.19.64.1:8100/nutrition/log-water?ml=500"` (replace 500 with actual amount)
+3. CHECK AFTER: `curl -s "http://172.19.64.1:8100/nutrition/today" | jq .water_ml` — confirm the total increased
+4. VERIFY: If after_total != before_total + amount_logged, something went wrong — report the error
+5. Use ONLY the API response values for the confirmation — never calculate from memory
+6. If any curl fails or the total didn't change, tell Chris it failed — do NOT fake a success
 
 Format:
 💧 Logged: [X]ml water
