@@ -10,7 +10,7 @@ Usage:
 import json
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 # Add project root to path so we can import domains.second_brain
@@ -108,7 +108,7 @@ async def get_recent_items(limit: int = 10, days_back: int = 7) -> str:
         days_back: How many days back to look (default 7)
     """
     try:
-        since = datetime.utcnow() - timedelta(days=days_back)
+        since = datetime.now(timezone.utc) - timedelta(days=days_back)
         items = await db.get_items_since(since)
         items = items[:limit]
 

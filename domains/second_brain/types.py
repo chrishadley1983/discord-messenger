@@ -95,15 +95,27 @@ class KnowledgeItem:
     def last_accessed_at(self) -> Optional[datetime]:
         return self.last_accessed
 
+    @staticmethod
+    def _parse_dt(val) -> Optional[datetime]:
+        """Parse a datetime from a DB row value (string or datetime)."""
+        if val is None:
+            return None
+        if isinstance(val, datetime):
+            return val
+        try:
+            return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
+
     @classmethod
     def from_db_row(cls, row: dict) -> "KnowledgeItem":
         """Create KnowledgeItem from database row."""
         # Handle both old and new field names
         source = row.get("source_url") or row.get("source") or "direct_input"
         priority = row.get("base_priority") or row.get("priority", 1.0)
-        last_accessed = row.get("last_accessed_at") or row.get("last_accessed")
-        created_at = row.get("created_at")
-        updated_at = row.get("updated_at") or created_at
+        last_accessed = cls._parse_dt(row.get("last_accessed_at") or row.get("last_accessed"))
+        created_at = cls._parse_dt(row.get("created_at"))
+        updated_at = cls._parse_dt(row.get("updated_at")) or created_at
 
         return cls(
             id=str(row["id"]) if row.get("id") else "",
@@ -126,7 +138,7 @@ class KnowledgeItem:
             word_count=row.get("word_count", 0),
             source_message_id=row.get("source_message_id"),
             source_system=row.get("source_system"),
-            promoted_at=row.get("promoted_at"),
+            promoted_at=cls._parse_dt(row.get("promoted_at")),
             facts=row.get("facts") or [],
             concepts=row.get("concepts") or [],
         )
