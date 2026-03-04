@@ -303,8 +303,6 @@ Unified memory system using Supabase PostgreSQL + pgvector.
 
 | Job | Interval | Purpose |
 |-----|----------|---------|
-| worker_health | 15 min | Check claude-mem worker status |
-| capture_processor | 30 sec | Process pending memory captures |
 | capture_cleanup | daily 3:00 AM | Clean old captures |
 | incremental_seed | daily 1:00 AM | Second Brain seed imports |
 | embedding_report | daily 3:00 AM | Embedding statistics |

@@ -91,7 +91,7 @@ When implementing Peterbot features:
 | Approach | Where | Use Case |
 |----------|-------|----------|
 | **Skill-based** (preferred) | `SCHEDULE.md` + `data_fetchers.py` + `skills/*/SKILL.md` | All scheduled output |
-| **Infrastructure** | `bot.py` register_* | Worker health, capture processor (no Discord output) |
+| **Infrastructure** | `bot.py` register_* | Capture cleanup, seeding (no Discord output) |
 | **Legacy** (DO NOT USE) | `jobs/*.py` register_* | DEPRECATED - causes conflicts |
 
 Scheduled job development (combined impl+verify):

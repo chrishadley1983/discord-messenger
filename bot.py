@@ -195,37 +195,6 @@ async def on_ready():
     )
     logger.info("Reprocess pending items registered (every 6h)")
 
-    # Vercel usage scraper — runs 06:45 UK, 15min before the 7am cron
-    from apscheduler.triggers.cron import CronTrigger
-
-    async def run_vercel_scraper():
-        """Run the Vercel usage scraper as a subprocess."""
-        import subprocess
-        script = str(Path(__file__).parent / "scripts" / "scrape_vercel_usage.py")
-        try:
-            result = await asyncio.to_thread(
-                subprocess.run,
-                [sys.executable, script],
-                capture_output=True, text=True, timeout=120,
-            )
-            if result.returncode == 0:
-                logger.info(f"Vercel scraper succeeded: {result.stdout.strip()[-200:]}")
-            elif result.returncode == 2:
-                logger.warning("Vercel scraper: session expired (exit code 2)")
-            else:
-                logger.error(f"Vercel scraper failed (exit {result.returncode}): {result.stderr.strip()[-200:]}")
-        except Exception as e:
-            logger.error(f"Vercel scraper exception: {e}")
-
-    scheduler.add_job(
-        run_vercel_scraper,
-        CronTrigger(hour=6, minute=45, timezone="Europe/London"),
-        id="__vercel_scraper",
-        max_instances=1,
-        replace_existing=True,
-    )
-    logger.info("Vercel CPU scraper registered (06:45 UK daily)")
-
     logger.info(f"Bot ready - {len(registry.all_domains())} domains registered")
 
     # Claude Code domain startup - restore active session
