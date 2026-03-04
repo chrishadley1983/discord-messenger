@@ -26,7 +26,16 @@ from mcp.server.fastmcp import FastMCP
 from domains.second_brain import db
 from domains.second_brain.types import KnowledgeItem, CaptureType, ContentType
 
-mcp = FastMCP("second-brain", instructions="Search and manage Chris's Second Brain knowledge base")
+mcp = FastMCP(
+    "second-brain",
+    instructions=(
+        "Chris's personal knowledge base containing saved articles, project notes, "
+        "preferences, family info, business data (Hadley Bricks LEGO resale), recipes, "
+        "travel plans, and more. Use search_knowledge whenever the user asks about "
+        "something they may have previously saved or discussed. Use save_to_brain "
+        "when they want to remember something for later."
+    ),
+)
 
 
 def _item_to_dict(item: KnowledgeItem) -> dict:
@@ -54,7 +63,14 @@ def _item_to_dict(item: KnowledgeItem) -> dict:
 
 @mcp.tool()
 async def search_knowledge(query: str, limit: int = 5, min_similarity: float = 0.7) -> str:
-    """Search the Second Brain using semantic similarity.
+    """Search Chris's personal knowledge base (Second Brain) using semantic similarity.
+
+    USE THIS TOOL when the user asks about their projects, preferences, past decisions,
+    saved articles, bookmarks, family info, business details, or anything they may have
+    previously saved. This is Chris's long-term memory across all topics.
+
+    Covers: LEGO business (Hadley Bricks), coding projects, family notes, recipes,
+    travel plans, articles, personal preferences, and more.
 
     Args:
         query: Natural language search query
@@ -101,7 +117,10 @@ async def search_knowledge(query: str, limit: int = 5, min_similarity: float = 0
 
 @mcp.tool()
 async def get_recent_items(limit: int = 10, days_back: int = 7) -> str:
-    """Get recently added knowledge items.
+    """Get recently saved items from Chris's knowledge base.
+
+    Use when the user asks "what have I saved recently?" or wants to review
+    recent captures, bookmarks, or notes.
 
     Args:
         limit: Max items to return (default 10)
@@ -132,7 +151,10 @@ async def get_recent_items(limit: int = 10, days_back: int = 7) -> str:
 
 @mcp.tool()
 async def browse_topics() -> str:
-    """List all knowledge topics with item counts."""
+    """List all topics in Chris's knowledge base with item counts.
+
+    Use when the user asks what's in their knowledge base, wants to explore
+    by category, or asks "what topics do you know about?"."""
     try:
         topics = await db.get_topics_with_counts()
 
@@ -151,10 +173,12 @@ async def browse_topics() -> str:
 
 @mcp.tool()
 async def get_item_detail(item_id: str) -> str:
-    """Get full details of a knowledge item including text, summary, and connections.
+    """Get the full text, summary, and connections for a specific knowledge item.
+
+    Use after search_knowledge returns a relevant item and you need the complete content.
 
     Args:
-        item_id: UUID of the knowledge item
+        item_id: UUID of the knowledge item (from search_knowledge or list_items results)
     """
     try:
         item = await db.get_knowledge_item(UUID(item_id))
@@ -202,7 +226,10 @@ async def list_items(
     sort_by: str = "created_at",
     order: str = "desc",
 ) -> str:
-    """Browse knowledge items with filtering and pagination.
+    """Browse and filter items in Chris's knowledge base with pagination.
+
+    Use when the user wants to see all items of a certain type or topic,
+    or browse their saved knowledge systematically.
 
     Args:
         limit: Max items per page (default 20)
@@ -253,7 +280,11 @@ async def list_items(
 
 @mcp.tool()
 async def save_to_brain(content: str, note: str = "", tags: str = "") -> str:
-    """Save content (URL or text) to the Second Brain.
+    """Save a URL or text to Chris's knowledge base for long-term recall.
+
+    Use when the user says "remember this", "save this", shares a URL to keep,
+    or wants to store information for later. Content is automatically summarised,
+    chunked, and made searchable.
 
     Args:
         content: A URL to capture, or direct text content
