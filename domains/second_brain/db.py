@@ -188,16 +188,6 @@ async def archive_knowledge_item(item_id: UUID) -> None:
     logger.info(f"Archived knowledge item: {item_id}")
 
 
-async def promote_passive_item(item_id: UUID) -> KnowledgeItem:
-    """Promote a passive capture to explicit save."""
-    return await update_knowledge_item(
-        item_id,
-        capture_type="explicit",
-        base_priority=1.0,
-        promoted_at=datetime.utcnow().isoformat(),
-    )
-
-
 async def boost_access(item_id: UUID) -> None:
     """Boost an item when accessed (increment access_count, update timestamps).
 

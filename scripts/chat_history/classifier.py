@@ -2,8 +2,11 @@
 
 Routes chunks to:
 - SKIP: Ephemeral content (debugging, code generation, small talk)
-- PETERBOT_MEM: Preferences, decisions, personal facts
+- PREFERENCE: Preferences, decisions, personal facts
 - SECOND_BRAIN: Knowledge, research, explanations, how-to
+
+Both PREFERENCE and SECOND_BRAIN are imported into Second Brain.
+Only SKIP chunks are discarded.
 """
 
 import re
@@ -15,7 +18,7 @@ from .chunker import ConversationChunk
 
 class Route(Enum):
     SKIP = "skip"
-    PETERBOT_MEM = "peterbot_mem"
+    PREFERENCE = "preference"
     SECOND_BRAIN = "second_brain"
 
 
@@ -27,7 +30,7 @@ class ClassificationResult:
     reason: str
 
 
-# Signals for preference/decision detection (→ peterbot-mem)
+# Signals for preference/decision detection (→ Second Brain (preference))
 PREFERENCE_SIGNALS = [
     r"\bi prefer\b", r"\bi always\b", r"\bi never\b", r"\bi like\b",
     r"\bi don't like\b", r"\bi want\b", r"\bmy favourite\b", r"\bmy favorite\b",
@@ -74,7 +77,7 @@ def classify_chunk(chunk: ConversationChunk) -> ClassificationResult:
     Classification logic:
     1. High code-block ratio (>60%) → SKIP (code generation)
     2. Very short (<50 words) → SKIP (small talk)
-    3. Preference/decision signals in human text → PETERBOT_MEM
+    3. Preference/decision signals in human text → PREFERENCE
     4. Knowledge signals + long assistant response → SECOND_BRAIN
     5. Default: SKIP (when unsure, don't import noise)
     """
@@ -99,10 +102,10 @@ def classify_chunk(chunk: ConversationChunk) -> ClassificationResult:
     if ephemeral_score >= 2 and pref_score == 0:
         return ClassificationResult(chunk, Route.SKIP, 0.8, f"Ephemeral content ({ephemeral_score} signals)")
 
-    # Rule 4: Preference/decision signals → peterbot-mem
+    # Rule 4: Preference/decision signals → Second Brain (preference)
     if pref_score >= 1:
         confidence = min(0.5 + pref_score * 0.15, 0.95)
-        return ClassificationResult(chunk, Route.PETERBOT_MEM, confidence,
+        return ClassificationResult(chunk, Route.PREFERENCE, confidence,
                                     f"Preference/decision content ({pref_score} signals)")
 
     # Rule 5: Knowledge signals + substantial assistant response → second brain
