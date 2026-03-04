@@ -42,18 +42,18 @@ MAX_SEARCH_RESULTS: Final[int] = 10
 MAX_CHUNKS_PER_SEARCH: Final[int] = 20
 MAX_CONTEXT_ITEMS: Final[int] = 3              # Max items injected per response
 
-# Passive capture signals
+# Passive capture signals — must be deliberate, not casual conversation
 IDEA_SIGNAL_PHRASES: Final[list[str]] = [
-    "what if",
-    "i think we should",
     "idea:",
     "thought:",
-    "we could",
-    "maybe we should",
     "note to self",
     "don't forget",
     "reminder:",
     "remember to",
+    "remember this",
+    "save this",
+    "note this",
+    "important:",
 ]
 
 # Exclude patterns (questions/commands to Peter)

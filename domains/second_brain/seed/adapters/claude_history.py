@@ -1,8 +1,8 @@
 """Claude chat history seed adapter.
 
-Imports knowledge-classified chunks from Anthropic JSON exports
-into the Second Brain. Works alongside the main ingest script
-which handles peterbot-mem routing separately.
+Imports classified chunks from Anthropic JSON exports into the
+Second Brain. Both knowledge and preference chunks are imported
+(only ephemeral/code chunks are skipped).
 
 Usage:
     adapter = ClaudeHistoryAdapter({"export_file": "/path/to/export.json"})
@@ -50,8 +50,8 @@ class ClaudeHistoryAdapter(SeedAdapter):
             for chunk in chunks:
                 result = classify_chunk(chunk)
 
-                # Only take knowledge-routed chunks with sufficient confidence
-                if result.route != Route.SECOND_BRAIN:
+                # Skip ephemeral/code chunks — import both knowledge and preferences
+                if result.route == Route.SKIP:
                     continue
                 if result.confidence < self.min_confidence:
                     continue

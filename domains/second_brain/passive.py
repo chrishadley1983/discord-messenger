@@ -132,8 +132,8 @@ def _is_question_or_command(message_lower: str) -> bool:
         if pattern in message_lower:
             return True
 
-    # Also exclude if starts with a command prefix
-    if message_lower.startswith(('!', '/', 'hey peter', 'peter,')):
+    # Also exclude if starts with a command prefix or addressed to Peter
+    if message_lower.startswith(('!', '/', 'hey peter', 'peter,', 'peter ', 'yo peter')):
         return True
 
     return False
@@ -199,6 +199,7 @@ def should_capture_message(message: str) -> bool:
     """Quick check if message might contain capturable content.
 
     Fast pre-filter before more expensive detection.
+    Applies exclude patterns to avoid capturing questions/commands.
 
     Args:
         message: Message content
@@ -206,12 +207,17 @@ def should_capture_message(message: str) -> bool:
     Returns:
         True if message might have capturable content
     """
+    message_lower = message.lower().strip()
+
+    # Reject questions/commands first (before checking signals)
+    if _is_question_or_command(message_lower):
+        return False
+
     # Has URL?
-    if 'http' in message.lower():
+    if 'http' in message_lower:
         return True
 
     # Has idea signal?
-    message_lower = message.lower()
     for phrase in IDEA_SIGNAL_PHRASES:
         if phrase in message_lower:
             return True

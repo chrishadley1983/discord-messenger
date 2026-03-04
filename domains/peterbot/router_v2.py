@@ -819,6 +819,7 @@ async def handle_message(
     interim_callback: Optional[Callable[[Union[str, dict]], Awaitable[None]]] = None,
     busy_callback: Optional[Callable[[str], Awaitable[None]]] = None,
     attachment_urls: Optional[list[dict]] = None,
+    message_id: int | None = None,
 ) -> str:
     """Process peterbot message with memory context via Claude CLI.
 
@@ -902,6 +903,7 @@ async def handle_message(
     task = asyncio.create_task(memory.capture_message_pair(
         session_id, message, response,
         channel_id=str(channel_id),
+        message_id=str(message_id) if message_id else None,
     ))
     task.add_done_callback(
         lambda t: logger.info(f"Memory capture completed: {t.exception() or 'success'}")

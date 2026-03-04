@@ -1223,26 +1223,13 @@ class PeterbotScheduler:
         logger.debug(f"Posted to {channel_name} (type={processed.response_type.value}, files={len(files)})")
 
     async def _capture_to_memory(self, job: JobConfig, response: str):
-        """Capture scheduled job output to memory.
+        """Legacy scheduled job memory capture — disabled.
 
-        Args:
-            job: The job that was executed
-            response: The output response (not NO_REPLY)
+        Scheduled jobs are now saved to Second Brain via _capture_to_second_brain()
+        which uses an allow-list. This method was polluting the DB with operational
+        noise (heartbeat, hydration check-in, etc.) as conversation_extract items.
         """
-        from . import memory
-
-        # Session ID groups by skill for later retrieval
-        # e.g., "What did hydration report yesterday?"
-        session_id = f"scheduled-{job.skill}"
-
-        # Prompt describes the scheduled execution
-        prompt = f"[Scheduled job: {job.name}] Executed at {datetime.now(UK_TZ).strftime('%H:%M')}"
-
-        try:
-            await memory.capture_message_pair(session_id, prompt, response)
-            logger.debug(f"Memory captured for scheduled job: {job.skill}")
-        except Exception as e:
-            logger.warning(f"Failed to capture scheduled job to memory: {e}")
+        pass
 
     async def _capture_to_second_brain(self, job: JobConfig, response: str):
         """Auto-save scheduled skill output to Second Brain.

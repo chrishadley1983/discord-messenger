@@ -505,7 +505,8 @@ async def on_message(message):
                 message.channel.id,
                 interim_callback=post_interim,
                 busy_callback=post_busy,
-                attachment_urls=attachment_urls if attachment_urls else None
+                attachment_urls=attachment_urls if attachment_urls else None,
+                message_id=message.id,
             )
 
             # Update status embed to show completion
