@@ -72,9 +72,10 @@ MONITORED_SERVICES = {
         "check_type": "process",  # Check via service_manager
         "critical": True,
     },
-    "claude_mem": {
-        "name": "Memory Worker",
-        "url": "http://localhost:37777/health",
+    "second_brain": {
+        "name": "Second Brain",
+        "url": "https://modjoikyuhqzouxvieua.supabase.co/rest/v1/knowledge_items?select=id&limit=1",
+        "check_type": "http_any",
         "critical": True,
     },
     "hadley_bricks": {
@@ -434,7 +435,7 @@ app.include_router(logs_api.router, prefix="/api/logs")
 # Configuration
 CONFIG = {
     "hadley_api_url": "http://localhost:8100",
-    "claude_mem_url": "http://localhost:37777",
+    "supabase_url": "https://modjoikyuhqzouxvieua.supabase.co",
     "wsl_peterbot_path": "/home/chris_hadley/peterbot",
     "windows_project_path": r"C:\Users\Chris Hadley\claude-projects\Discord-Messenger",
 }
@@ -663,13 +664,12 @@ async def get_system_status():
     """Get overall system status with PID tracking."""
     # Run ALL checks in parallel — blocking calls via to_thread
     hadley_task = check_http_service(f"{CONFIG['hadley_api_url']}/health")
-    mem_task = check_http_service(f"{CONFIG['claude_mem_url']}/health")
     hb_task = check_http_service("http://localhost:3000/", timeout=3.0, accept_any=True)
     svc_task = asyncio.to_thread(service_manager.status_all)
     tmux_task = asyncio.to_thread(get_tmux_sessions)
 
-    hadley_http_status, mem_status, hb_http_status, svc_status, sessions = await asyncio.gather(
-        hadley_task, mem_task, hb_task, svc_task, tmux_task
+    hadley_http_status, hb_http_status, svc_status, sessions = await asyncio.gather(
+        hadley_task, hb_task, svc_task, tmux_task
     )
 
     peterbot_session = next((s for s in sessions if s["name"] == "claude-peterbot"), None)
@@ -701,7 +701,7 @@ async def get_system_status():
                 "process_status": svc_status.get("hadley_bricks", {}).get("status", "unknown"),
                 "last_restart": get_last_restart("hadley_bricks")
             },
-            "claude_mem": {**mem_status, "last_restart": _last_restart_time.get("claude_mem")},
+            "second_brain": {"status": "up", "type": "supabase"},
             "discord_bot": {
                 "status": "up" if discord_bot_running else "down",
                 "pid": svc_status.get("discord_bot", {}).get("pid"),
@@ -1091,157 +1091,108 @@ def format_observation(obs, source):
 
 @app.get("/api/memory/peter")
 async def get_peter_memories(limit: int = 50):
-    """Get recent memory observations from peterbot project with full details."""
+    """Get recent knowledge items from Second Brain."""
+    import os
+    supabase_url = os.environ.get("SUPABASE_URL", CONFIG["supabase_url"])
+    supabase_key = os.environ.get("SUPABASE_ANON_KEY", os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY", ""))
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            # First get the list of recent observation IDs
-            search_response = await client.get(
-                f"{CONFIG['claude_mem_url']}/api/search",
-                params={"project": "peterbot", "limit": str(limit), "orderBy": "id_desc"}
+            resp = await client.get(
+                f"{supabase_url}/rest/v1/knowledge_items",
+                params={
+                    "select": "id,title,summary,content_type,topics,facts,concepts,created_at,decay_score,source_system",
+                    "order": "created_at.desc",
+                    "limit": str(limit),
+                    "status": "eq.active",
+                },
+                headers={
+                    "apikey": supabase_key,
+                    "Authorization": f"Bearer {supabase_key}",
+                },
             )
-            if search_response.status_code != 200:
-                return {"error": f"Search status {search_response.status_code}", "observations": [], "source": "peterbot"}
+            if resp.status_code != 200:
+                return {"error": f"Supabase status {resp.status_code}", "observations": [], "source": "second_brain"}
 
-            # Parse IDs from search response
-            search_data = search_response.json()
-            ids = parse_observation_ids(search_data)
-
-            if not ids:
-                return {"observations": [], "count": 0, "source": "peterbot"}
-
-            # Fetch full observation details individually
-            import asyncio
-            async def fetch_one(obs_id):
-                resp = await client.get(f"{CONFIG['claude_mem_url']}/api/observation/{obs_id}")
-                if resp.status_code == 200:
-                    return resp.json()
-                return None
-
-            results = await asyncio.gather(*[fetch_one(oid) for oid in ids[:limit]])
-            observations = [r for r in results if r is not None]
-            return {
-                "observations": [format_observation(obs, "peterbot") for obs in observations],
-                "count": len(observations),
-                "source": "peterbot"
-            }
+            items = resp.json()
+            observations = []
+            for item in items:
+                observations.append({
+                    "id": item.get("id"),
+                    "title": item.get("title", "Untitled"),
+                    "summary": item.get("summary", ""),
+                    "content_type": item.get("content_type", "note"),
+                    "topics": item.get("topics", []),
+                    "facts": item.get("facts", []),
+                    "concepts": item.get("concepts", []),
+                    "created_at": item.get("created_at", ""),
+                    "decay_score": item.get("decay_score", 0),
+                    "source_system": item.get("source_system", ""),
+                })
+            return {"observations": observations, "count": len(observations), "source": "second_brain"}
     except Exception as e:
-        logger.error(f"Error fetching peter memories: {e}")
-        return {"error": str(e), "observations": [], "source": "peterbot"}
+        logger.error(f"Error fetching Second Brain items: {e}")
+        return {"error": str(e), "observations": [], "source": "second_brain"}
 
 
 @app.get("/api/memory/claude")
 async def get_claude_memories(limit: int = 50):
-    """Get recent memory observations from all Claude Code projects."""
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            # Search without project filter to get all recent observations
-            search_response = await client.get(
-                f"{CONFIG['claude_mem_url']}/api/search",
-                params={"limit": str(limit), "orderBy": "id_desc"}
-            )
-            if search_response.status_code != 200:
-                return {"error": f"Search status {search_response.status_code}", "observations": [], "source": "claude"}
-
-            # Parse IDs from search response
-            search_data = search_response.json()
-            ids = parse_observation_ids(search_data)
-
-            if not ids:
-                return {"observations": [], "count": 0, "source": "claude"}
-
-            # Fetch full observation details individually
-            import asyncio
-            async def fetch_one(obs_id):
-                resp = await client.get(f"{CONFIG['claude_mem_url']}/api/observation/{obs_id}")
-                if resp.status_code == 200:
-                    return resp.json()
-                return None
-
-            results = await asyncio.gather(*[fetch_one(oid) for oid in ids[:limit]])
-            observations = [r for r in results if r is not None]
-            return {
-                "observations": [format_observation(obs, "claude") for obs in observations],
-                "count": len(observations),
-                "source": "claude"
-            }
-    except Exception as e:
-        logger.error(f"Error fetching claude memories: {e}")
-        return {"error": str(e), "observations": [], "source": "claude"}
+    """Get recent knowledge items (alias for /api/memory/peter)."""
+    return await get_peter_memories(limit=limit)
 
 
 @app.get("/api/memory/recent")
 async def get_recent_memories(limit: int = 50):
-    """Get recent memory observations from claude-mem (peterbot project)."""
+    """Get recent knowledge items from Second Brain."""
     return await get_peter_memories(limit=limit)
 
 
 @app.get("/api/memory/graph")
 async def get_memory_graph_data():
-    """Get all peterbot memories aggregated by category for mind map.
-
-    Returns lightweight category summaries without fetching every observation individually.
-    Uses the search index to get IDs+titles, then batch-fetches categories.
-    """
-    import asyncio
-    import re
-
+    """Get knowledge items aggregated by topic for mind map."""
+    import os
+    supabase_url = os.environ.get("SUPABASE_URL", CONFIG["supabase_url"])
+    supabase_key = os.environ.get("SUPABASE_ANON_KEY", os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY", ""))
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Get all observation IDs from search index
-            search_response = await client.get(
-                f"{CONFIG['claude_mem_url']}/api/search",
-                params={"project": "peterbot", "limit": "5000", "orderBy": "id_desc"}
+            resp = await client.get(
+                f"{supabase_url}/rest/v1/knowledge_items",
+                params={
+                    "select": "id,title,content_type,topics,summary,created_at",
+                    "order": "created_at.desc",
+                    "limit": "2000",
+                    "status": "eq.active",
+                },
+                headers={
+                    "apikey": supabase_key,
+                    "Authorization": f"Bearer {supabase_key}",
+                },
             )
-            if search_response.status_code != 200:
+            if resp.status_code != 200:
                 return {"categories": [], "total": 0}
 
-            search_data = search_response.json()
-            ids = parse_observation_ids(search_data)
-            if not ids:
-                return {"categories": [], "total": 0}
+            items = resp.json()
 
-            # Batch-fetch observations with concurrency limit
-            semaphore = asyncio.Semaphore(20)
-
-            async def fetch_one(obs_id):
-                async with semaphore:
-                    try:
-                        resp = await client.get(f"{CONFIG['claude_mem_url']}/api/observation/{obs_id}")
-                        if resp.status_code == 200:
-                            d = resp.json()
-                            return {
-                                "id": d.get("id"),
-                                "title": d.get("title", ""),
-                                "type": d.get("type", "observation"),
-                                "category": d.get("category", ""),
-                                "narrative": (d.get("narrative") or "")[:200],
-                                "created_at": d.get("created_at", ""),
-                                "is_active": d.get("is_active", 1),
-                            }
-                    except Exception:
-                        pass
-                    return None
-
-            results = await asyncio.gather(*[fetch_one(oid) for oid in ids])
-            observations = [r for r in results if r is not None and r.get("is_active", 1)]
-
-            # Aggregate by category
+            # Aggregate by first topic (or "untagged")
             cat_map = {}
-            for obs in observations:
-                cat = obs.get("category") or "uncategorised"
+            for item in items:
+                topics = item.get("topics") or ["untagged"]
+                cat = topics[0] if topics else "untagged"
                 if cat not in cat_map:
-                    cat_map[cat] = {"category": cat, "count": 0, "types": {}, "recent": 0, "items": []}
+                    cat_map[cat] = {"category": cat, "count": 0, "types": {}, "items": []}
                 cat_map[cat]["count"] += 1
-                t = obs.get("type", "observation")
-                cat_map[cat]["types"][t] = cat_map[cat]["types"].get(t, 0) + 1
-                cat_map[cat]["items"].append(obs)
+                ct = item.get("content_type", "note")
+                cat_map[cat]["types"][ct] = cat_map[cat]["types"].get(ct, 0) + 1
+                cat_map[cat]["items"].append({
+                    "id": item.get("id"),
+                    "title": item.get("title", ""),
+                    "type": ct,
+                    "category": cat,
+                    "narrative": (item.get("summary") or "")[:200],
+                    "created_at": item.get("created_at", ""),
+                })
 
             categories = sorted(cat_map.values(), key=lambda x: x["count"], reverse=True)
-
-            return {
-                "categories": categories,
-                "total": len(observations),
-            }
+            return {"categories": categories, "total": len(items)}
     except Exception as e:
         logger.error(f"Error fetching memory graph data: {e}")
         return {"categories": [], "total": 0, "error": str(e)}
@@ -2255,51 +2206,8 @@ async def resolve_parser_feedback(feedback_id: str, resolution: str = "Resolved 
 
 @app.get("/api/search/memory")
 async def search_peterbot_memory(query: str):
-    """Search peterbot-mem - exact same method Peter uses for memory context.
-
-    This calls the claude-mem worker's context injection endpoint.
-    """
-    import aiohttp
-    from domains.peterbot import config
-
-    try:
-        params = {
-            "project": config.PROJECT_ID,
-            "query": query
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                config.CONTEXT_ENDPOINT,
-                params=params,
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                if resp.status == 200:
-                    context = await resp.text()
-                    return {
-                        "success": True,
-                        "query": query,
-                        "project": config.PROJECT_ID,
-                        "endpoint": config.CONTEXT_ENDPOINT,
-                        "context": context,
-                        "length": len(context)
-                    }
-                else:
-                    text = await resp.text()
-                    return {
-                        "success": False,
-                        "error": f"API returned {resp.status}: {text}",
-                        "endpoint": config.CONTEXT_ENDPOINT
-                    }
-    except aiohttp.ClientError as e:
-        return {
-            "success": False,
-            "error": f"Connection error: {str(e)}",
-            "endpoint": config.CONTEXT_ENDPOINT
-        }
-    except Exception as e:
-        logger.error(f"Error searching memory: {e}")
-        return {"success": False, "error": str(e)}
+    """Search Second Brain — same method Peter uses for memory context."""
+    return await search_second_brain(query=query)
 
 
 @app.get("/api/search/second-brain")
@@ -4774,12 +4682,12 @@ DASHBOARD_HTML = """
 
                     <div class="card service-card">
                         <div class="service-info">
-                            <div class="service-icon" style="background: ${services.claude_mem.status === 'up' ? 'var(--success)' : 'var(--error)'}">
+                            <div class="service-icon" style="background: ${services.second_brain ? 'var(--success)' : 'var(--muted)'}">
                                 🧠
                             </div>
                             <div class="service-details">
-                                <h4>Claude-Mem</h4>
-                                <span>${services.claude_mem.status === 'up' ? services.claude_mem.latency_ms + 'ms' : services.claude_mem.error || 'Down'}</span>
+                                <h4>Second Brain</h4>
+                                <span>Supabase + pgvector</span>
                             </div>
                         </div>
                     </div>

@@ -23,7 +23,6 @@ This file is checked every 30 minutes. Peter processes health checks first, then
 Run these checks and alert #peterbot if any fail:
 
 - [ ] Session responsive (can execute commands)
-- [ ] Memory endpoint OK (http://localhost:37777/health returns 200)
 - [ ] Last scheduled job succeeded (check scheduler status)
 
 If all checks pass and no to-do items need action: respond with `NO_REPLY`

@@ -77,33 +77,42 @@ async def discover_connections_for_item(
 
     try:
         # Search for similar items (excluding self)
+        # Use lower min_decay (0.1) so older items can still form connections
         results = await semantic_search(
             query=search_text,
             min_similarity=min_similarity,
+            min_decay_score=0.1,
             exclude_parent_id=UUID(item.id) if isinstance(item.id, str) else item.id,
             limit=10,
         )
 
+        item_uuid = UUID(item.id) if isinstance(item.id, str) else item.id
+
+        # Batch check existing connections (PR-006) — fetch all connections once
+        existing_conns = await get_connections_for_item(item_uuid)
+        existing_pairs = set()
+        for ec in existing_conns:
+            existing_pairs.add((str(ec.item_a_id), str(ec.item_b_id)))
+            existing_pairs.add((str(ec.item_b_id), str(ec.item_a_id)))
+
         for result in results:
             other_item = result.item
             similarity = result.best_similarity
+            other_uuid = UUID(other_item.id) if isinstance(other_item.id, str) else other_item.id
+
+            # Skip if connection already exists (checked from batch)
+            if (str(item_uuid), str(other_uuid)) in existing_pairs:
+                continue
 
             # Determine connection type
             conn_type = _determine_connection_type(item, other_item)
-
-            # Skip if connection already exists
-            if await connection_exists(
-                UUID(item.id) if isinstance(item.id, str) else item.id,
-                UUID(other_item.id) if isinstance(other_item.id, str) else other_item.id
-            ):
-                continue
 
             # Create connection
             description = _generate_connection_description(item, other_item, conn_type)
 
             conn = await insert_connection(
-                item_a_id=UUID(item.id) if isinstance(item.id, str) else item.id,
-                item_b_id=UUID(other_item.id) if isinstance(other_item.id, str) else other_item.id,
+                item_a_id=item_uuid,
+                item_b_id=other_uuid,
                 connection_type=conn_type,
                 description=description,
                 similarity_score=similarity,
@@ -237,21 +246,26 @@ async def get_item_connections(item_id: str) -> list[tuple[KnowledgeConnection, 
     Returns:
         List of (connection, connected_item) tuples
     """
-    from .db import get_knowledge_item
+    from .db import get_knowledge_items_batch
 
     connections = await get_connections_for_item(UUID(item_id))
-    results = []
+    if not connections:
+        return []
 
+    # Batch fetch all connected items (PR-005)
+    other_ids = []
     for conn in connections:
-        # Determine which is the "other" item
         other_id = conn.item_b_id if str(conn.item_a_id) == item_id else conn.item_a_id
+        other_ids.append(other_id)
 
-        try:
-            other_item = await get_knowledge_item(other_id)
-            if other_item:
-                results.append((conn, other_item))
-        except Exception:
-            continue
+    items = await get_knowledge_items_batch(other_ids)
+    items_by_id = {item.id: item for item in items}
+
+    results = []
+    for conn, other_id in zip(connections, other_ids):
+        other_item = items_by_id.get(str(other_id))
+        if other_item:
+            results.append((conn, other_item))
 
     return results
 
@@ -269,25 +283,30 @@ async def surface_new_connections(
     Returns:
         List of (connection, item_a, item_b) tuples
     """
-    from .db import get_knowledge_item
+    from .db import get_knowledge_items_batch
 
     connections = await get_unsurfaced_connections()
+    batch = connections[:max_connections]
+    if not batch:
+        return []
+
+    # Batch fetch all item IDs (PR-006)
+    all_ids = set()
+    for conn in batch:
+        all_ids.add(conn.item_a_id)
+        all_ids.add(conn.item_b_id)
+
+    items = await get_knowledge_items_batch(list(all_ids))
+    items_by_id = {item.id: item for item in items}
+
     results = []
+    for conn in batch:
+        item_a = items_by_id.get(str(conn.item_a_id))
+        item_b = items_by_id.get(str(conn.item_b_id))
 
-    for conn in connections[:max_connections]:
-        try:
-            item_a = await get_knowledge_item(conn.item_a_id)
-            item_b = await get_knowledge_item(conn.item_b_id)
-
-            if item_a and item_b:
-                results.append((conn, item_a, item_b))
-
-                # Mark as surfaced
-                await mark_connection_surfaced(conn.id)
-
-        except Exception as e:
-            logger.warning(f"Failed to fetch connection items: {e}")
-            continue
+        if item_a and item_b:
+            results.append((conn, item_a, item_b))
+            await mark_connection_surfaced(conn.id)
 
     return results
 

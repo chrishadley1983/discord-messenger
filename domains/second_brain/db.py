@@ -1,8 +1,6 @@
-"""Database operations for Second Brain using Supabase.
+"""Database operations for Second Brain using Supabase."""
 
-Uses Supabase's built-in gte-small embedding model via pg_embedding extension.
-"""
-
+import asyncio
 import json
 from datetime import datetime, timedelta
 from typing import Optional
@@ -31,8 +29,28 @@ from .types import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Shared HTTP client
+# ---------------------------------------------------------------------------
+
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Get or create a shared httpx client for Supabase REST calls."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=30,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _http_client
+
+
 def _get_headers() -> dict[str, str]:
     """Get headers for Supabase API calls."""
+    if not SUPABASE_KEY:
+        raise RuntimeError("SUPABASE_KEY is not set — check environment variables")
     return {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -49,13 +67,10 @@ def _get_rest_url() -> str:
 # =============================================================================
 # EMBEDDING GENERATION
 # =============================================================================
-# Embeddings are handled by the embed module which has multiple fallbacks:
-# 1. Supabase Edge Function
-# 2. Supabase RPC
-# 3. HuggingFace Inference API (free)
-# 4. Zero vector (last resort)
+# Embeddings handled by embed module via HuggingFace Inference API (gte-small).
+# Raises EmbeddingError on failure — no zero-vector fallback.
 
-from .embed import generate_embedding, generate_embeddings_batch
+from .embed import generate_embedding, generate_embeddings_batch, EmbeddingError
 
 
 # =============================================================================
@@ -91,15 +106,14 @@ async def insert_knowledge_item(
     }
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{_get_rest_url()}/knowledge_items",
-                headers=_get_headers(),
-                json=payload,
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.post(
+            f"{_get_rest_url()}/knowledge_items",
+            headers=_get_headers(),
+            json=payload,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         logger.info(f"Inserted knowledge item: {title or 'untitled'}")
         return KnowledgeItem.from_db_row(data[0])
@@ -111,14 +125,13 @@ async def insert_knowledge_item(
 async def get_knowledge_item(item_id: UUID) -> Optional[KnowledgeItem]:
     """Get a knowledge item by ID."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{_get_rest_url()}/knowledge_items?id=eq.{item_id}",
-                headers=_get_headers(),
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.get(
+            f"{_get_rest_url()}/knowledge_items?id=eq.{item_id}",
+            headers=_get_headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
 
         if not data:
             return None
@@ -128,21 +141,39 @@ async def get_knowledge_item(item_id: UUID) -> Optional[KnowledgeItem]:
         raise
 
 
+async def get_knowledge_items_batch(item_ids: list[UUID]) -> list[KnowledgeItem]:
+    """Get multiple knowledge items by ID in a single request."""
+    if not item_ids:
+        return []
+    ids_str = ",".join(str(uid) for uid in item_ids)
+    try:
+        client = _get_http_client()
+        response = await client.get(
+            f"{_get_rest_url()}/knowledge_items?id=in.({ids_str})",
+            headers=_get_headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
+        return [KnowledgeItem.from_db_row(row) for row in data]
+    except Exception as e:
+        logger.error(f"Failed to batch get knowledge items: {e}")
+        raise
+
+
 async def update_knowledge_item(
     item_id: UUID,
     **updates,
 ) -> KnowledgeItem:
     """Update a knowledge item."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.patch(
-                f"{_get_rest_url()}/knowledge_items?id=eq.{item_id}",
-                headers=_get_headers(),
-                json=updates,
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.patch(
+            f"{_get_rest_url()}/knowledge_items?id=eq.{item_id}",
+            headers=_get_headers(),
+            json=updates,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         logger.info(f"Updated knowledge item: {item_id}")
         return KnowledgeItem.from_db_row(data[0])
@@ -168,30 +199,40 @@ async def promote_passive_item(item_id: UUID) -> KnowledgeItem:
 
 
 async def boost_access(item_id: UUID) -> None:
-    """Boost an item when accessed (update last_accessed_at and access_count)."""
+    """Boost an item when accessed (increment access_count, update timestamps).
+
+    Uses a single PATCH with a raw SQL increment to avoid read-then-write.
+    Falls back to read-then-write if RPC is unavailable.
+    """
     try:
-        # First get current access count
-        item = await get_knowledge_item(item_id)
-        if not item:
-            return
-
-        new_count = item.access_count + 1
-
-        # Calculate new decay score with access boost
-        from .decay import calculate_decay_score
-        new_decay = calculate_decay_score(
-            created_at=item.created_at,
-            last_accessed_at=datetime.utcnow(),
-            access_count=new_count,
-            base_priority=item.base_priority,
+        # Try RPC approach (single call, atomic)
+        client = _get_http_client()
+        response = await client.post(
+            f"{_get_rest_url()}/rpc/boost_item_access",
+            headers=_get_headers(),
+            json={"item_uuid": str(item_id)},
         )
-
-        await update_knowledge_item(
-            item_id,
-            last_accessed_at=datetime.utcnow().isoformat(),
-            access_count=new_count,
-            decay_score=new_decay,
-        )
+        if response.status_code == 404:
+            # RPC not deployed, fall back to read-then-write
+            item = await get_knowledge_item(item_id)
+            if not item:
+                return
+            new_count = item.access_count + 1
+            from .decay import calculate_decay_score
+            new_decay = calculate_decay_score(
+                created_at=item.created_at,
+                last_accessed_at=datetime.utcnow(),
+                access_count=new_count,
+                base_priority=item.base_priority,
+            )
+            await update_knowledge_item(
+                item_id,
+                last_accessed_at=datetime.utcnow().isoformat(),
+                access_count=new_count,
+                decay_score=new_decay,
+            )
+        else:
+            response.raise_for_status()
     except Exception as e:
         logger.warning(f"Failed to boost access for {item_id}: {e}")
 
@@ -215,15 +256,14 @@ async def insert_chunk(
     }
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{_get_rest_url()}/knowledge_chunks",
-                headers=_get_headers(),
-                json=payload,
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.post(
+            f"{_get_rest_url()}/knowledge_chunks",
+            headers=_get_headers(),
+            json=payload,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         return KnowledgeChunk.from_db_row(data[0])
     except Exception as e:
@@ -247,15 +287,15 @@ async def insert_chunks_batch(
     ]
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{_get_rest_url()}/knowledge_chunks",
-                headers=_get_headers(),
-                json=payloads,
-                timeout=60,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.post(
+            f"{_get_rest_url()}/knowledge_chunks",
+            headers=_get_headers(),
+            json=payloads,
+            timeout=60,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         logger.info(f"Inserted {len(data)} chunks for item {parent_id}")
         return [KnowledgeChunk.from_db_row(row) for row in data]
@@ -267,14 +307,13 @@ async def insert_chunks_batch(
 async def get_chunks_for_item(parent_id: UUID) -> list[KnowledgeChunk]:
     """Get all chunks for a knowledge item."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{_get_rest_url()}/knowledge_chunks?parent_id=eq.{parent_id}&order=chunk_index",
-                headers=_get_headers(),
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.get(
+            f"{_get_rest_url()}/knowledge_chunks?parent_id=eq.{parent_id}&order=chunk_index",
+            headers=_get_headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
 
         return [KnowledgeChunk.from_db_row(row) for row in data]
     except Exception as e:
@@ -299,10 +338,13 @@ async def semantic_search(
     Returns SearchResult objects grouped by parent item.
     """
     # Generate query embedding
-    query_embedding = await generate_embedding(query)
+    try:
+        query_embedding = await generate_embedding(query)
+    except EmbeddingError as e:
+        logger.error(f"Failed to embed search query ({len(query)} chars): {e}")
+        return []
 
     # Build the RPC call for semantic search
-    # This uses a custom Supabase function for cosine similarity search
     params = {
         "query_embedding": query_embedding,
         "match_threshold": min_similarity,
@@ -316,15 +358,14 @@ async def semantic_search(
         params["exclude_parent"] = str(exclude_parent_id)
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{_get_rest_url()}/rpc/search_knowledge",
-                headers=_get_headers(),
-                json=params,
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.post(
+            f"{_get_rest_url()}/rpc/search_knowledge",
+            headers=_get_headers(),
+            json=params,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         # Group results by parent item
         results_by_parent: dict[UUID, SearchResult] = {}
@@ -333,7 +374,7 @@ async def semantic_search(
             parent_id = UUID(row["parent_id"])
 
             if parent_id not in results_by_parent:
-                # Create the parent item
+                # Create the parent item — include facts/concepts (CR-001)
                 item = KnowledgeItem.from_db_row({
                     "id": row["parent_id"],
                     "content_type": row["content_type"],
@@ -352,6 +393,8 @@ async def semantic_search(
                     "created_at": row["created_at"],
                     "promoted_at": row.get("promoted_at"),
                     "status": row.get("status", "active"),
+                    "facts": row.get("facts") or [],
+                    "concepts": row.get("concepts") or [],
                 })
                 results_by_parent[parent_id] = SearchResult(
                     item=item,
@@ -361,7 +404,7 @@ async def semantic_search(
                 )
 
             result = results_by_parent[parent_id]
-            similarity = float(row.get("similarity", 0.0))  # Supabase returns string
+            similarity = float(row.get("similarity", 0.0))
 
             # Add chunk
             chunk = KnowledgeChunk.from_db_row({
@@ -378,10 +421,10 @@ async def semantic_search(
             if similarity > result.best_similarity:
                 result.best_similarity = similarity
 
-        # Sort by weighted score and limit
+        # Sort by best similarity
         sorted_results = sorted(
             results_by_parent.values(),
-            key=lambda r: r.weighted_score,
+            key=lambda r: r.best_similarity,
             reverse=True,
         )[:limit]
 
@@ -415,15 +458,14 @@ async def insert_connection(
     }
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{_get_rest_url()}/knowledge_connections",
-                headers=_get_headers(),
-                json=payload,
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.post(
+            f"{_get_rest_url()}/knowledge_connections",
+            headers=_get_headers(),
+            json=payload,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         logger.info(f"Inserted connection: {item_a_id} <-> {item_b_id}")
         return KnowledgeConnection.from_db_row(data[0])
@@ -439,19 +481,17 @@ async def insert_connection(
 async def connection_exists(item_a_id: UUID, item_b_id: UUID) -> bool:
     """Check if a connection exists between two items (in either direction)."""
     try:
-        async with httpx.AsyncClient() as client:
-            # Check both directions
-            filter_str = (
-                f"or=(and(item_a_id.eq.{item_a_id},item_b_id.eq.{item_b_id}),"
-                f"and(item_a_id.eq.{item_b_id},item_b_id.eq.{item_a_id}))"
-            )
-            response = await client.get(
-                f"{_get_rest_url()}/knowledge_connections?{filter_str}&select=id",
-                headers=_get_headers(),
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        filter_str = (
+            f"or=(and(item_a_id.eq.{item_a_id},item_b_id.eq.{item_b_id}),"
+            f"and(item_a_id.eq.{item_b_id},item_b_id.eq.{item_a_id}))"
+        )
+        response = await client.get(
+            f"{_get_rest_url()}/knowledge_connections?{filter_str}&select=id",
+            headers=_get_headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
 
         return len(data) > 0
     except Exception as e:
@@ -462,15 +502,14 @@ async def connection_exists(item_a_id: UUID, item_b_id: UUID) -> bool:
 async def get_connections_for_item(item_id: UUID) -> list[KnowledgeConnection]:
     """Get all connections involving an item."""
     try:
-        async with httpx.AsyncClient() as client:
-            filter_str = f"or=(item_a_id.eq.{item_id},item_b_id.eq.{item_id})"
-            response = await client.get(
-                f"{_get_rest_url()}/knowledge_connections?{filter_str}",
-                headers=_get_headers(),
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        filter_str = f"or=(item_a_id.eq.{item_id},item_b_id.eq.{item_id})"
+        response = await client.get(
+            f"{_get_rest_url()}/knowledge_connections?{filter_str}",
+            headers=_get_headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
 
         return [KnowledgeConnection.from_db_row(row) for row in data]
     except Exception as e:
@@ -478,17 +517,17 @@ async def get_connections_for_item(item_id: UUID) -> list[KnowledgeConnection]:
         raise
 
 
-async def get_unsurfaced_connections(since: Optional[datetime] = None) -> list[KnowledgeConnection]:
+async def get_unsurfaced_connections(since: Optional[datetime] = None, limit: int = 100) -> list[KnowledgeConnection]:
     """Get connections that haven't been shown to user yet."""
     try:
-        async with httpx.AsyncClient() as client:
-            url = f"{_get_rest_url()}/knowledge_connections?surfaced=eq.false&order=created_at.desc"
-            if since:
-                url += f"&created_at=gte.{since.isoformat()}"
+        client = _get_http_client()
+        url = f"{_get_rest_url()}/knowledge_connections?surfaced=eq.false&order=created_at.desc&limit={limit}"
+        if since:
+            url += f"&created_at=gte.{since.isoformat()}"
 
-            response = await client.get(url, headers=_get_headers(), timeout=30)
-            response.raise_for_status()
-            data = response.json()
+        response = await client.get(url, headers=_get_headers())
+        response.raise_for_status()
+        data = response.json()
 
         return [KnowledgeConnection.from_db_row(row) for row in data]
     except Exception as e:
@@ -499,17 +538,16 @@ async def get_unsurfaced_connections(since: Optional[datetime] = None) -> list[K
 async def mark_connection_surfaced(connection_id: UUID) -> None:
     """Mark a connection as surfaced (shown to user)."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.patch(
-                f"{_get_rest_url()}/knowledge_connections?id=eq.{connection_id}",
-                headers=_get_headers(),
-                json={
-                    "surfaced": True,
-                    "surfaced_at": datetime.utcnow().isoformat(),
-                },
-                timeout=30,
-            )
-            response.raise_for_status()
+        client = _get_http_client()
+        response = await client.patch(
+            f"{_get_rest_url()}/knowledge_connections?id=eq.{connection_id}",
+            headers=_get_headers(),
+            json={
+                "surfaced": True,
+                "surfaced_at": datetime.utcnow().isoformat(),
+            },
+        )
+        response.raise_for_status()
     except Exception as e:
         logger.error(f"Failed to mark connection surfaced: {e}")
 
@@ -521,15 +559,14 @@ async def mark_connection_surfaced(connection_id: UUID) -> None:
 async def get_total_active_count() -> int:
     """Get total count of active knowledge items."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{_get_rest_url()}/knowledge_items?status=eq.active&select=id",
-                headers={**_get_headers(), "Prefer": "count=exact"},
-                timeout=30,
-            )
-            response.raise_for_status()
-            count = response.headers.get("content-range", "0-0/0").split("/")[-1]
-            return int(count)
+        client = _get_http_client()
+        response = await client.get(
+            f"{_get_rest_url()}/knowledge_items?status=eq.active&select=id&limit=1",
+            headers={**_get_headers(), "Prefer": "count=exact"},
+        )
+        response.raise_for_status()
+        count = response.headers.get("content-range", "0-0/0").split("/")[-1]
+        return int(count)
     except Exception as e:
         logger.error(f"Failed to get total count: {e}")
         return 0
@@ -538,32 +575,30 @@ async def get_total_active_count() -> int:
 async def get_total_connection_count() -> int:
     """Get total count of connections."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{_get_rest_url()}/knowledge_connections?select=id",
-                headers={**_get_headers(), "Prefer": "count=exact"},
-                timeout=30,
-            )
-            response.raise_for_status()
-            count = response.headers.get("content-range", "0-0/0").split("/")[-1]
-            return int(count)
+        client = _get_http_client()
+        response = await client.get(
+            f"{_get_rest_url()}/knowledge_connections?select=id&limit=1",
+            headers={**_get_headers(), "Prefer": "count=exact"},
+        )
+        response.raise_for_status()
+        count = response.headers.get("content-range", "0-0/0").split("/")[-1]
+        return int(count)
     except Exception as e:
         logger.error(f"Failed to get connection count: {e}")
         return 0
 
 
-async def get_items_since(since: datetime) -> list[KnowledgeItem]:
+async def get_items_since(since: datetime, limit: int = 500) -> list[KnowledgeItem]:
     """Get items created since a given datetime."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{_get_rest_url()}/knowledge_items?created_at=gte.{since.isoformat()}"
-                f"&status=eq.active&order=created_at.desc",
-                headers=_get_headers(),
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.get(
+            f"{_get_rest_url()}/knowledge_items?created_at=gte.{since.isoformat()}"
+            f"&status=eq.active&order=created_at.desc&limit={limit}",
+            headers=_get_headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
 
         return [KnowledgeItem.from_db_row(row) for row in data]
     except Exception as e:
@@ -574,14 +609,13 @@ async def get_items_since(since: datetime) -> list[KnowledgeItem]:
 async def get_recent_items(limit: int = 10) -> list[KnowledgeItem]:
     """Get most recently created items."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{_get_rest_url()}/knowledge_items?status=eq.active&order=created_at.desc&limit={limit}",
-                headers=_get_headers(),
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.get(
+            f"{_get_rest_url()}/knowledge_items?status=eq.active&order=created_at.desc&limit={limit}",
+            headers=_get_headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
 
         return [KnowledgeItem.from_db_row(row) for row in data]
     except Exception as e:
@@ -597,19 +631,7 @@ async def list_items(
     sort_by: str = "created_at",
     order: str = "desc",
 ) -> tuple[list[KnowledgeItem], int]:
-    """List knowledge items with pagination and filtering.
-
-    Args:
-        limit: Max items to return (default 50)
-        offset: Pagination offset
-        content_type: Filter by content_type value (e.g. "article", "recipe")
-        topic: Filter by topic (items where topics array contains this value)
-        sort_by: Column to sort by (default "created_at")
-        order: Sort order, "asc" or "desc" (default "desc")
-
-    Returns:
-        Tuple of (items, total_count)
-    """
+    """List knowledge items with pagination and filtering."""
     # Whitelist sortable columns to prevent injection
     allowed_sorts = {"created_at", "title", "access_count", "decay_score", "base_priority"}
     if sort_by not in allowed_sorts:
@@ -618,7 +640,6 @@ async def list_items(
         order = "desc"
 
     try:
-        # Build query params
         url = f"{_get_rest_url()}/knowledge_items?status=eq.active"
         url += f"&order={sort_by}.{order}"
         url += f"&limit={limit}&offset={offset}"
@@ -628,13 +649,12 @@ async def list_items(
         if topic:
             url += f"&topics=cs.{{{topic}}}"
 
-        # Use count=exact header to get total count
         headers = {**_get_headers(), "Prefer": "count=exact, return=representation"}
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers, timeout=30)
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
 
         # Parse total count from content-range header
         content_range = response.headers.get("content-range", "")
@@ -655,15 +675,14 @@ async def list_items(
 async def get_topics_with_counts() -> list[tuple[str, int]]:
     """Get all topics with their counts."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{_get_rest_url()}/rpc/get_topic_counts",
-                headers=_get_headers(),
-                json={},
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.post(
+            f"{_get_rest_url()}/rpc/get_topic_counts",
+            headers=_get_headers(),
+            json={},
+        )
+        response.raise_for_status()
+        data = response.json()
 
         return [(row["topic"], row["count"]) for row in data]
     except Exception as e:
@@ -674,15 +693,14 @@ async def get_topics_with_counts() -> list[tuple[str, int]]:
 async def get_fading_but_relevant_items(limit: int = 5) -> list[KnowledgeItem]:
     """Get items with low decay but connected to active topics."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{_get_rest_url()}/rpc/get_fading_but_relevant",
-                headers=_get_headers(),
-                json={"item_limit": limit},
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.post(
+            f"{_get_rest_url()}/rpc/get_fading_but_relevant",
+            headers=_get_headers(),
+            json={"item_limit": limit},
+        )
+        response.raise_for_status()
+        data = response.json()
 
         return [KnowledgeItem.from_db_row(row) for row in data]
     except Exception as e:
@@ -693,18 +711,17 @@ async def get_fading_but_relevant_items(limit: int = 5) -> list[KnowledgeItem]:
 async def get_most_accessed_item_since(since: datetime) -> Optional[KnowledgeItem]:
     """Get the most accessed item since a given datetime."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{_get_rest_url()}/knowledge_items?"
-                f"last_accessed_at=gte.{since.isoformat()}"
-                f"&status=eq.active"
-                f"&order=access_count.desc"
-                f"&limit=1",
-                headers=_get_headers(),
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.get(
+            f"{_get_rest_url()}/knowledge_items?"
+            f"last_accessed_at=gte.{since.isoformat()}"
+            f"&status=eq.active"
+            f"&order=access_count.desc"
+            f"&limit=1",
+            headers=_get_headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
 
         if not data:
             return None
@@ -741,17 +758,26 @@ async def create_knowledge_item(item: KnowledgeItem) -> Optional[KnowledgeItem]:
         payload["site_name"] = item.site_name
     if item.word_count:
         payload["word_count"] = item.word_count
+    if item.source_message_id:
+        payload["source_message_id"] = item.source_message_id
+    if item.source_system:
+        payload["source_system"] = item.source_system
+    if item.facts:
+        payload["facts"] = item.facts
+    if item.concepts:
+        payload["concepts"] = item.concepts
+    if item.created_at:
+        payload["created_at"] = item.created_at.isoformat()
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{_get_rest_url()}/knowledge_items",
-                headers=_get_headers(),
-                json=payload,
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.post(
+            f"{_get_rest_url()}/knowledge_items",
+            headers=_get_headers(),
+            json=payload,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         logger.info(f"Created knowledge item: {item.title or 'untitled'}")
         return KnowledgeItem.from_db_row(data[0])
@@ -764,12 +790,7 @@ async def create_knowledge_chunks(
     parent_id: str,
     chunks: list[dict],
 ) -> bool:
-    """Create multiple chunks for a knowledge item.
-
-    Args:
-        parent_id: UUID of parent knowledge item
-        chunks: List of dicts with: index, text, embedding, start_word, end_word
-    """
+    """Create multiple chunks for a knowledge item."""
     payloads = [
         {
             "parent_id": parent_id,
@@ -783,14 +804,14 @@ async def create_knowledge_chunks(
     ]
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{_get_rest_url()}/knowledge_chunks",
-                headers=_get_headers(),
-                json=payloads,
-                timeout=60,
-            )
-            response.raise_for_status()
+        client = _get_http_client()
+        response = await client.post(
+            f"{_get_rest_url()}/knowledge_chunks",
+            headers=_get_headers(),
+            json=payloads,
+            timeout=60,
+        )
+        response.raise_for_status()
         logger.info(f"Created {len(chunks)} chunks for item {parent_id}")
         return True
     except Exception as e:
@@ -801,14 +822,13 @@ async def create_knowledge_chunks(
 async def get_item_by_source(source_url: str) -> Optional[KnowledgeItem]:
     """Get a knowledge item by its source URL."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{_get_rest_url()}/knowledge_items?source_url=eq.{source_url}",
-                headers=_get_headers(),
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.get(
+            f"{_get_rest_url()}/knowledge_items?source_url=eq.{source_url}",
+            headers=_get_headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
 
         if not data:
             return None
@@ -818,17 +838,34 @@ async def get_item_by_source(source_url: str) -> Optional[KnowledgeItem]:
         return None
 
 
+async def item_exists_by_source(source_system: str, source_message_id: str) -> bool:
+    """Check if a knowledge item exists with the given source_system and source_message_id."""
+    try:
+        client = _get_http_client()
+        response = await client.get(
+            f"{_get_rest_url()}/knowledge_items"
+            f"?source_system=eq.{source_system}"
+            f"&source_message_id=eq.{source_message_id}"
+            f"&select=id&limit=1",
+            headers=_get_headers(),
+        )
+        response.raise_for_status()
+        return len(response.json()) > 0
+    except Exception as e:
+        logger.error(f"Failed to check item existence: {e}")
+        return False
+
+
 async def get_pending_items(limit: int = 10) -> list[KnowledgeItem]:
     """Get items with pending status that need full processing."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{_get_rest_url()}/knowledge_items?status=eq.pending&order=created_at&limit={limit}",
-                headers=_get_headers(),
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = _get_http_client()
+        response = await client.get(
+            f"{_get_rest_url()}/knowledge_items?status=eq.pending&order=created_at&limit={limit}",
+            headers=_get_headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
 
         return [KnowledgeItem.from_db_row(row) for row in data]
     except Exception as e:
@@ -839,14 +876,13 @@ async def get_pending_items(limit: int = 10) -> list[KnowledgeItem]:
 async def update_item_status(item_id: str, status: ItemStatus) -> bool:
     """Update the status of a knowledge item."""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.patch(
-                f"{_get_rest_url()}/knowledge_items?id=eq.{item_id}",
-                headers=_get_headers(),
-                json={"status": status.value},
-                timeout=30,
-            )
-            response.raise_for_status()
+        client = _get_http_client()
+        response = await client.patch(
+            f"{_get_rest_url()}/knowledge_items?id=eq.{item_id}",
+            headers=_get_headers(),
+            json={"status": status.value},
+        )
+        response.raise_for_status()
         logger.info(f"Updated item {item_id} status to {status.value}")
         return True
     except Exception as e:

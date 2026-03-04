@@ -6,10 +6,8 @@ Extracts 3-8 topic tags, preferring known domain tags from SECOND-BRAIN.md Secti
 import json
 import re
 
-import httpx
-
 from logger import logger
-from .config import get_claude_api_key, KNOWN_DOMAIN_TAGS
+from .config import call_claude, KNOWN_DOMAIN_TAGS
 
 
 # Tagging prompt from SECOND-BRAIN.md Section 11.2
@@ -37,49 +35,19 @@ async def extract_topics(text: str, title: str | None = None) -> list[str]:
     Returns:
         List of 3-8 topic tags
     """
-    api_key = get_claude_api_key()
-    if not api_key:
-        logger.warning("Claude API key not configured, using keyword extraction")
-        return _fallback_topics(text, title)
-
-    # Truncate text for API call
     truncated_text = text[:4000] if len(text) > 4000 else text
-
     prompt = TAG_PROMPT.format(text=truncated_text)
     if title:
         prompt = f"Title: {title}\n\n{prompt}"
 
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-3-5-haiku-latest",
-                    "max_tokens": 100,
-                    "messages": [
-                        {"role": "user", "content": prompt}
-                    ],
-                },
-                timeout=20,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-        response_text = data["content"][0]["text"].strip()
-
-        # Parse JSON array from response
-        tags = _parse_tags_response(response_text)
+    result = await call_claude(prompt, max_tokens=100, timeout=20)
+    if result:
+        tags = _parse_tags_response(result)
         logger.debug(f"Extracted tags: {tags}")
         return tags
 
-    except Exception as e:
-        logger.error(f"Claude tagging failed: {e}")
-        return _fallback_topics(text, title)
+    logger.warning("Tag extraction failed, using keyword fallback")
+    return _fallback_topics(text, title)
 
 
 def _parse_tags_response(response: str) -> list[str]:

@@ -1,13 +1,12 @@
-# Claude-Mem: AI Development Instructions
+# Peterbot: AI Development Instructions
 
-Claude-mem is a Claude Code plugin providing persistent memory across sessions.
+## Memory System — Second Brain
 
-## Architecture
-
-**5 Lifecycle Hooks**: SessionStart, UserPromptSubmit, PostToolUse, Summary, SessionEnd
-**Worker Service** - Express API on port 37777, handles AI processing asynchronously
-**Database** - SQLite3 at ~/.claude-mem/claude-mem.db
-**Chroma** - Vector embeddings for semantic search
+All memory is handled by **Second Brain** (Supabase PostgreSQL + pgvector).
+- Conversations are automatically captured with structured extraction (facts, concepts)
+- Embeddings via gte-small (384-dim) through Supabase Edge Function
+- Semantic search surfaces relevant context before each response
+- No separate memory worker — direct database integration
 
 ---
 
@@ -161,13 +160,13 @@ You are Peterbot running inside Claude Code via a tmux session.
 Discord message → bot.py → router.py → [memory context injection] → YOU (tmux) → response → Discord
 ```
 
-### Memory System
+### Memory System — Second Brain
 
 **@MEMORY.md** governs memory retrieval and knowledge search.
 
-- **Injection**: Relevant memories prepended to your context before each message
-- **Capture**: After you respond, the exchange is saved for observation extraction
-- **Project**: All Peterbot memories use project ID "peterbot"
+- **Injection**: Relevant memories from Second Brain prepended to your context before each message
+- **Capture**: After you respond, the exchange is captured with facts/concepts extraction
+- **Storage**: Supabase PostgreSQL + pgvector (semantic search via 384-dim gte-small embeddings)
 
 ### Scheduler System
 - **SCHEDULE.md**: Defines cron/interval jobs

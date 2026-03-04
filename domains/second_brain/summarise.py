@@ -3,10 +3,8 @@
 Generates 2-3 sentence summaries focused on key insights and actionable information.
 """
 
-import httpx
-
 from logger import logger
-from .config import get_claude_api_key
+from .config import call_claude
 
 
 # Summarisation prompt from SECOND-BRAIN.md Section 11.1
@@ -27,46 +25,18 @@ async def generate_summary(text: str, title: str | None = None) -> str:
     Returns:
         Summary string (2-3 sentences)
     """
-    api_key = get_claude_api_key()
-    if not api_key:
-        logger.warning("Claude API key not configured, using first paragraph as summary")
-        return _fallback_summary(text)
-
-    # Truncate text for API call (keep costs low)
     truncated_text = text[:6000] if len(text) > 6000 else text
-
     prompt = SUMMARISE_PROMPT.format(text=truncated_text)
     if title:
         prompt = f"Title: {title}\n\n{prompt}"
 
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-3-5-haiku-latest",
-                    "max_tokens": 200,
-                    "messages": [
-                        {"role": "user", "content": prompt}
-                    ],
-                },
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+    result = await call_claude(prompt, max_tokens=200, timeout=30)
+    if result:
+        logger.debug(f"Generated summary: {result[:100]}...")
+        return result
 
-        summary = data["content"][0]["text"].strip()
-        logger.debug(f"Generated summary: {summary[:100]}...")
-        return summary
-
-    except Exception as e:
-        logger.error(f"Claude summarisation failed: {e}")
-        return _fallback_summary(text)
+    logger.warning("Summary generation failed, using fallback")
+    return _fallback_summary(text)
 
 
 def _fallback_summary(text: str) -> str:
@@ -98,53 +68,18 @@ async def extract_title(text: str) -> str:
     Returns:
         Generated title
     """
-    api_key = get_claude_api_key()
-    if not api_key:
-        # Fallback: use first line or first N words
-        first_line = text.split('\n')[0].strip()
-        if len(first_line) > 10 and len(first_line) < 100:
-            return first_line
-        words = text.split()[:10]
-        return ' '.join(words) + ('...' if len(text.split()) > 10 else '')
-
-    # Truncate text for API call
     truncated_text = text[:2000] if len(text) > 2000 else text
+    prompt = f"Generate a short, descriptive title (5-10 words) for this content:\n\n{truncated_text}"
 
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-3-5-haiku-latest",
-                    "max_tokens": 50,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": f"Generate a short, descriptive title (5-10 words) for this content:\n\n{truncated_text}"
-                        }
-                    ],
-                },
-                timeout=15,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-        title = data["content"][0]["text"].strip()
-        # Remove quotes if present
-        title = title.strip('"\'')
+    result = await call_claude(prompt, max_tokens=50, timeout=15)
+    if result:
+        title = result.strip('"\'')
         logger.debug(f"Generated title: {title}")
         return title
 
-    except Exception as e:
-        logger.error(f"Claude title generation failed: {e}")
-        # Fallback
-        first_line = text.split('\n')[0].strip()
-        if len(first_line) > 10 and len(first_line) < 100:
-            return first_line
-        words = text.split()[:10]
-        return ' '.join(words) + '...'
+    # Fallback: use first line or first N words
+    first_line = text.split('\n')[0].strip()
+    if len(first_line) > 10 and len(first_line) < 100:
+        return first_line
+    words = text.split()[:10]
+    return ' '.join(words) + ('...' if len(text.split()) > 10 else '')

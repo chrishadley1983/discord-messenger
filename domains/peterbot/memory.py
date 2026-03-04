@@ -1,30 +1,17 @@
-"""Memory client for peterbot - context retrieval and capture."""
+"""Memory client for peterbot - context retrieval and capture via Second Brain."""
 
 import asyncio
 from collections import deque
 from typing import Optional
-import aiohttp
 
 from logger import logger
 from .config import (
-    CONTEXT_ENDPOINT,
-    MESSAGES_ENDPOINT,
-    PROJECT_ID,
     RECENT_BUFFER_SIZE,
-    FAILURE_QUEUE_MAX,
-    RETRY_INTERVAL_SECONDS,
-    MAX_RETRIES,
 )
 
 # Per-channel recent conversation buffers
 # Each channel has its own deque to avoid context mixing
 _recent_buffers: dict[int, deque] = {}
-
-# Failure queue for retry
-_failure_queue: deque[dict] = deque(maxlen=FAILURE_QUEUE_MAX)
-
-# Retry task handle
-_retry_task: Optional[asyncio.Task] = None
 
 
 def _get_buffer(channel_id: int) -> deque:
@@ -53,11 +40,8 @@ def populate_buffer_from_history(channel_id: int, messages: list[dict]) -> int:
         Number of messages added to buffer
     """
     buffer = _get_buffer(channel_id)
-
-    # Clear any existing (shouldn't be any, but just in case)
     buffer.clear()
 
-    # Add messages in order
     for msg in messages:
         buffer.append({
             "role": msg["role"],
@@ -99,7 +83,6 @@ def get_recent_context(channel_id: int) -> str:
     lines = ["## Recent Conversation"]
     for msg in buffer:
         prefix = "User" if msg["role"] == "user" else "Assistant"
-        # Truncate long messages for context
         content = msg["content"]
         if len(content) > 500:
             content = content[:500] + "..."
@@ -109,40 +92,56 @@ def get_recent_context(channel_id: int) -> str:
 
 
 async def get_memory_context(query: str) -> str:
-    """Fetch memory context from peterbot-mem worker.
+    """Fetch memory context from Second Brain via semantic search.
+
+    Uses circuit breaker to fail fast during Supabase outages.
 
     Args:
         query: The user's message to search memory for
 
     Returns:
-        Plain text memory context, or empty string on failure
+        Formatted memory context string, or empty string on failure
     """
-    params = {
-        "project": PROJECT_ID,
-        "query": query
-    }
+    from .circuit_breaker import get_circuit_breaker
+
+    breaker = get_circuit_breaker()
+    if not breaker.allow_request():
+        logger.debug("Circuit breaker OPEN — skipping Second Brain search")
+        return ""
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                CONTEXT_ENDPOINT,
-                params=params,
-                timeout=aiohttp.ClientTimeout(total=5)
-            ) as resp:
-                if resp.status == 200:
-                    # Returns plain text context
-                    context = await resp.text()
-                    logger.debug(f"Memory context fetched: {len(context)} chars")
-                    return context
-                else:
-                    text = await resp.text()
-                    logger.warning(f"Memory context API error {resp.status}: {text}")
-                    return ""
-    except aiohttp.ClientError as e:
-        logger.warning(f"Memory context connection error: {e}")
-        return ""
+        from domains.second_brain.db import semantic_search
+
+        results = await semantic_search(
+            query=query,
+            min_similarity=0.70,
+            limit=5,
+        )
+
+        breaker.record_success()
+
+        if not results:
+            return ""
+
+        lines = []
+        for result in results:
+            item = result.item
+            similarity = int(result.best_similarity * 100)
+            title = item.title or "Untitled"
+            lines.append(f"- **{title}** ({similarity}% match)")
+            if item.summary:
+                lines.append(f"  {item.summary}")
+            if item.facts:
+                for fact in item.facts[:3]:
+                    lines.append(f"  - {fact}")
+
+        context = "\n".join(lines)
+        logger.debug(f"Second Brain context: {len(results)} results, {len(context)} chars")
+        return context
+
     except Exception as e:
-        logger.warning(f"Memory context unexpected error: {e}")
+        breaker.record_failure()
+        logger.warning(f"Second Brain context retrieval failed: {e}")
         return ""
 
 
@@ -158,10 +157,10 @@ def build_full_context(
 
     Args:
         message: The current user message
-        memory_context: Retrieved memory observations
+        memory_context: Retrieved memory from Second Brain
         channel_id: Discord channel ID for per-channel buffer
         channel_name: Discord channel name (e.g., "#food-log")
-        knowledge_context: Optional Second Brain knowledge context
+        knowledge_context: Optional additional knowledge context
         attachment_urls: Optional list of attachment dicts with url, filename, content_type, size
 
     Returns:
@@ -184,13 +183,13 @@ def build_full_context(
     parts.append(f"{now.strftime('%A, %B %d, %Y at %H:%M')} (UK)")
     parts.append("")
 
-    # Add memory context if available
+    # Add memory context if available (now from Second Brain)
     if memory_context and memory_context.strip():
         parts.append("## Memory Context")
         parts.append(memory_context.strip())
         parts.append("")
 
-    # Add Second Brain knowledge context if available
+    # Add additional knowledge context if available
     if knowledge_context and knowledge_context.strip():
         parts.append(knowledge_context.strip())
         parts.append("")
@@ -212,7 +211,6 @@ def build_full_context(
         for att in attachment_urls:
             is_image = att.get("content_type", "").startswith("image/")
             if is_image:
-                # Prefer local path (pre-downloaded) over CDN URL
                 path = att.get("local_path") or att["url"]
                 parts.append(f"- **Image:** `{att['filename']}` — Use the Read tool on this path to view: {path}")
             else:
@@ -227,103 +225,54 @@ def build_full_context(
 async def capture_message_pair(
     session_id: str,
     user_message: str,
-    assistant_response: str
+    assistant_response: str,
+    channel_id: str | None = None,
+    message_id: str | None = None,
 ) -> bool:
-    """Send conversation exchange to peterbot-mem for observation extraction.
+    """Capture conversation exchange into Second Brain.
 
-    This is fire-and-forget - failures are queued for retry.
+    On failure, queues the capture locally in capture_store for later replay.
 
     Args:
         session_id: Unique session identifier (e.g., discord-123)
         user_message: The user's message
         assistant_response: The assistant's response
+        channel_id: Discord channel ID
+        message_id: Discord message ID
 
     Returns:
-        True if successfully sent, False if queued for retry
+        True if successfully captured, False on failure
     """
-    payload = {
-        "contentSessionId": session_id,
-        "source": "discord",
-        "channel": "peterbot",
-        "userMessage": user_message,
-        "assistantResponse": assistant_response,
-        "metadata": {}
-    }
-
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                MESSAGES_ENDPOINT,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=5)
-            ) as resp:
-                if resp.status == 202:
-                    logger.info(f"Memory captured for session {session_id}")
-                    return True
-                else:
-                    text = await resp.text()
-                    logger.error(f"Memory capture error {resp.status}: {text}")
-                    _queue_for_retry(payload)
-                    return False
-    except aiohttp.ClientError as e:
-        logger.error(f"Memory capture connection error: {e}")
-        _queue_for_retry(payload)
-        return False
+        from domains.second_brain.conversation import capture_conversation
+
+        item = await capture_conversation(
+            user_message=user_message,
+            assistant_response=assistant_response,
+            channel_id=channel_id or session_id,
+            message_id=message_id,
+        )
+
+        if item:
+            logger.info(f"Captured conversation to Second Brain: {item.id}")
+            return True
+        else:
+            logger.debug("Conversation not captured (too short or failed)")
+            return False
+
     except Exception as e:
-        logger.error(f"Memory capture unexpected error: {e}")
-        _queue_for_retry(payload)
+        logger.error(f"Second Brain capture failed, queuing locally: {e}")
+        try:
+            from . import capture_store
+            capture_store.add_capture(
+                session_id=session_id,
+                user_message=user_message,
+                assistant_response=assistant_response,
+                channel=channel_id or session_id,
+            )
+            logger.info("Capture queued locally for retry")
+        except Exception as queue_err:
+            logger.error(f"Local queue also failed: {queue_err}")
         return False
 
 
-def _queue_for_retry(payload: dict, retries: int = 0) -> None:
-    """Add failed payload to retry queue."""
-    if retries >= MAX_RETRIES:
-        logger.error(f"Dropping payload after {MAX_RETRIES} retries")
-        return
-
-    payload["_retries"] = retries
-    _failure_queue.append(payload)
-    logger.debug(f"Queued for retry ({len(_failure_queue)} in queue)")
-
-
-async def _retry_loop() -> None:
-    """Background task to retry failed captures."""
-    while True:
-        await asyncio.sleep(RETRY_INTERVAL_SECONDS)
-
-        if not _failure_queue:
-            continue
-
-        # Process one item per interval
-        payload = _failure_queue.popleft()
-        retries = payload.pop("_retries", 0)
-
-        logger.info(f"Retrying memory capture (attempt {retries + 1})")
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    MESSAGES_ENDPOINT,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 202:
-                        logger.info("Retry successful")
-                    else:
-                        _queue_for_retry(payload, retries + 1)
-        except Exception as e:
-            logger.warning(f"Retry failed: {e}")
-            _queue_for_retry(payload, retries + 1)
-
-
-def start_retry_task() -> None:
-    """Start the background retry task (call on bot startup)."""
-    global _retry_task
-
-    if _retry_task is not None and not _retry_task.done():
-        logger.debug("Retry task already running")
-        return
-
-    loop = asyncio.get_event_loop()
-    _retry_task = loop.create_task(_retry_loop())
-    logger.info("Memory retry task started")

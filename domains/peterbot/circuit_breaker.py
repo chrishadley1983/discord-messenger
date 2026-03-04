@@ -1,6 +1,6 @@
-"""Circuit breaker for peterbot-mem worker calls.
+"""Circuit breaker for Second Brain (Supabase) calls.
 
-Prevents hammering a dead worker and enables graceful degradation.
+Prevents hammering a dead service and enables graceful degradation.
 
 States:
 - CLOSED: Normal operation, requests pass through
@@ -217,8 +217,8 @@ def get_circuit_breaker() -> CircuitBreaker:
     global _worker_circuit_breaker
 
     if _worker_circuit_breaker is None:
-        _worker_circuit_breaker = CircuitBreaker(name="peterbot-mem")
-        logger.info("Circuit breaker initialized for peterbot-mem worker")
+        _worker_circuit_breaker = CircuitBreaker(name="second-brain")
+        logger.info("Circuit breaker initialized for Second Brain")
 
     return _worker_circuit_breaker
 
@@ -230,4 +230,4 @@ def reset_circuit_breaker() -> None:
     if _worker_circuit_breaker is not None:
         _worker_circuit_breaker.reset()
     else:
-        _worker_circuit_breaker = CircuitBreaker(name="peterbot-mem")
+        _worker_circuit_breaker = CircuitBreaker(name="second-brain")

@@ -1748,13 +1748,11 @@ const ServicesView = {
       tmuxSession: 'claude-peterbot',
       isTmux: true,
     },
-    claude_mem: {
-      name: 'Memory Worker',
+    second_brain: {
+      name: 'Second Brain',
       icon: Icons.brain,
-      port: 37777,
-      managed: 'Systemd',
-      description: 'Claude memory observation worker',
-      healthEndpoint: '/health',
+      managed: 'Supabase',
+      description: 'Unified memory — Supabase + pgvector',
       isTmux: false,
     },
   },
@@ -2880,7 +2878,7 @@ const ServicesView = {
       { key: 'discord_bot', name: 'Discord Bot', icon: Icons.messageCircle },
       { key: 'hadley_bricks', name: 'Hadley Bricks', icon: Icons.box },
       { key: 'peterbot_session', name: 'Peterbot Session', icon: Icons.terminal },
-      { key: 'claude_mem', name: 'Memory Worker', icon: Icons.brain },
+      { key: 'second_brain', name: 'Second Brain', icon: Icons.brain },
     ];
 
     // Replace modal content with progress view
@@ -4489,7 +4487,7 @@ const Format = {
     const names = {
       hadley_api: 'Hadley API',
       discord_bot: 'Discord Bot',
-      claude_mem: 'Claude Memory',
+      second_brain: 'Second Brain',
       peterbot_session: 'Peterbot Session',
       hadley_bricks: 'Hadley Bricks',
     };

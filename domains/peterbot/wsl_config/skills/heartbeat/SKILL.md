@@ -19,7 +19,6 @@ Every 30 minutes, check system health and work on to-do items.
 
 Run these checks:
 - **Session responsive**: Can you execute commands? (You're running, so yes)
-- **Memory endpoint**: `curl http://localhost:37777/health` - should return OK
 
 If any check fails → Include failure in status output
 

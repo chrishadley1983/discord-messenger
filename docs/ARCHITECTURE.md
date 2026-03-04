@@ -49,7 +49,7 @@ Discord Bot → tmux session (claude-peterbot) → screen capture → parser.py 
 | Discord Bot | - | Windows | Main bot process, message routing |
 | Hadley API | 8100 | Windows | FastAPI proxy for Gmail, Calendar, Notion |
 | Peter Dashboard | 5000 | Windows | Flask web UI for monitoring |
-| Memory Worker | 37777 | Windows | claude-mem persistent memory |
+| Second Brain | - | Supabase | Unified memory (PostgreSQL + pgvector) |
 | Claude Code | - | WSL2 CLI | AI responses via `claude -p` (v2) or tmux (v1 fallback) |
 | Hadley Bricks | 3000 | (External) | LEGO inventory management API |
 | Peter Voice | - | Windows (tray) | Voice I/O desktop client (STT/TTS) |
@@ -466,8 +466,8 @@ Or test manually:
                            |
                            v
 +---------------+    +-----+------+    +----------------+
-| Memory Worker | <- | Discord    | -> | Hadley API     |
-| :37777        |    | Bot        |    | :8100          |
+| Second Brain  | <- | Discord    | -> | Hadley API     |
+| (Supabase)    |    | Bot        |    | :8100          |
 +---------------+    +-----+------+    +-------+--------+
                            |                   |
                            v                   v
@@ -485,14 +485,13 @@ Or test manually:
 
 ### Startup Order
 
-1. Memory Worker (claude-mem) - `npm start` in claude-mem directory
-2. Hadley API - `uvicorn hadley_api.main:app --port 8100`
-3. Discord Bot - `python bot.py`
-4. Dashboard (optional) - `uvicorn peter_dashboard.app:app --port 5000`
+1. Hadley API - `uvicorn hadley_api.main:app --port 8100`
+2. Discord Bot - `python bot.py`
+3. Dashboard (optional) - `uvicorn peter_dashboard.app:app --port 5000`
 
 ### Health Checks
 
-- Memory Worker: `http://localhost:37777/health`
+- Second Brain: Supabase cloud (always available)
 - Hadley API: `http://localhost:8100/health`
 - Dashboard: `http://localhost:5000/api/status`
 - Claude CLI (v2): `wsl bash -c "claude --version"` (should return version)
@@ -509,7 +508,7 @@ Or test manually:
 | `peter_dashboard/job_history.db` | Windows | Job execution history — `job_executions` table with start time, status, duration, output |
 | `data/parser_fixtures.db` | Windows | Parser captures & fixtures — `captures` table with screen_before/after, parser_output, pipeline_output; `fixtures` table for regression testing |
 | `data/captures.db` | Windows | Second Brain pending captures — `pending_captures` table for async memory ingestion |
-| `~/.claude-mem/claude-mem.db` | Windows | Peterbot-mem conversation memories |
+| Supabase `knowledge_items` | Cloud | Second Brain — conversation memories, articles, notes (pgvector embeddings) |
 
 ### Capture Flow (Response Lifecycle)
 
@@ -571,7 +570,8 @@ Nightly at 02:00 UK, the `parser-improve` skill reviews 24h captures from `data/
 | `PETERBOT_CHANNEL_ID` | Primary channel ID | `1234567890` |
 | `PETERBOT_ROUTER_V2` | Router version (`1`=CLI, `0`=tmux). Default: `1` | `1` |
 | `PETERBOT_SESSION_PATH` | WSL path to peterbot dir | `/home/chris_hadley/peterbot` |
-| `PETERBOT_MEM_URL` | Memory worker URL | `http://localhost:37777` |
+| `SUPABASE_URL` | Second Brain Supabase URL | `https://xxx.supabase.co` |
+| `SUPABASE_KEY` | Second Brain Supabase anon key | `eyJ...` |
 | `HADLEY_BRICKS_API_KEY` | HB inventory API key | `sk-...` |
 | `TWILIO_*` | WhatsApp credentials | Various |
 | `GOOGLE_*` | OAuth credentials | Various |
@@ -786,11 +786,8 @@ mcp_servers/second_brain_mcp.py
 
 ### Chat History Ingestion
 
-`scripts/ingest_claude_history.py` processes Anthropic JSON exports into both memory systems:
-- **peterbot-mem**: Preferences, decisions, personal facts
-- **Second Brain**: Knowledge, research, explanations
-
-Pipeline: Parse → Chunk by topic → Classify → Deduplicate (SHA-256 in SQLite) → Route
+Historical peterbot-mem observations have been migrated to Second Brain.
+All memory is now unified in Second Brain (Supabase PostgreSQL + pgvector).
 
 ---
 

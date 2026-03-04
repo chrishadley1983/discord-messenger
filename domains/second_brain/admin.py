@@ -11,49 +11,43 @@ Usage:
 import argparse
 import asyncio
 import sys
-from datetime import datetime, timedelta
+from uuid import UUID
 
 from logger import logger
-from .db import get_recent_items, search_knowledge, get_item_by_id
+from .db import (
+    get_recent_items,
+    get_knowledge_item,
+    get_total_active_count,
+    get_total_connection_count,
+    get_topics_with_counts,
+    semantic_search,
+)
 from .seed import run_seed_import, run_all_adapters, get_available_adapters
 
 
 async def cmd_stats() -> None:
     """Show knowledge base statistics."""
-    from .db import supabase
-
     print("\n=== Second Brain Statistics ===\n")
 
-    # Get counts by status
     try:
-        result = supabase.table("knowledge_items").select("status", count="exact").execute()
-        total = len(result.data) if result.data else 0
-        print(f"Total items: {total}")
+        total = await get_total_active_count()
+        print(f"Total active items: {total}")
 
-        # Count by capture type
-        for capture_type in ["explicit", "passive", "seed"]:
-            result = supabase.table("knowledge_items").select(
-                "*", count="exact"
-            ).eq("capture_type", capture_type).execute()
-            count = len(result.data) if result.data else 0
-            print(f"  - {capture_type}: {count}")
+        conn_count = await get_total_connection_count()
+        print(f"Total connections: {conn_count}")
 
         # Recent items
-        print("\n--- Recent Items (last 7 days) ---")
+        print("\n--- Recent Items (last 10) ---")
         recent = await get_recent_items(limit=10)
         for item in recent:
             title = item.title[:50] if item.title else "No title"
-            print(f"  [{item.capture_type}] {title}")
+            print(f"  [{item.capture_type.value}] {title}")
 
         # Top tags
         print("\n--- Top Tags ---")
-        result = supabase.table("knowledge_items").select("tags").execute()
-        tag_counts: dict[str, int] = {}
-        for row in result.data or []:
-            for tag in row.get("tags") or []:
-                tag_counts[tag] = tag_counts.get(tag, 0) + 1
-        for tag, count in sorted(tag_counts.items(), key=lambda x: -x[1])[:10]:
-            print(f"  {tag}: {count}")
+        topics = await get_topics_with_counts()
+        for topic, count in topics[:10]:
+            print(f"  {topic}: {count}")
 
     except Exception as e:
         logger.error(f"Stats error: {e}")
@@ -65,18 +59,17 @@ async def cmd_search(query: str, limit: int = 10) -> None:
     print(f"\n=== Searching for: '{query}' ===\n")
 
     try:
-        results = await search_knowledge(query, limit=limit)
+        results = await semantic_search(query, limit=limit)
 
         if not results:
             print("No results found.")
             return
 
-        for i, item in enumerate(results, 1):
-            title = item.title[:60] if item.title else "No title"
-            score = getattr(item, "similarity_score", 0)
-            print(f"{i}. [{score:.3f}] {title}")
-            print(f"   Tags: {', '.join(item.tags or [])}")
-            print(f"   ID: {item.id}")
+        for i, result in enumerate(results, 1):
+            title = result.item.title[:60] if result.item.title else "No title"
+            print(f"{i}. [{result.best_similarity:.3f}] {title}")
+            print(f"   Topics: {', '.join(result.item.topics or [])}")
+            print(f"   ID: {result.item.id}")
             print()
 
     except Exception as e:
@@ -124,27 +117,27 @@ def _print_seed_result(result) -> None:
 
 async def cmd_connections(refresh: bool = False, item_id: str | None = None) -> None:
     """Manage knowledge connections."""
-    from .connections import discover_connections
+    from .connections import discover_connections_for_item
 
     if item_id:
         print(f"\n=== Connections for item {item_id} ===\n")
-        item = await get_item_by_id(item_id)
+        item = await get_knowledge_item(UUID(item_id))
         if not item:
             print("Item not found.")
             return
 
-        connections = await discover_connections(item_id)
+        connections = await discover_connections_for_item(item)
         print(f"Found {len(connections)} connections")
         for conn in connections:
-            print(f"  - {conn.connection_type}: {conn.target_id} (strength: {conn.strength:.2f})")
+            print(f"  - {conn.connection_type.value}: {conn.item_b_id} (score: {conn.similarity_score:.2f})")
 
     elif refresh:
         print("\n=== Refreshing all connections ===\n")
-        # Get recent items without connections
         recent = await get_recent_items(limit=50)
         for item in recent:
-            print(f"Processing: {item.title[:40]}...")
-            await discover_connections(item.id)
+            title = item.title[:40] if item.title else "Untitled"
+            print(f"Processing: {title}...")
+            await discover_connections_for_item(item)
         print("Done.")
 
     else:
@@ -155,17 +148,18 @@ async def cmd_view(item_id: str) -> None:
     """View a knowledge item in detail."""
     print(f"\n=== Knowledge Item {item_id} ===\n")
 
-    item = await get_item_by_id(item_id)
+    item = await get_knowledge_item(UUID(item_id))
     if not item:
         print("Item not found.")
         return
 
     print(f"Title: {item.title}")
-    print(f"Type: {item.content_type}")
-    print(f"Capture: {item.capture_type}")
-    print(f"Status: {item.status}")
-    print(f"Priority: {item.priority_multiplier}")
-    print(f"Tags: {', '.join(item.tags or [])}")
+    print(f"Type: {item.content_type.value}")
+    print(f"Capture: {item.capture_type.value}")
+    print(f"Status: {item.status.value}")
+    print(f"Priority: {item.priority}")
+    print(f"Decay: {item.decay_score:.3f}")
+    print(f"Topics: {', '.join(item.topics or [])}")
     print(f"Created: {item.created_at}")
     print(f"Accessed: {item.access_count} times")
     print()
@@ -173,7 +167,7 @@ async def cmd_view(item_id: str) -> None:
     print(item.summary or "(no summary)")
     print()
     print("--- Content (first 500 chars) ---")
-    content = item.content or ""
+    content = item.full_text or ""
     print(content[:500])
 
 
