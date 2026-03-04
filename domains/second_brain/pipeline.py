@@ -66,7 +66,9 @@ async def process_capture(
     logger.info(f"Processing {capture_type.value} capture: {source[:100]}...")
 
     # Check for duplicates — boost access if re-saved
-    if source.startswith(('http://', 'https://')):
+    # Match any URL scheme (http, https, gcal, gmail, etc.) by checking
+    # for :// near the start — avoids false positives on plain-text content.
+    if '://' in source[:30]:
         existing = await get_item_by_source(source)
         if existing:
             logger.info(f"Duplicate source found, boosting access: {source}")
@@ -272,7 +274,7 @@ async def process_passive_capture(
     logger.info(f"Passive capture: {source[:100]}...")
 
     # Check for duplicates
-    if source.startswith(('http://', 'https://')):
+    if '://' in source[:30]:
         existing = await get_item_by_source(source)
         if existing:
             logger.debug(f"Duplicate passive capture, skipping: {source}")

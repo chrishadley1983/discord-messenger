@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 import httpx
 
 from logger import logger
+from ...config import HADLEY_API_BASE
 from ..base import SeedAdapter, SeedItem
 from ..runner import register_adapter
 
@@ -91,7 +92,7 @@ class EmailImportAdapter(SeedAdapter):
 
     def __init__(self, config: dict = None):
         super().__init__(config)
-        self.api_base = config.get("api_base", "http://172.19.64.1:8100") if config else "http://172.19.64.1:8100"
+        self.api_base = config.get("api_base", HADLEY_API_BASE) if config else HADLEY_API_BASE
         # Default to 5 years of history
         self.years_back = config.get("years_back", 5) if config else 5
         # Categories to search (default: all)
@@ -207,10 +208,12 @@ class EmailImportAdapter(SeedAdapter):
             # Combine category topics with extracted topics
             all_topics = ["email"] + category_topics + self._extract_additional_topics(email)
 
+            email_id = email.get("id")
             return SeedItem(
                 title=f"Email: {subject[:60]}",
                 content=content,
-                source_id=email.get("id"),
+                source_url=f"gmail://{email_id}" if email_id else None,
+                source_id=email_id,
                 topics=list(set(all_topics)),
                 created_at=created_at,
                 metadata={

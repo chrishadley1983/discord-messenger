@@ -3,6 +3,7 @@
 Imports all activities from Garmin Connect using the garth library.
 """
 
+import asyncio
 import os
 from datetime import datetime, timedelta, date
 from typing import Any
@@ -17,7 +18,10 @@ from ..runner import register_adapter
 
 
 # Session storage directory (shared with nutrition service)
-SESSION_DIR = Path(os.getenv("LOCALAPPDATA", ".")) / "discord-assistant" / "garmin_session"
+# Windows: %LOCALAPPDATA%\discord-assistant\garmin_session
+# WSL/Linux: ~/.local/share/discord-assistant/garmin_session
+_local_data = os.getenv("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".local", "share")
+SESSION_DIR = Path(_local_data) / "discord-assistant" / "garmin_session"
 
 
 def _get_garmin_client():
@@ -78,20 +82,18 @@ class GarminActivitiesAdapter(SeedAdapter):
         self.min_distance_km = config.get("min_distance_km", 0) if config else 0
 
     async def validate(self) -> tuple[bool, str]:
-        try:
-            _get_garmin_client()
-            return True, ""
-        except ValueError as e:
-            return False, str(e)
-        except Exception as e:
-            return False, f"Garmin auth failed: {e}"
+        if not GARMIN_EMAIL or not GARMIN_PASSWORD:
+            return False, "Garmin credentials not configured (GARMIN_EMAIL, GARMIN_PASSWORD)"
+        if not SESSION_DIR.exists():
+            return False, "Garmin session not found — run a manual login first"
+        return True, ""
 
     async def fetch(self, limit: int = 2000) -> list[SeedItem]:
         """Fetch all activities from the last N years."""
         items = []
 
         try:
-            _get_garmin_client()
+            await asyncio.to_thread(_get_garmin_client)
 
             # Calculate date range
             end_date = date.today()
@@ -105,7 +107,7 @@ class GarminActivitiesAdapter(SeedAdapter):
             batch_size = 100
 
             while len(all_activities) < limit:
-                activities = garth.Activity.list(limit=batch_size, start=batch_start)
+                activities = await asyncio.to_thread(garth.Activity.list, limit=batch_size, start=batch_start)
 
                 if not activities:
                     break
@@ -153,9 +155,7 @@ class GarminActivitiesAdapter(SeedAdapter):
             logger.info(f"Returning {len(items)} activities for import")
 
         except Exception as e:
-            logger.error(f"Failed to fetch Garmin activities: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Failed to fetch Garmin activities: {e}")
 
         return items
 

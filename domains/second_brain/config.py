@@ -3,6 +3,9 @@
 import os
 from typing import Final
 
+# Hadley API base URL (used by seed adapters for Calendar, Gmail)
+HADLEY_API_BASE: Final[str] = os.getenv("HADLEY_API_BASE", "http://172.19.64.1:8100")
+
 # Chunking configuration
 CHUNK_SIZE: Final[int] = 300           # ~300 words per chunk
 CHUNK_OVERLAP: Final[int] = 50         # 50-word overlap between chunks

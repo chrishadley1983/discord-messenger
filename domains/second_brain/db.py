@@ -741,7 +741,7 @@ async def create_knowledge_item(item: KnowledgeItem) -> Optional[KnowledgeItem]:
         "content_type": item.content_type.value,
         "capture_type": item.capture_type.value,
         "title": item.title,
-        "source_url": item.source if item.source.startswith('http') else None,
+        "source_url": item.source if '://' in item.source[:30] else None,
         "full_text": item.full_text,
         "summary": item.summary,
         "topics": item.topics or [],

@@ -4,7 +4,7 @@ Imports README and recent commits from specified GitHub repositories.
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -35,6 +35,8 @@ class GitHubProjectsAdapter(SeedAdapter):
         super().__init__(config)
         self.token = config.get("token") if config else None
         self.repos = config.get("repos", DEFAULT_REPOS) if config else DEFAULT_REPOS
+        # How far back to fetch commits (days). 0 = no limit (relies on dedup).
+        self.days_back = config.get("days_back", 0) if config else 0
 
         # Try environment variable for token
         if not self.token:
@@ -153,11 +155,15 @@ class GitHubProjectsAdapter(SeedAdapter):
         items = []
 
         try:
-            # Get last 50 commits
+            # Get recent commits (with optional date windowing)
+            params = {"per_page": 50}
+            if self.days_back > 0:
+                since = (datetime.now(timezone.utc) - timedelta(days=self.days_back)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                params["since"] = since
             response = await client.get(
                 f"https://api.github.com/repos/{repo_full_name}/commits",
                 headers=headers,
-                params={"per_page": 50},
+                params=params,
             )
 
             if response.status_code != 200:

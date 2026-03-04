@@ -38,6 +38,7 @@ async def run_seed_import(
     adapter: SeedAdapter,
     limit: int = 100,
     dry_run: bool = False,
+    skip_validate: bool = False,
 ) -> SeedResult:
     """Run a seed import using the given adapter.
 
@@ -45,6 +46,7 @@ async def run_seed_import(
         adapter: Configured adapter instance
         limit: Maximum items to import
         dry_run: If True, fetch but don't save
+        skip_validate: If True, skip validation (caller already validated)
 
     Returns:
         SeedResult with import statistics
@@ -57,11 +59,12 @@ async def run_seed_import(
         items_failed=0,
     )
 
-    # Validate adapter
-    is_valid, error = await adapter.validate()
-    if not is_valid:
-        result.errors.append(f"Validation failed: {error}")
-        return result
+    # Validate adapter (unless caller already did)
+    if not skip_validate:
+        is_valid, error = await adapter.validate()
+        if not is_valid:
+            result.errors.append(f"Validation failed: {error}")
+            return result
 
     # Fetch items
     logger.info(f"Fetching items from {adapter.name}...")
@@ -81,7 +84,7 @@ async def run_seed_import(
     # Import each item
     for item in items:
         try:
-            # Check for duplicates
+            # Check for duplicates via source_url
             if item.source_url:
                 existing = await get_item_by_source(item.source_url)
                 if existing:
@@ -91,11 +94,15 @@ async def run_seed_import(
             # Merge default topics with item topics
             all_topics = list(set(adapter.get_default_topics() + item.topics))
 
-            # Import via pipeline
+            # Import via pipeline — pass all SeedItem fields through
             created = await process_capture(
                 source=item.source_url or item.content,
                 capture_type=CaptureType.SEED,
                 user_tags=all_topics,
+                text=item.content if item.source_url else None,
+                title_override=item.title,
+                created_at_override=item.created_at,
+                source_system=adapter.source_system,
             )
 
             if created:

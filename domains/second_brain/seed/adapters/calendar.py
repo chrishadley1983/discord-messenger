@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import httpx
 
 from logger import logger
+from ...config import HADLEY_API_BASE
 from ..base import SeedAdapter, SeedItem
 from ..runner import register_adapter
 
@@ -22,7 +23,7 @@ class CalendarEventsAdapter(SeedAdapter):
 
     def __init__(self, config: dict = None):
         super().__init__(config)
-        self.api_base = config.get("api_base", "http://172.19.64.1:8100") if config else "http://172.19.64.1:8100"
+        self.api_base = config.get("api_base", HADLEY_API_BASE) if config else HADLEY_API_BASE
         # Default to 5 years of history
         self.years_back = config.get("years_back", 5) if config else 5
 
@@ -77,9 +78,7 @@ class CalendarEventsAdapter(SeedAdapter):
                 logger.info(f"Returning {len(items)} calendar events for import")
 
         except Exception as e:
-            logger.error(f"Failed to fetch calendar data: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Failed to fetch calendar data: {e}")
 
         return items[:limit]
 
@@ -142,10 +141,12 @@ class CalendarEventsAdapter(SeedAdapter):
             except ValueError:
                 pass
 
+            event_id = event.get("id")
             return SeedItem(
                 title=summary,
                 content="\n".join(content_parts),
-                source_id=event.get("id"),
+                source_url=f"gcal://{event_id}" if event_id else None,
+                source_id=event_id,
                 topics=self._extract_topics(summary, event),
                 created_at=created_at,
                 metadata={

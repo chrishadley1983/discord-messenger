@@ -173,7 +173,7 @@ async def on_ready():
 
     # Incremental seed import — daily at 1am UK, loads calendar/email/GitHub/Garmin
     from jobs.incremental_seed import register_incremental_seed
-    register_incremental_seed(scheduler)
+    register_incremental_seed(scheduler, bot=bot)
     logger.info("Incremental seed job registered (daily at 1:00 AM UK)")
 
     # Reprocess pending passive captures — every 6 hours

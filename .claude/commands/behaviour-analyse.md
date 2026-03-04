@@ -6,10 +6,9 @@ Capture, classify, and analyse PeterBot interactions to identify enhancement opp
 
 1. Read `docs/agents/behaviour/state.json` for last analysis state
 2. Read `docs/agents/behaviour/behaviour-registry.json` for current observations
-3. Query peterbot-mem for new interactions since last analysis:
-   ```bash
-   wsl sqlite3 ~/.claude-mem/claude-mem.db "SELECT id, session_id, created_at, content FROM observations WHERE project='peterbot' AND created_at > '<lastAnalysisDate>' ORDER BY created_at"
-   ```
+3. Query Second Brain (Supabase) for new interactions since last analysis.
+   Use the `search_knowledge` MCP tool or query the knowledge_items table via Supabase REST API:
+   - Filter: `content_type=eq.conversation_extract&created_at=gt.<lastAnalysisDate>&order=created_at.asc`
 4. Count unprocessed interactions
 5. Report boot status
 
@@ -32,22 +31,16 @@ Parse the mode from arguments:
 
 | Source | Access |
 |--------|--------|
-| peterbot-mem SQLite | `wsl sqlite3 ~/.claude-mem/claude-mem.db` |
-| Message pairs | `observations` table, project='peterbot' |
+| Second Brain (Supabase) | `search_knowledge` MCP tool or Supabase REST API |
+| Knowledge items | `knowledge_items` table, `content_type='conversation_extract'` |
 | Session logs | `~/peterbot/raw_capture.log` (WSL) |
 
 ### Query Examples
 
-```bash
-# Get recent observations
-wsl sqlite3 ~/.claude-mem/claude-mem.db "SELECT * FROM observations WHERE project='peterbot' ORDER BY created_at DESC LIMIT 50"
-
-# Get observations by session
-wsl sqlite3 ~/.claude-mem/claude-mem.db "SELECT * FROM observations WHERE session_id LIKE 'discord-%' ORDER BY created_at DESC"
-
-# Search by content
-wsl sqlite3 ~/.claude-mem/claude-mem.db "SELECT * FROM observations WHERE content LIKE '%calendar%' AND project='peterbot'"
-```
+Use the `search_knowledge` MCP tool for semantic search, or query Supabase REST:
+- Recent conversations: `knowledge_items?content_type=eq.conversation_extract&order=created_at.desc&limit=50`
+- Search by topic: `knowledge_items?topics=cs.{calendar}&order=created_at.desc`
+- Full item detail: use `get_item_detail` MCP tool with the item's UUID
 
 ---
 
