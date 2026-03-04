@@ -4,7 +4,7 @@ This domain routes messages through Claude CLI (--print mode)
 with memory context injection from Second Brain (Supabase + pgvector).
 """
 
-from .router import handle_message, on_startup
+from .router_v2 import handle_message, on_startup
 from .config import CHANNEL_ID, PETERBOT_SESSION
 
 __all__ = [

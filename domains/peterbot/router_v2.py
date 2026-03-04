@@ -862,7 +862,6 @@ async def handle_message(
         channel_name = CHANNEL_ID_TO_NAME.get(channel_id, f"Channel {channel_id}")
         full_context = memory.build_full_context(
             message,
-            "",  # memory_context removed — surfacing handles semantic search
             channel_id,
             channel_name,
             knowledge_context=knowledge_context,

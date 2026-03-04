@@ -91,73 +91,17 @@ def get_recent_context(channel_id: int) -> str:
     return "\n".join(lines)
 
 
-async def get_memory_context(query: str) -> str:
-    """Fetch memory context from Second Brain via semantic search.
-
-    Uses circuit breaker to fail fast during Supabase outages.
-
-    Args:
-        query: The user's message to search memory for
-
-    Returns:
-        Formatted memory context string, or empty string on failure
-    """
-    from .circuit_breaker import get_circuit_breaker
-
-    breaker = get_circuit_breaker()
-    if not breaker.allow_request():
-        logger.debug("Circuit breaker OPEN — skipping Second Brain search")
-        return ""
-
-    try:
-        from domains.second_brain.db import semantic_search
-
-        results = await semantic_search(
-            query=query,
-            min_similarity=0.70,
-            limit=5,
-        )
-
-        breaker.record_success()
-
-        if not results:
-            return ""
-
-        lines = []
-        for result in results:
-            item = result.item
-            similarity = int(result.best_similarity * 100)
-            title = item.title or "Untitled"
-            lines.append(f"- **{title}** ({similarity}% match)")
-            if item.summary:
-                lines.append(f"  {item.summary}")
-            if item.facts:
-                for fact in item.facts[:3]:
-                    lines.append(f"  - {fact}")
-
-        context = "\n".join(lines)
-        logger.debug(f"Second Brain context: {len(results)} results, {len(context)} chars")
-        return context
-
-    except Exception as e:
-        breaker.record_failure()
-        logger.warning(f"Second Brain context retrieval failed: {e}")
-        return ""
-
-
 def build_full_context(
     message: str,
-    memory_context: str,
     channel_id: int,
     channel_name: str = "",
     knowledge_context: str = "",
     attachment_urls: list[dict] | None = None,
 ) -> str:
-    """Build full context combining memory, recent buffer, and current message.
+    """Build full context combining knowledge, recent buffer, and current message.
 
     Args:
         message: The current user message
-        memory_context: Retrieved memory from Second Brain
         channel_id: Discord channel ID for per-channel buffer
         channel_name: Discord channel name (e.g., "#food-log")
         knowledge_context: Optional additional knowledge context
@@ -182,12 +126,6 @@ def build_full_context(
     parts.append(f"## Current Time")
     parts.append(f"{now.strftime('%A, %B %d, %Y at %H:%M')} (UK)")
     parts.append("")
-
-    # Add memory context if available (now from Second Brain)
-    if memory_context and memory_context.strip():
-        parts.append("## Memory Context")
-        parts.append(memory_context.strip())
-        parts.append("")
 
     # Add additional knowledge context if available
     if knowledge_context and knowledge_context.strip():

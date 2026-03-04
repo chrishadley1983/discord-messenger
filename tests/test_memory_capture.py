@@ -142,20 +142,15 @@ def test_build_full_context():
 
     context = memory.build_full_context(
         message="Current message",
-        memory_context="Some memory context here",
         channel_id=channel_id,
         channel_name="#test-channel",
         knowledge_context="Knowledge context",
-        skill_context="Skill context"
     )
 
     # Should contain all sections
     assert "CHANNEL CONTEXT" in context
     assert "#test-channel" in context
-    assert "Memory Context" in context
-    assert "Some memory context here" in context
     assert "Knowledge context" in context
-    assert "Skill context" in context
     assert "Recent Conversation" in context
     assert "Previous message" in context
     assert "Current Message" in context

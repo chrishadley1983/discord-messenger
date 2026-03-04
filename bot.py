@@ -37,18 +37,9 @@ from domains.claude_code import (
 )
 
 # Import Peterbot domain (special routing - Claude Code with memory)
-# Router v2 uses Claude CLI --print mode (no tmux); controlled by PETERBOT_ROUTER_V2 env var
-from domains.peterbot.config import PETERBOT_CHANNEL_IDS, USE_ROUTER_V2
-
-if USE_ROUTER_V2:
-    from domains.peterbot.router_v2 import handle_message as handle_peterbot
-    from domains.peterbot.router_v2 import on_startup as peterbot_startup
-    logger.info("Peterbot: Using router v2 (Claude CLI --print mode)")
-else:
-    from domains.peterbot import (
-        handle_message as handle_peterbot,
-        on_startup as peterbot_startup,
-    )
+from domains.peterbot.config import PETERBOT_CHANNEL_IDS
+from domains.peterbot.router_v2 import handle_message as handle_peterbot
+from domains.peterbot.router_v2 import on_startup as peterbot_startup
 
 from domains.peterbot import CHANNEL_ID as PETERBOT_CHANNEL
 from domains.peterbot.memory import is_buffer_empty, populate_buffer_from_history
@@ -489,11 +480,11 @@ async def on_message(message):
                     pass
 
             # Process through Response Pipeline (sanitise → classify → format → chunk)
-            # When using v2, output is clean JSON — skip sanitiser
+            # Router v2 output is clean JSON — skip sanitiser
             processed = process_response(
                 raw_response,
                 {'user_prompt': message.content},
-                pre_sanitised=USE_ROUTER_V2,
+                pre_sanitised=True,
             )
 
             # Send chunks (pipeline handles Discord 2000 char limit)
