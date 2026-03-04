@@ -1,7 +1,7 @@
 """Peterbot domain - Personal assistant with memory integration via Claude Code.
 
-This domain routes messages through a dedicated Claude Code tmux session
-with memory context injection from peterbot-mem.
+This domain routes messages through Claude CLI (--print mode)
+with memory context injection from Second Brain (Supabase + pgvector).
 """
 
 from .router import handle_message, on_startup

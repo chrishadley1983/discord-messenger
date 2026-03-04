@@ -15,7 +15,6 @@ from ..runner import register_adapter
 
 # Default repos to import
 DEFAULT_REPOS = [
-    "chrishadley1983/peterbot-mem",
     "chrishadley1983/discord-messenger",
     "chrishadley1983/finance-tracker",
     "chrishadley1983/family-meal-planner",

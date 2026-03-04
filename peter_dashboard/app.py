@@ -2205,7 +2205,7 @@ async def resolve_parser_feedback(feedback_id: str, resolution: str = "Resolved 
 # ============================================================================
 
 @app.get("/api/search/memory")
-async def search_peterbot_memory(query: str):
+async def search_memory(query: str):
     """Search Second Brain — same method Peter uses for memory context."""
     return await search_second_brain(query=query)
 
