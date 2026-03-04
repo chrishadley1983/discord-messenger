@@ -668,5 +668,5 @@ MESSAGE: {message[:100]}...
 
 
 def on_startup() -> None:
-    """Called on bot startup - start retry task."""
-    memory.start_retry_task()
+    """Called on bot startup."""
+    pass

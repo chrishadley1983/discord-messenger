@@ -35,7 +35,7 @@ All services: auto-start on boot, auto-restart on crash (5s delay), log rotation
 ### WSL Components
 
 - **claude-peterbot tmux session** - Claude Code instance for Peter
-- **claude-mem worker** - Express API on port 37777 for memory processing
+- **Second Brain** - Supabase PostgreSQL + pgvector for unified memory
 - **peterbot directory** - `/home/chris_hadley/peterbot` with symlinks to Windows config
 
 ---
@@ -275,13 +275,13 @@ FastAPI web application for system monitoring.
 
 ---
 
-### 7. Memory System (claude-mem)
+### 7. Memory System (Second Brain)
 
-External plugin providing persistent memory for Claude Code.
+Unified memory system using Supabase PostgreSQL + pgvector.
 
-**Worker**: Express API on port 37777
-**Database**: SQLite3 at `~/.claude-mem/claude-mem.db`
-**Vectors**: Chroma for semantic search
+**Database**: Supabase `knowledge_items` table with facts/concepts JSONB columns
+**Embeddings**: gte-small (384-dim) via Supabase Edge Function, HuggingFace fallback
+**Search**: pgvector semantic search with decay scoring
 
 **Lifecycle hooks**:
 1. SessionStart

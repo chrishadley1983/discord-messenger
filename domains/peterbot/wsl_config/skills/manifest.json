@@ -167,7 +167,7 @@
     ],
     "conversational": true,
     "scheduled": true,
-    "description": "Full sync, pick list generation, Discord delivery, and printing",
+    "description": "Full sync, pick list generation, and Discord delivery with interactive links",
     "channel": "#peterbot"
   },
   "hb-inventory-aging": {

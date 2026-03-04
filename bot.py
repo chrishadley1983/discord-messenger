@@ -171,76 +171,6 @@ async def on_ready():
     scheduler.start()
     logger.info(f"Scheduler started with {len(scheduler.get_jobs())} jobs")
 
-    # Periodic cleanup of claude-mem worker processes that accumulate in WSL
-    # These leak ~400MB RAM each and saturate API rate limits, causing timeouts
-    if USE_ROUTER_V2:
-        from domains.peterbot.router_v2 import cleanup_claude_mem_workers
-        scheduler.add_job(
-            cleanup_claude_mem_workers,
-            IntervalTrigger(minutes=5),
-            id="__claude_mem_cleanup",
-            max_instances=1,
-            replace_existing=True,
-        )
-        logger.info("claude-mem worker cleanup registered (every 5 min, threshold=3)")
-
-    # Periodic self-restart to free WSL memory (claude-mem worker leaks subagents)
-    async def periodic_restart():
-        """Restart the bot every 6 hours to clear orphaned WSL processes.
-
-        Waits for any running job to finish before restarting.
-        NSSM will auto-restart the service after exit.
-        """
-        import subprocess, sys, time
-
-        # Check if a scheduled job is currently running
-        if peterbot_scheduler and peterbot_scheduler._job_executing:
-            logger.info(f"Periodic restart deferred — job '{peterbot_scheduler._current_job_name}' is running")
-            # Retry in 2 minutes
-            scheduler.add_job(
-                periodic_restart,
-                "date",
-                run_date=datetime.now() + timedelta(minutes=2),
-                id="__restart_deferred",
-                max_instances=1,
-                replace_existing=True,
-            )
-            return
-
-        logger.info("Periodic restart: cleaning up WSL orphans and restarting...")
-
-        # Kill orphaned claude-mem subagents in WSL before exit
-        try:
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = subprocess.SW_HIDE
-            subprocess.run(
-                ["wsl", "bash", "-c",
-                 "pkill -9 -f 'claude.*disallowedTools' 2>/dev/null; "
-                 "pkill -9 -f 'chroma-mcp' 2>/dev/null; "
-                 "pkill -9 -f 'worker-service.cjs' 2>/dev/null"],
-                capture_output=True, timeout=15,
-                startupinfo=si,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            logger.info("WSL orphan cleanup complete")
-        except Exception as e:
-            logger.warning(f"WSL cleanup failed (non-fatal): {e}")
-
-        # Exit — NSSM will restart the service
-        logger.info("Exiting for NSSM restart...")
-        os._exit(0)
-
-    from datetime import datetime, timedelta
-    scheduler.add_job(
-        periodic_restart,
-        IntervalTrigger(hours=6),
-        id="__periodic_restart",
-        max_instances=1,
-        replace_existing=True,
-    )
-    logger.info("Periodic restart registered (every 6h)")
-
     # Incremental seed import — daily at 1am UK, loads calendar/email/GitHub/Garmin
     from jobs.incremental_seed import register_incremental_seed
     register_incremental_seed(scheduler)
@@ -907,19 +837,8 @@ async def cmd_status(interaction: discord.Interaction):
     except Exception as e:
         lines.append(f"**Skills:** Error reading manifest: {e}")
 
-    # Memory endpoint health
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                "http://localhost:37777/health",
-                timeout=aiohttp.ClientTimeout(total=3)
-            ) as resp:
-                if resp.status == 200:
-                    lines.append("**Memory endpoint:** healthy ✅")
-                else:
-                    lines.append(f"**Memory endpoint:** unhealthy ({resp.status}) ⚠️")
-    except Exception:
-        lines.append("**Memory endpoint:** not responding ❌")
+    # Memory system: Second Brain (Supabase)
+    lines.append("**Memory:** Second Brain (Supabase + pgvector)")
 
     # Recent job status
     job_status = peterbot_scheduler.get_job_status()
@@ -1067,33 +986,6 @@ def _kill_orphaned_bots():
         logger.info(f"Cleaned up {killed} orphaned bot process(es)")
 
 
-def _kill_wsl_orphans():
-    """Kill orphaned claude-mem subagent and chroma-mcp processes in WSL.
-
-    The claude-mem MCP worker daemon spawns Claude subagent processes for
-    memory summarization and never reaps them. Each leaks ~400MB RAM.
-    """
-    import subprocess
-    try:
-        si = subprocess.STARTUPINFO()
-        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        si.wShowWindow = subprocess.SW_HIDE
-        result = subprocess.run(
-            ["wsl", "bash", "-c",
-             "pkill -9 -f 'claude.*disallowedTools' 2>/dev/null; "
-             "pkill -9 -f 'chroma-mcp' 2>/dev/null; "
-             "pkill -9 -f 'worker-service.cjs' 2>/dev/null; "
-             "echo done"],
-            capture_output=True, text=True, timeout=15,
-            startupinfo=si,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        if "done" in result.stdout:
-            logger.info("WSL orphan cleanup complete")
-    except Exception as e:
-        logger.debug(f"WSL orphan cleanup skipped: {e}")
-
-
 def main():
     """Entry point."""
     if not DISCORD_TOKEN:
@@ -1101,7 +993,6 @@ def main():
         return
 
     _kill_orphaned_bots()
-    _kill_wsl_orphans()
     logger.info("Starting Discord Assistant...")
     bot.run(DISCORD_TOKEN)
 

@@ -1,104 +1,75 @@
-# Memory Systems Reference
+# Memory System Reference
 
-Peter has two memory systems for different purposes.
-
-## Overview
-
-- **Peterbot-mem**: Conversation memory — things learned from past chats with Chris (auto-injected via hooks)
-- **Second Brain**: Saved knowledge — articles, ideas, notes Chris saved or were passively captured
+Peter uses **Second Brain** as a unified memory system for all knowledge — conversations, articles, notes, ideas, and passively captured content.
 
 ---
 
-## Peterbot-mem (Conversation Memory)
+## How It Works
 
-Contains observations extracted from past conversations: preferences, decisions, facts about Chris's life/work/projects.
+Every conversation with Chris is automatically captured into Second Brain after each exchange:
 
-### How It Works
+1. **Auto-capture**: Each message pair (user + assistant) is processed through the pipeline
+2. **Structured extraction**: Facts and concepts are extracted using AI
+3. **Embedding**: Content is embedded for semantic search (384-dim gte-small vectors)
+4. **Connection discovery**: Related items are automatically linked
 
-Peterbot-mem runs as a **claude-mem plugin** with lifecycle hooks. It does NOT expose MCP tools.
+### What Gets Stored
 
-- **Auto-injection**: Relevant memories are automatically injected into your context at session start
-- **Auto-capture**: Observations are automatically extracted from conversations via PostToolUse hooks
-- **No manual search**: You cannot query peterbot-mem on demand — it works passively
-
-### API Endpoint (for manual search when needed)
-
-If you need to actively search conversation memory, use the claude-mem worker API:
-```
-GET http://172.19.64.1:37777/api/context/inject?project=peterbot&query=<query>
-```
-
-### When It Helps
-
-- Context about Chris's routines, family, work, projects
-- Previous decisions and preferences
-- Things discussed in past conversations
-- Automatically provided — no action needed in most cases
+For each conversation capture:
+- **Title**: Auto-generated summary title
+- **Summary**: 2-3 sentence summary of the exchange
+- **Topics**: Extracted tags (e.g., hadley-bricks, running, family)
+- **Facts**: Concrete factual statements (dates, decisions, numbers)
+- **Concepts**: Insights with types (how-it-works, why-it-exists, gotcha, pattern, trade-off)
+- **Full text**: Complete conversation for later retrieval
+- **Embeddings**: For semantic search across all content
 
 ---
 
-## Second Brain (Saved Knowledge)
+## Accessing Memory
 
-Contains articles, notes, ideas, and content Chris explicitly saved or that was passively captured from conversations.
+### Automatic Context Injection
 
-### API Endpoints (use curl mid-response)
+Relevant knowledge is automatically injected into your context before each response. This includes:
+- Previous conversation facts and summaries
+- Related articles and notes
+- Connected knowledge items
 
-**Search saved knowledge:**
-```bash
-curl "http://172.19.64.1:8100/brain/search?query=<query>&limit=5"
-```
-Returns JSON with titles, excerpts, similarity scores.
+### MCP Tools (for explicit searches)
 
-**Save new content:**
-```bash
-curl -X POST http://172.19.64.1:8100/brain/save \
-  -H "Content-Type: application/json" \
-  -d '{"source": "<text>", "note": "<optional>", "tags": "<optional comma-separated>"}'
-```
+Use these MCP tools when you need to actively search or save:
 
-**Get stats:**
-```bash
-curl http://172.19.64.1:8100/brain/stats
-```
+| Tool | Purpose |
+|------|---------|
+| `search_knowledge` | Semantic search across all saved content |
+| `get_recent_items` | Browse items by date |
+| `browse_topics` | List topics by item count |
+| `get_item_detail` | Full text + facts + concepts + connections |
+| `save_to_brain` | Save new content (URL, text, or note) |
+| `list_items` | Paginated browse with filters |
 
 ### Discord Commands (user-facing)
 
 - `/recall <query>` — Semantic search across all saved content
 - `/save <url or text>` — Explicitly save an article, idea, or note
 
-**Passive surfacing** happens automatically — relevant knowledge is injected into your context without action needed.
-
-### When to Use
-
-- "What article did Chris save about X?"
-- "Find that note about Y"
-- "What do I know about Z?" (saved content, not conversations)
-- Research Chris previously collected
-
 ---
 
-## Which System to Use
+## When to Use
 
 | Question Type | How to Access |
 |--------------|---------------|
-| "What did Chris say/decide/prefer" | Auto-injected by peterbot-mem hooks |
-| "What article/note/content was saved" | `curl http://172.19.64.1:8100/brain/search?query=...` |
-| Not sure | Check auto-injected context first, then curl /brain/search |
-
-### Important
-
-- **Peterbot-mem**: Passive — context is auto-injected. Use the worker API at 172.19.64.1:37777 only if you need to actively search.
-- **Second Brain**: Use `curl` to the HadleyAPI at `172.19.64.1:8100`. Use the `/brain/search` endpoint.
-- Both systems use `172.19.64.1` (Windows host IP from WSL), NOT `localhost`.
+| "What did Chris say/decide/prefer" | Check auto-injected context, or `search_knowledge` |
+| "What article/note/content was saved" | `search_knowledge` MCP tool |
+| "Save this for later" | `save_to_brain` MCP tool |
+| Not sure | Check auto-injected context first, then search |
 
 ---
 
-## MCP Server Access (Claude Desktop & Claude Code)
+## Important Notes
 
-The Second Brain is also accessible via MCP (Model Context Protocol) from Claude Desktop and Claude Code sessions outside the bot. This provides direct tool access without needing curl or the Hadley API.
-
-**Available tools:** `search_knowledge`, `get_recent_items`, `browse_topics`, `get_item_detail`, `save_to_brain`, `list_items`
-
-Configuration is in `.mcp.json` (Claude Code) and `%APPDATA%\Claude\claude_desktop_config.json` (Claude Desktop).
-
-Note: Peterbot-mem is NOT accessible via MCP — it uses lifecycle hooks and auto-injection only.
+- **All conversations are captured automatically** — no manual action needed
+- Facts and concepts are extracted for structured retrieval
+- Content decays over time (90-day half-life) but is boosted when accessed
+- Cross-domain connections are discovered automatically (e.g., linking a business decision to a family event)
+- MCP tools are available from Claude Desktop and Claude Code sessions too

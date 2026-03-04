@@ -1422,20 +1422,21 @@ async def get_self_reflect_data() -> dict[str, Any]:
 
     data = {}
 
-    # 1. Recent peterbot-mem observations (what Peter learned from conversations)
+    # 1. Recent conversation memories (from Second Brain)
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                "http://localhost:37777/api/context/inject",
-                params={"project": "peterbot", "query": "recent"},
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                data["recent_memories"] = resp.text[:4000]  # Cap size
-            else:
-                data["recent_memories"] = "(unavailable)"
+        from domains.second_brain.db import get_recent_items
+        recent_items = await get_recent_items(limit=10)
+        if recent_items:
+            memories = []
+            for item in recent_items:
+                title = (item.title or "Untitled")[:80]
+                summary = (item.summary or "")[:200]
+                memories.append(f"- {title}: {summary}")
+            data["recent_memories"] = "\n".join(memories)[:4000]
+        else:
+            data["recent_memories"] = "(no recent items)"
     except Exception as e:
-        logger.warning(f"Self-reflect: peterbot-mem fetch failed: {e}")
+        logger.warning(f"Self-reflect: Second Brain fetch failed: {e}")
         data["recent_memories"] = "(unavailable)"
 
     # 2. Recent Second Brain saves

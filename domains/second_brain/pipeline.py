@@ -9,18 +9,21 @@ Orchestrates the full capture workflow:
 6. Store in database
 """
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 
 from logger import logger
-from .types import CaptureType, ContentType, ItemStatus, KnowledgeItem
+from .types import CaptureType, ContentType, ExtractedContent, ItemStatus, KnowledgeItem
 from .config import PRIORITY_EXPLICIT, PRIORITY_SEED, PRIORITY_PASSIVE
 from .extract import extract_content
 from .summarise import generate_summary, extract_title
 from .tag import extract_topics
+from .extract_structured import extract_structured
 from .chunk import chunk_text, chunk_for_embedding
-from .embed import generate_embedding, generate_embeddings_batch
+from .embed import generate_embedding, generate_embeddings_batch, EmbeddingError
 from .db import (
+    boost_access,
     create_knowledge_item,
     create_knowledge_chunks,
     get_item_by_source,
@@ -32,35 +35,62 @@ async def process_capture(
     capture_type: CaptureType = CaptureType.EXPLICIT,
     user_note: str | None = None,
     user_tags: list[str] | None = None,
+    content_type_override: ContentType | None = None,
+    source_message_id: str | None = None,
+    source_system: str | None = None,
+    text: str | None = None,
+    title_override: str | None = None,
+    facts_override: list | None = None,
+    concepts_override: list | None = None,
+    created_at_override: datetime | None = None,
 ) -> KnowledgeItem | None:
     """Process a new knowledge capture through the full pipeline.
 
     Args:
-        source: URL or plain text content
+        source: URL or plain text content (also used as source identifier)
         capture_type: How content was captured (explicit/passive/seed)
         user_note: Optional user annotation
         user_tags: Optional user-provided tags (merged with extracted)
+        content_type_override: Force a specific content type (e.g. CONVERSATION_EXTRACT)
+        source_message_id: Discord message ID for conversation captures
+        source_system: Source system identifier (e.g. 'discord')
+        text: Pre-extracted text content (skips extraction step if provided)
+        title_override: Force a specific title (skips title generation)
+        facts_override: Pre-extracted facts (skips structured extraction)
+        concepts_override: Pre-extracted concepts (skips structured extraction)
+        created_at_override: Override creation timestamp (for migrations)
 
     Returns:
         Created KnowledgeItem or None if failed
     """
     logger.info(f"Processing {capture_type.value} capture: {source[:100]}...")
 
-    # Check for duplicates
+    # Check for duplicates — boost access if re-saved
     if source.startswith(('http://', 'https://')):
         existing = await get_item_by_source(source)
         if existing:
-            logger.info(f"Duplicate source found: {source}")
-            # TODO: Consider updating access_count/last_accessed
+            logger.info(f"Duplicate source found, boosting access: {source}")
+            await boost_access(existing.id)
             return existing
 
-    # Step 1: Extract content
-    try:
-        extracted = await extract_content(source)
-        logger.debug(f"Extracted: {extracted.title} ({extracted.word_count} words)")
-    except Exception as e:
-        logger.error(f"Extraction failed for {source}: {e}")
-        return None
+    # Step 1: Extract content (or use pre-provided text)
+    if text:
+        extracted = ExtractedContent(
+            title=title_override or "",
+            text=text,
+            source=source,
+            excerpt=text[:200],
+            site_name="",
+            word_count=len(text.split()),
+        )
+        logger.debug(f"Using pre-provided text ({extracted.word_count} words)")
+    else:
+        try:
+            extracted = await extract_content(source)
+            logger.debug(f"Extracted: {extracted.title} ({extracted.word_count} words)")
+        except Exception as e:
+            logger.error(f"Extraction failed for {source}: {e}")
+            return None
 
     # Validate extraction
     if extracted.word_count < 5:
@@ -68,7 +98,7 @@ async def process_capture(
         return None
 
     # Step 2: Generate or use title
-    title = extracted.title
+    title = title_override or extracted.title
     if not title or len(title) < 5:
         try:
             title = await extract_title(extracted.text)
@@ -76,23 +106,51 @@ async def process_capture(
             logger.warning(f"Title extraction failed: {e}")
             title = source[:100] if source.startswith('http') else source.split('\n')[0][:100]
 
-    # Step 3: Generate summary
-    try:
-        summary = await generate_summary(extracted.text, title)
-    except Exception as e:
-        logger.warning(f"Summary generation failed: {e}")
-        summary = extracted.excerpt or extracted.text[:200]
+    # Determine content type (needed before concurrent calls)
+    content_type = content_type_override or _detect_content_type(extracted.source, extracted.text)
 
-    # Step 4: Extract topics
-    try:
-        topics = await extract_topics(extracted.text, title)
-    except Exception as e:
-        logger.warning(f"Topic extraction failed: {e}")
-        topics = ['untagged']
+    # Steps 3-4b: Run summary, topics, and structured extraction concurrently (PR-003)
+    needs_structured = (
+        not facts_override and not concepts_override
+        and (content_type == ContentType.CONVERSATION_EXTRACT or capture_type == CaptureType.EXPLICIT)
+    )
+
+    async def _safe_summary():
+        try:
+            return await generate_summary(extracted.text, title)
+        except Exception as e:
+            logger.warning(f"Summary generation failed: {e}")
+            return extracted.excerpt or extracted.text[:200]
+
+    async def _safe_topics():
+        try:
+            return await extract_topics(extracted.text, title)
+        except Exception as e:
+            logger.warning(f"Topic extraction failed: {e}")
+            return ['untagged']
+
+    async def _safe_structured():
+        if not needs_structured:
+            return {}
+        try:
+            return await extract_structured(extracted.text, title)
+        except Exception as e:
+            logger.warning(f"Structured extraction failed: {e}")
+            return {}
+
+    summary, topics, structured = await asyncio.gather(
+        _safe_summary(), _safe_topics(), _safe_structured()
+    )
 
     # Merge user tags if provided
     if user_tags:
         topics = list(set(topics + user_tags))[:8]
+
+    # Unpack structured extraction results
+    facts = facts_override or structured.get("facts", [])
+    concepts = concepts_override or structured.get("concepts", [])
+    if facts or concepts:
+        logger.debug(f"Extracted {len(facts)} facts, {len(concepts)} concepts")
 
     # Step 5: Chunk content
     chunks = chunk_text(extracted.text)
@@ -102,13 +160,13 @@ async def process_capture(
     chunk_texts = chunk_for_embedding(extracted.text, title)
     try:
         embeddings = await generate_embeddings_batch(chunk_texts)
-    except Exception as e:
-        logger.error(f"Embedding generation failed: {e}")
-        # Continue without embeddings - search will be degraded
-        embeddings = [[0.0] * 384 for _ in chunks]
-
-    # Determine content type
-    content_type = _detect_content_type(extracted.source, extracted.text)
+    except EmbeddingError as e:
+        logger.error(
+            f"Embedding generation failed for {len(chunk_texts)} chunks "
+            f"(title: {title[:60]}): {e}"
+        )
+        # Store item without embeddings — will be picked up by reprocess_pending_items
+        embeddings = None
 
     # Determine priority based on capture type
     priority = {
@@ -118,7 +176,7 @@ async def process_capture(
     }.get(capture_type, PRIORITY_PASSIVE)
 
     # Step 7: Store in database
-    now = datetime.now(timezone.utc)
+    now = created_at_override or datetime.now(timezone.utc)
 
     item = KnowledgeItem(
         id='',  # Will be assigned by database
@@ -139,6 +197,10 @@ async def process_capture(
         user_note=user_note,
         site_name=extracted.site_name,
         word_count=extracted.word_count,
+        source_message_id=source_message_id,
+        source_system=source_system,
+        facts=facts,
+        concepts=concepts,
     )
 
     try:
@@ -149,19 +211,27 @@ async def process_capture(
 
         logger.info(f"Created knowledge item: {created_item.id}")
 
-        # Store chunks with embeddings
-        chunk_data = []
-        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-            chunk_data.append({
-                'index': i,
-                'text': chunk.text,
-                'embedding': embedding,
-                'start_word': chunk.start_word,
-                'end_word': chunk.end_word,
-            })
+        # Store chunks with embeddings (skip if embedding generation failed)
+        if embeddings is not None:
+            chunk_data = []
+            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+                chunk_data.append({
+                    'index': i,
+                    'text': chunk.text,
+                    'embedding': embedding,
+                    'start_word': chunk.start_word,
+                    'end_word': chunk.end_word,
+                })
 
-        await create_knowledge_chunks(created_item.id, chunk_data)
-        logger.info(f"Created {len(chunk_data)} chunks for item {created_item.id}")
+            await create_knowledge_chunks(created_item.id, chunk_data)
+            logger.info(f"Created {len(chunk_data)} chunks for item {created_item.id}")
+        else:
+            logger.warning(
+                f"Skipping chunk storage for {created_item.id} — embeddings failed. "
+                f"Item saved as pending for reprocessing."
+            )
+            from .db import update_item_status
+            await update_item_status(created_item.id, ItemStatus.PENDING)
 
         # Step 8: Discover connections (async, non-blocking for explicit saves)
         if capture_type == CaptureType.EXPLICIT:

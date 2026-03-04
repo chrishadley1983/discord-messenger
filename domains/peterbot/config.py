@@ -20,19 +20,25 @@ PETERBOT_SESSION_PATH = os.environ.get(
     "/home/chris_hadley/peterbot"  # Creates ~/peterbot if needed
 )
 
-# Memory integration
-WORKER_URL = os.environ.get("PETERBOT_MEM_URL", "http://localhost:37777")
-MESSAGES_ENDPOINT = f"{WORKER_URL}/api/sessions/messages"
-CONTEXT_ENDPOINT = f"{WORKER_URL}/api/context/inject"
-PROJECT_ID = "peterbot"
+# Memory integration (Second Brain)
+# peterbot-mem has been replaced by Second Brain (Supabase + pgvector)
+
+# Circuit breaker (protects against Supabase outages)
+CIRCUIT_FAILURE_THRESHOLD = 5      # Consecutive failures before opening circuit
+CIRCUIT_RECOVERY_TIMEOUT = 60      # Seconds before testing recovery
 
 # Buffer settings
 RECENT_BUFFER_SIZE = 20
 
-# Retry settings
-FAILURE_QUEUE_MAX = 100
-RETRY_INTERVAL_SECONDS = 60
-MAX_RETRIES = 3
+# Capture store (local SQLite queue for reliability)
+CAPTURE_STORE_DB = os.path.expanduser("~/.peterbot/capture_store.db")
+CAPTURE_MAX_RETRIES = 5
+CAPTURE_SENT_RETENTION_DAYS = 7
+CAPTURE_FAILED_RETENTION_DAYS = 30
+
+# Context cache
+CONTEXT_CACHE_TTL_SECONDS = 300  # 5 minutes
+CONTEXT_CACHE_MAX_ENTRIES = 200
 
 # Response capture
 RESPONSE_TIMEOUT = 600

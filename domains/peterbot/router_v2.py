@@ -900,7 +900,8 @@ async def handle_message(
     # 6. Capture pair async (fire-and-forget)
     session_id = f"discord-{user_id}"
     task = asyncio.create_task(memory.capture_message_pair(
-        session_id, message, response
+        session_id, message, response,
+        channel_id=str(channel_id),
     ))
     task.add_done_callback(
         lambda t: logger.info(f"Memory capture completed: {t.exception() or 'success'}")
@@ -914,51 +915,6 @@ async def handle_message(
     return response if response else "(No response captured)"
 
 
-async def cleanup_claude_mem_workers(max_allowed: int = 3) -> int:
-    """Kill accumulated claude-mem worker processes in WSL.
-
-    The claude-mem MCP server spawns Claude subagent processes for
-    memory summarization that never terminate. Each leaks ~400MB RAM
-    and consumes API rate limit capacity, causing peterbot timeouts.
-
-    Args:
-        max_allowed: Kill all workers if count exceeds this threshold.
-
-    Returns:
-        Number of workers killed (0 if below threshold).
-    """
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "wsl", "bash", "-c",
-            "pgrep -cf 'claude.*stream-json.*disallowedTools'",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        count = int(stdout.decode().strip())
-
-        if count <= max_allowed:
-            return 0
-
-        logger.warning(
-            f"claude-mem worker buildup: {count} processes (max {max_allowed}), killing all"
-        )
-        kill_proc = await asyncio.create_subprocess_exec(
-            "wsl", "bash", "-c",
-            "pkill -9 -f 'claude.*stream-json.*disallowedTools' 2>/dev/null; echo done",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await asyncio.wait_for(kill_proc.communicate(), timeout=10)
-        logger.info(f"Killed {count} claude-mem worker processes")
-        return count
-
-    except Exception as e:
-        logger.debug(f"claude-mem worker cleanup failed: {e}")
-        return 0
-
-
 def on_startup() -> None:
-    """Called on bot startup - start retry task and clean up orphaned processes."""
+    """Called on bot startup - clean up orphaned processes."""
     _cleanup_stale_pids()
-    memory.start_retry_task()

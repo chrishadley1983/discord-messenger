@@ -11,14 +11,18 @@ MIN_CONTENT_WORDS: Final[int] = 10     # Reject trivially short content
 MAX_CONTENT_WORDS: Final[int] = 10_000 # Truncate with note
 
 # Embedding configuration
-# Using Supabase's built-in gte-small model (via pg_embedding extension)
-# Zero API cost, no external key needed
 EMBEDDING_MODEL: Final[str] = "gte-small"
 EMBEDDING_DIMENSIONS: Final[int] = 384  # gte-small produces 384-dim vectors
+EMBEDDING_TEXT_LIMIT: Final[int] = 8000  # Max chars before truncation
+EMBEDDING_SINGLE_TIMEOUT: Final[int] = 60  # Seconds for single embedding request
+EMBEDDING_BATCH_TIMEOUT: Final[int] = 120  # Seconds for batch embedding request
+EMBEDDING_MAX_RETRIES: Final[int] = 3  # Max retry attempts
+EMBEDDING_RETRY_BASE_DELAY: Final[float] = 2.0  # Base delay (seconds) for exponential backoff
+EMBEDDING_MAX_CONCURRENT: Final[int] = 5  # Max concurrent requests in sequential fallback
 
 # Similarity thresholds
 SIMILARITY_THRESHOLD: Final[float] = 0.75      # Min for contextual surfacing
-CONNECTION_THRESHOLD: Final[float] = 0.80       # Min for connection discovery
+CONNECTION_THRESHOLD: Final[float] = 0.72       # Min for connection discovery (lowered from 0.80)
 SEARCH_MIN_DECAY: Final[float] = 0.2           # Skip heavily decayed items
 
 # Decay model
@@ -97,7 +101,53 @@ SOURCE_BOOKMARKS: Final[str] = "seed:bookmarks"
 SOURCE_GARMIN: Final[str] = "seed:garmin"
 SOURCE_INSTAGRAM: Final[str] = "seed:instagram"
 
+# Structured extraction limits
+STRUCTURED_EXTRACTION_TIMEOUT: Final[int] = 30  # seconds
+MAX_FACTS_PER_ITEM: Final[int] = 8
+MAX_CONCEPTS_PER_ITEM: Final[int] = 5
+
+# Claude API configuration
+CLAUDE_API_URL: Final[str] = "https://api.anthropic.com/v1/messages"
+CLAUDE_MODEL: Final[str] = "claude-3-5-haiku-latest"
+CLAUDE_API_VERSION: Final[str] = "2023-06-01"
+
+
 # API Keys (from environment)
 def get_claude_api_key() -> str | None:
     """Get Claude API key from environment (for summarisation/tagging)."""
     return os.getenv("DISCORD_BOT_CLAUDE_KEY")
+
+
+async def call_claude(prompt: str, max_tokens: int = 200, timeout: int = 30) -> str | None:
+    """Shared Claude API call used by summarise, tag, and extract_structured.
+
+    Returns the text response, or None on failure.
+    """
+    import httpx
+
+    api_key = get_claude_api_key()
+    if not api_key:
+        return None
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                CLAUDE_API_URL,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": CLAUDE_API_VERSION,
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": CLAUDE_MODEL,
+                    "max_tokens": max_tokens,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return response.json()["content"][0]["text"].strip()
+    except Exception as e:
+        from logger import logger
+        logger.warning(f"Claude API call failed: {e}")
+        return None

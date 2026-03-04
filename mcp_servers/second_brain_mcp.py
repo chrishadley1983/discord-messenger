@@ -43,6 +43,8 @@ def _item_to_dict(item: KnowledgeItem) -> dict:
         "access_count": item.access_count,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "status": item.status.value if hasattr(item.status, "value") else str(item.status),
+        "facts": item.facts or [],
+        "concepts": item.concepts or [],
     }
 
 
@@ -73,14 +75,23 @@ async def search_knowledge(query: str, limit: int = 5, min_similarity: float = 0
         for r in results:
             item = r.item
             excerpts = "\n".join(f"  > {e}" for e in r.relevant_excerpts[:2])
-            output.append(
+            entry = (
                 f"**{item.title or 'Untitled'}** (similarity: {r.best_similarity:.2f})\n"
                 f"  Type: {item.content_type.value if hasattr(item.content_type, 'value') else item.content_type} | "
                 f"Topics: {', '.join(item.topics or [])}\n"
                 f"  Source: {item.source}\n"
-                f"  Summary: {item.summary or 'N/A'}\n"
-                f"  Excerpts:\n{excerpts}"
+                f"  Summary: {item.summary or 'N/A'}"
             )
+            if item.facts:
+                entry += "\n  Facts:\n" + "\n".join(f"    - {f}" for f in item.facts[:5])
+            if item.concepts:
+                entry += "\n  Concepts:\n" + "\n".join(
+                    f"    - [{c.get('type', 'pattern')}] {c.get('label', '')}: {c.get('detail', '')}"
+                    for c in item.concepts[:3]
+                )
+            if excerpts:
+                entry += f"\n  Excerpts:\n{excerpts}"
+            output.append(entry)
 
         return f"Found {len(results)} results:\n\n" + "\n\n---\n\n".join(output)
 

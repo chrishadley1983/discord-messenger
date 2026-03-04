@@ -5,6 +5,7 @@ to user messages. Surfaces items that match the current conversation
 topic with sufficient similarity and decay score.
 """
 
+import asyncio
 from typing import Optional
 
 from logger import logger
@@ -48,13 +49,16 @@ async def get_relevant_context(
             limit=max_items,
         )
 
-        # Boost access for surfaced items
-        for result in results:
-            if result.item.id:
-                try:
-                    await boost_access(result.item.id)
-                except Exception:
-                    pass  # Non-critical
+        # Boost access for surfaced items (concurrent)
+        async def _safe_boost(item_id):
+            try:
+                await boost_access(item_id)
+            except Exception as e:
+                logger.debug(f"boost_access failed for {item_id}: {e}")
+
+        boost_ids = [r.item.id for r in results if r.item.id]
+        if boost_ids:
+            await asyncio.gather(*[_safe_boost(uid) for uid in boost_ids])
 
         if results:
             logger.info(f"Surfacing {len(results)} items for message: {message[:50]}...")
@@ -109,6 +113,11 @@ def format_context_for_claude(results: list[SearchResult]) -> str:
         # Source
         if item.source and item.source.startswith('http'):
             lines.append(f"\nSource: {item.source}")
+
+        # Key facts from structured extraction
+        if item.facts:
+            for fact in item.facts[:3]:
+                lines.append(f"- {fact}")
 
         # Tags
         if item.topics:

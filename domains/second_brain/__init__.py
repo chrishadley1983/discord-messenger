@@ -45,7 +45,7 @@ from .extract import extract_content, extract_from_url
 from .chunk import chunk_text, chunk_for_embedding
 
 # Embedding
-from .embed import generate_embedding, generate_embeddings_batch
+from .embed import generate_embedding, generate_embeddings_batch, EmbeddingError, get_embedding_stats
 
 # Database operations
 from .db import (
@@ -72,6 +72,12 @@ from .commands import (
     handle_recall,
     handle_knowledge,
 )
+
+# Conversation capture
+from .conversation import capture_conversation
+
+# Structured extraction
+from .extract_structured import extract_structured
 
 # Passive capture
 from .passive import (
@@ -154,6 +160,10 @@ __all__ = [
     "handle_save",
     "handle_recall",
     "handle_knowledge",
+    # Conversation capture
+    "capture_conversation",
+    # Structured extraction
+    "extract_structured",
     # Passive capture
     "should_capture_message",
     "process_passive_message",

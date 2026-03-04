@@ -77,6 +77,8 @@ class KnowledgeItem:
     source_message_id: Optional[str] = None
     source_system: Optional[str] = None
     promoted_at: Optional[datetime] = None
+    facts: list = field(default_factory=list)
+    concepts: list = field(default_factory=list)
 
     # Alias for backwards compatibility
     @property
@@ -125,6 +127,8 @@ class KnowledgeItem:
             source_message_id=row.get("source_message_id"),
             source_system=row.get("source_system"),
             promoted_at=row.get("promoted_at"),
+            facts=row.get("facts") or [],
+            concepts=row.get("concepts") or [],
         )
 
 

@@ -1,5 +1,9 @@
--- Second Brain Schema Migration
--- Run this in Supabase SQL Editor
+-- DEPRECATED: This migration has been superseded.
+-- The authoritative schema is in migrations/002_create_second_brain_tables.sql
+-- with fixes applied by migrations/004_second_brain_fixes.sql
+-- This file kept for reference only — do NOT run it.
+--
+-- Original: Second Brain Schema Migration
 
 -- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS vector;
