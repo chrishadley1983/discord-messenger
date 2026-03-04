@@ -6,6 +6,7 @@ Skills without a fetcher use web search during execution.
 
 import asyncio
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
@@ -392,6 +393,7 @@ async def get_youtube_data() -> dict[str, Any]:
         from jobs.youtube_feed import (
             _search_youtube_grok,
             get_shown_video_ids,
+            mark_video_shown,
             YOUTUBE_CATEGORIES
         )
 
@@ -427,6 +429,11 @@ async def get_youtube_data() -> dict[str, Any]:
             # Add to shown_ids to prevent cross-category duplicates
             for v in new_videos:
                 shown_ids.add(v["video_id"])
+
+        # Mark all selected videos as shown in Supabase so they won't repeat
+        for category_key, videos in videos_by_category.items():
+            for video in videos:
+                await mark_video_shown(video, category_key, video.get("context", ""))
 
         # Build category info for the skill
         categories_info = {
@@ -1344,32 +1351,13 @@ async def get_hb_full_sync_and_print_data() -> dict[str, Any]:
             result["files_to_attach"].append((str(ebay_pdf), f"ebay_picklist_{datetime.now(UK_TZ).strftime('%Y%m%d')}.pdf"))
             logger.info(f"HB Full Sync: eBay PDF downloaded to {ebay_pdf}")
 
-    # Step 4: Print PDFs if configured
-    printer_name = os.getenv("PETERBOT_PRINTER")
-    if printer_name:
-        try:
-            from .printing import print_pick_lists, check_printer_ready
-
-            # Check printer availability first
-            ready, msg = check_printer_ready(printer_name)
-            if ready:
-                print_results = await print_pick_lists(
-                    result["pick_lists"]["amazon"]["pdf_path"],
-                    result["pick_lists"]["ebay"]["pdf_path"],
-                    printer_name
-                )
-                result["print_status"] = print_results
-                logger.info(f"HB Full Sync: Print results - {print_results}")
-            else:
-                result["print_status"]["error"] = msg
-                result["errors"].append(f"Printer not ready: {msg}")
-                logger.warning(f"HB Full Sync: Printer not ready - {msg}")
-        except Exception as e:
-            result["print_status"]["error"] = str(e)
-            result["errors"].append(f"Print error: {e}")
-            logger.error(f"HB Full Sync: Print error - {e}")
-    else:
-        result["print_status"]["skipped"] = "PETERBOT_PRINTER not configured"
+    # Step 4: Add interactive pick list URLs (printing disabled)
+    app_url = os.getenv("HADLEY_BRICKS_URL", "https://hadley-bricks-inventory-management.vercel.app")
+    if result["pick_lists"]["amazon"]["items"] > 0:
+        result["pick_lists"]["amazon"]["pick_url"] = f"{app_url}/pick/amazon"
+    if result["pick_lists"]["ebay"]["items"] > 0:
+        result["pick_lists"]["ebay"]["pick_url"] = f"{app_url}/pick/ebay"
+    result["print_status"]["skipped"] = "Printing disabled — use interactive pick lists"
 
     logger.info(f"HB Full Sync complete: {result['pick_lists']['amazon']['items']} Amazon, {result['pick_lists']['ebay']['items']} eBay items")
     return result
@@ -1420,6 +1408,319 @@ async def _download_pick_list_pdf(platform: str, dest_dir: Path) -> Optional[Pat
     except Exception as e:
         logger.error(f"PDF download error for {platform}: {e}")
         return None
+
+
+async def get_self_reflect_data() -> dict[str, Any]:
+    """Fetch context for self-reflection: recent memories, second brain saves, and job history.
+
+    Gives Peter visibility into what's been happening so he can identify
+    proactive tasks to add to HEARTBEAT.md.
+    """
+    import httpx
+    import sqlite3
+    from pathlib import Path
+
+    data = {}
+
+    # 1. Recent peterbot-mem observations (what Peter learned from conversations)
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "http://localhost:37777/api/context/inject",
+                params={"project": "peterbot", "query": "recent"},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data["recent_memories"] = resp.text[:4000]  # Cap size
+            else:
+                data["recent_memories"] = "(unavailable)"
+    except Exception as e:
+        logger.warning(f"Self-reflect: peterbot-mem fetch failed: {e}")
+        data["recent_memories"] = "(unavailable)"
+
+    # 2. Recent Second Brain saves
+    brain_stats = await _hadley_request("/brain/stats")
+    if "error" not in brain_stats:
+        recent = brain_stats.get("recent", [])[:10]
+        data["recent_brain_saves"] = [
+            {"title": r.get("title", "")[:100], "date": r.get("created_at", "")[:10]}
+            for r in recent
+        ]
+    else:
+        data["recent_brain_saves"] = []
+
+    # 3. Job execution history (last 24h)
+    try:
+        db_path = Path(__file__).parent.parent.parent / "peter_dashboard" / "job_history.db"
+        if db_path.exists():
+            conn = sqlite3.connect(str(db_path))
+            c = conn.cursor()
+            c.execute("""
+                SELECT job_id,
+                       COUNT(*) as total,
+                       SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as ok,
+                       SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END) as fail
+                FROM job_executions
+                WHERE started_at > datetime('now', '-24 hours')
+                GROUP BY job_id ORDER BY total DESC
+            """)
+            data["job_stats_24h"] = [
+                {"job": r[0], "total": r[1], "ok": r[2], "fail": r[3]}
+                for r in c.fetchall()
+            ]
+            # Recent failures with details
+            c.execute("""
+                SELECT job_id, started_at, error_message
+                FROM job_executions
+                WHERE status != 'success' AND started_at > datetime('now', '-24 hours')
+                ORDER BY started_at DESC LIMIT 5
+            """)
+            data["recent_failures"] = [
+                {"job": r[0], "time": r[1], "error": r[2]}
+                for r in c.fetchall()
+            ]
+            conn.close()
+        else:
+            data["job_stats_24h"] = []
+            data["recent_failures"] = []
+    except Exception as e:
+        logger.warning(f"Self-reflect: job history fetch failed: {e}")
+        data["job_stats_24h"] = []
+        data["recent_failures"] = []
+
+    # 4. Current HEARTBEAT.md state (so Peter knows what's already tracked)
+    heartbeat_path = Path(__file__).parent / "wsl_config" / "HEARTBEAT.md"
+    try:
+        data["current_heartbeat"] = heartbeat_path.read_text(encoding="utf-8")[:2000]
+    except Exception:
+        data["current_heartbeat"] = "(could not read)"
+
+    logger.info(f"Self-reflect data: {len(data.get('recent_memories', ''))} chars memories, "
+                f"{len(data.get('recent_brain_saves', []))} brain saves, "
+                f"{len(data.get('job_stats_24h', []))} job types")
+    return data
+
+
+async def get_heartbeat_data() -> dict[str, Any]:
+    """Fetch queued Peter Queue tasks for heartbeat processing.
+
+    Fetches both 'queued' and 'heartbeat_scheduled' tasks, sorts by priority,
+    and returns them for the heartbeat skill to pick up.
+    """
+    PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "someday": 4}
+
+    queued = await _hadley_request("/ptasks?list_type=peter_queue&status=queued&limit=10")
+    scheduled = await _hadley_request("/ptasks?list_type=peter_queue&status=heartbeat_scheduled&limit=10")
+
+    # Merge results
+    tasks = []
+    for result in [queued, scheduled]:
+        if "error" not in result:
+            tasks.extend(result.get("tasks", []))
+
+    if not tasks:
+        logger.info("Heartbeat: no queued ptasks found")
+        return {"ptasks": [], "count": 0}
+
+    # Sort by priority
+    tasks.sort(key=lambda t: PRIORITY_ORDER.get(t.get("priority", "medium"), 2))
+
+    logger.info(f"Heartbeat: {len(tasks)} ptask(s) ready for processing")
+    return {"ptasks": tasks, "count": len(tasks)}
+
+
+async def get_instagram_prep_data() -> dict[str, Any]:
+    """Pre-fetch images for daily-instagram-prep skill.
+
+    Searches Unsplash + Pixabay APIs for 3 LEGO content concepts,
+    downloads source images to a shared Windows path accessible from WSL.
+    Returns image paths and metadata for Peter to run the optimizer.
+    """
+    import httpx
+    import json
+    import tempfile
+    from pathlib import Path
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Shared dir: Windows-accessible, WSL can reach via /mnt/c/...
+    prep_dir = Path(__file__).parent.parent / "data" / "instagram_prep"
+    prep_dir.mkdir(parents=True, exist_ok=True)
+
+    # Clean up previous run
+    for old in prep_dir.iterdir():
+        if old.is_dir():
+            import shutil
+            shutil.rmtree(old, ignore_errors=True)
+        elif old.is_file():
+            old.unlink(missing_ok=True)
+
+    # Load API keys
+    config_path = Path.home() / ".claude" / "skills" / "unsplash" / "unsplash_config.json"
+    if not config_path.exists():
+        logger.error("Instagram prep: unsplash_config.json not found")
+        return {"error": "Config not found", "images": []}
+
+    config = json.loads(config_path.read_text())
+    unsplash_key = config.get("unsplash", {}).get("access_key", "")
+    pixabay_key = config.get("pixabay", {}).get("api_key", "")
+
+    if not unsplash_key and not pixabay_key:
+        return {"error": "No API keys configured", "images": []}
+
+    # Content pillars for variety
+    PILLARS = [
+        {"pillar": "LEGO Nostalgia", "queries": ["vintage LEGO classic bricks colorful", "retro LEGO minifigures collection"]},
+        {"pillar": "Product Showcase", "queries": ["LEGO Star Wars set display", "LEGO Technic detailed build"]},
+        {"pillar": "Behind the Scenes", "queries": ["LEGO sorting bricks organizing", "LEGO collection shelf display"]},
+        {"pillar": "Community / Culture", "queries": ["LEGO fan creation MOC", "LEGO convention display"]},
+        {"pillar": "Educational", "queries": ["LEGO architecture detailed", "LEGO engineering mechanism"]},
+        {"pillar": "Lifestyle", "queries": ["LEGO decoration room shelf", "LEGO desk setup creative"]},
+        {"pillar": "Collection Highlight", "queries": ["LEGO impressive collection display", "LEGO minifigure collection rare"]},
+    ]
+
+    import random
+    random.shuffle(PILLARS)
+    selected_pillars = PILLARS[:3]
+
+    async def search_unsplash(client: httpx.AsyncClient, query: str) -> list[dict]:
+        if not unsplash_key:
+            return []
+        try:
+            resp = await client.get(
+                "https://api.unsplash.com/search/photos",
+                headers={"Authorization": f"Client-ID {unsplash_key}"},
+                params={"query": query, "per_page": 6},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return [
+                {
+                    "source": "Unsplash",
+                    "photographer": p["user"]["name"],
+                    "desc": p.get("alt_description", "")[:100],
+                    "w": p["width"], "h": p["height"],
+                    "url": p["urls"]["regular"],
+                    "trigger": p["links"]["download_location"],
+                    "page": p["links"]["html"],
+                }
+                for p in resp.json().get("results", [])
+            ]
+        except Exception as e:
+            logger.warning(f"Unsplash search failed for '{query}': {e}")
+            return []
+
+    async def search_pixabay(client: httpx.AsyncClient, query: str) -> list[dict]:
+        if not pixabay_key:
+            return []
+        try:
+            resp = await client.get(
+                "https://pixabay.com/api/",
+                params={"key": pixabay_key, "q": query, "per_page": 6,
+                        "image_type": "photo", "safesearch": "true"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return [
+                {
+                    "source": "Pixabay",
+                    "photographer": p.get("user", "Unknown"),
+                    "desc": p.get("tags", "")[:100],
+                    "w": p["imageWidth"], "h": p["imageHeight"],
+                    "url": p["largeImageURL"],
+                    "trigger": None,
+                    "page": p["pageURL"],
+                }
+                for p in resp.json().get("hits", [])
+            ]
+        except Exception as e:
+            logger.warning(f"Pixabay search failed for '{query}': {e}")
+            return []
+
+    images = []
+    async with httpx.AsyncClient() as client:
+        for i, pillar in enumerate(selected_pillars, 1):
+            concept_name = f"concept_{i}"
+            concept_dir = prep_dir / concept_name
+            concept_dir.mkdir(exist_ok=True)
+
+            # Try each query until we get results
+            best = None
+            for query in pillar["queries"]:
+                results_u, results_p = await asyncio.gather(
+                    search_unsplash(client, query),
+                    search_pixabay(client, query),
+                )
+                all_results = results_u + results_p
+                # Filter: prefer high-res, avoid very wide panoramas
+                all_results = [r for r in all_results if r["w"] > 800 and r["h"] > 600]
+                all_results.sort(key=lambda r: r["w"] * r["h"], reverse=True)
+                if all_results:
+                    best = all_results[0]
+                    best["query"] = query
+                    break
+
+            if not best:
+                logger.warning(f"Instagram prep: no images found for pillar '{pillar['pillar']}'")
+                continue
+
+            # Download image
+            try:
+                img_resp = await client.get(best["url"], timeout=30)
+                img_resp.raise_for_status()
+                img_path = concept_dir / "source.jpg"
+                img_path.write_bytes(img_resp.content)
+                logger.info(f"Instagram prep: downloaded {best['source']} image for {pillar['pillar']} ({best['w']}x{best['h']})")
+
+                # Trigger Unsplash download event
+                if best.get("trigger"):
+                    try:
+                        await client.get(best["trigger"],
+                            headers={"Authorization": f"Client-ID {unsplash_key}"}, timeout=5)
+                    except Exception:
+                        pass
+
+                # Upload source image to Google Drive
+                drive_link = None
+                try:
+                    upload_resp = await client.post(
+                        f"{HADLEY_API_URL}/drive/upload",
+                        params={
+                            "file_path": str(img_path),
+                            "title": f"instagram_prep_{concept_name}_source.jpg",
+                        },
+                        timeout=30,
+                    )
+                    if upload_resp.status_code == 200:
+                        drive_data = upload_resp.json()
+                        drive_link = drive_data.get("link")
+                        logger.info(f"Instagram prep: uploaded {concept_name} to Drive")
+                except Exception as e:
+                    logger.warning(f"Instagram prep: Drive upload failed for {concept_name}: {e}")
+
+                images.append({
+                    "concept_name": concept_name,
+                    "pillar": pillar["pillar"],
+                    "query": best["query"],
+                    "source_path": str(img_path),                    # Windows path
+                    "source_path_wsl": f"/mnt/c/{str(img_path).replace(chr(92), '/').split('C:/')[1]}",  # WSL path
+                    "drive_link": drive_link,
+                    "photographer": best["photographer"],
+                    "photo_source": best["source"],
+                    "photo_page": best["page"],
+                    "width": best["w"],
+                    "height": best["h"],
+                    "description": best["desc"],
+                })
+            except Exception as e:
+                logger.warning(f"Instagram prep: download failed for {pillar['pillar']}: {e}")
+
+    logger.info(f"Instagram prep: sourced {len(images)} of 3 images")
+    return {
+        "images": images,
+        "prep_dir": str(prep_dir),
+        "prep_dir_wsl": f"/mnt/c/{str(prep_dir).replace(chr(92), '/').split('C:/')[1]}",
+        "count": len(images),
+    }
 
 
 async def get_vinted_collections_data() -> dict[str, Any]:
@@ -1480,4 +1781,10 @@ SKILL_DATA_FETCHERS = {
     "hb-upcoming-pickups": get_hb_pickups_data,
     # Hadley Bricks - Full Sync + Print
     "hb-full-sync-print": get_hb_full_sync_and_print_data,
+    # Heartbeat - Peter Queue pickup
+    "heartbeat": get_heartbeat_data,
+    # Self-Reflect - memories, brain saves, job history
+    "self-reflect": get_self_reflect_data,
+    # Instagram - pre-source images via APIs
+    "daily-instagram-prep": get_instagram_prep_data,
 }
