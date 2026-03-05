@@ -60,6 +60,7 @@ class HealthReport:
     # Recent capture success rate (last 7 days)
     items_created_7d: int
     items_pending_7d: int
+    recent_items_sample: list[KnowledgeItem]  # up to 20, for weekly digest eyeballing
 
     # Timestamps
     generated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -162,12 +163,12 @@ async def _query_connection_coverage() -> tuple[int, dict[str, int]]:
         return 0, {}
 
 
-async def _query_recent_capture_rate() -> tuple[int, int]:
-    """Q6: Items created in last 7 days and how many are still pending."""
+async def _query_recent_capture_rate() -> tuple[int, int, list[KnowledgeItem]]:
+    """Q6: Items created in last 7 days, how many still pending, and a sample of 20."""
     seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
     try:
         client = _get_http_client()
-        # All items created in last 7 days
+        # All items created in last 7 days (count)
         resp1 = await client.get(
             f"{_get_rest_url()}/knowledge_items"
             f"?created_at=gte.{seven_days_ago}&select=id&limit=1",
@@ -185,10 +186,23 @@ async def _query_recent_capture_rate() -> tuple[int, int]:
         resp2.raise_for_status()
         pending_7d = int(resp2.headers.get("content-range", "0-0/0").split("/")[-1])
 
-        return total_7d, pending_7d
+        # Sample of 20 most recent items from the week
+        resp3 = await client.get(
+            f"{_get_rest_url()}/knowledge_items"
+            f"?created_at=gte.{seven_days_ago}"
+            f"&select=id,title,created_at,content_type,capture_type,"
+            f"source_url,full_text,summary,topics,base_priority,decay_score,"
+            f"access_count,last_accessed_at,status,source_system"
+            f"&order=created_at.desc&limit=20",
+            headers=_get_headers(),
+        )
+        resp3.raise_for_status()
+        sample = [KnowledgeItem.from_db_row(row) for row in resp3.json()]
+
+        return total_7d, pending_7d, sample
     except Exception as e:
         logger.error(f"Health: recent capture rate query failed: {e}")
-        return 0, 0
+        return 0, 0, []
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +221,7 @@ async def get_health_report() -> HealthReport:
         (orphaned_count, orphaned_items),
         (decay_below_02, decay_02_to_05, decay_above_05),
         (no_connections, type_breakdown),
-        (items_created_7d, items_pending_7d),
+        (items_created_7d, items_pending_7d, recent_sample),
     ) = await asyncio.gather(
         get_total_active_count(),
         get_total_connection_count(),
@@ -235,6 +249,7 @@ async def get_health_report() -> HealthReport:
         connection_type_breakdown=type_breakdown,
         items_created_7d=items_created_7d,
         items_pending_7d=items_pending_7d,
+        recent_items_sample=recent_sample,
     )
 
 
@@ -370,6 +385,18 @@ def format_weekly_discord(report: HealthReport, digest_data=None) -> str:
     if digest_data and digest_data.new_connections:
         lines.append(f":link: {len(digest_data.new_connections)} new connections discovered")
     lines.append("")
+
+    # Sample of recent captures
+    if report.recent_items_sample:
+        lines.append("**Recent Captures (sample)**")
+        for item in report.recent_items_sample:
+            title = (item.title or "Untitled")[:45]
+            source = item.source_system or item.capture_type.value
+            date = item.created_at.strftime("%d %b") if item.created_at else "?"
+            lines.append(f"- [{source}] {title} ({date})")
+        if report.items_created_7d > 20:
+            lines.append(f"*...and {report.items_created_7d - 20} more*")
+        lines.append("")
 
     # Quiet week message
     if report.items_created_7d == 0:
