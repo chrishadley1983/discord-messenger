@@ -15,12 +15,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 async def search(query: str, limit: int = 5):
     """Run semantic search."""
-    from domains.second_brain.db import semantic_search
+    from domains.second_brain.db import hybrid_search
 
     print(f"\nSearching for: '{query}'")
     print("=" * 60)
 
-    results = await semantic_search(
+    results = await hybrid_search(
         query=query,
         min_similarity=0.5,  # Lower threshold for testing
         limit=limit,

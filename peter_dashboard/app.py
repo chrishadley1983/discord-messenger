@@ -2218,12 +2218,12 @@ async def search_second_brain(
 ):
     """Search Second Brain - exact same method Peter uses for knowledge context.
 
-    This calls the semantic_search function from domains/second_brain.
+    This calls the hybrid_search function from domains/second_brain.
     """
     try:
-        from domains.second_brain import semantic_search, format_context_for_claude
+        from domains.second_brain import hybrid_search, format_context_for_claude
 
-        results = await semantic_search(
+        results = await hybrid_search(
             query=query,
             min_similarity=min_similarity,
             limit=limit
