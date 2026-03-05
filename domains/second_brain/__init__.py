@@ -50,6 +50,7 @@ from .embed import generate_embedding, generate_embeddings_batch, EmbeddingError
 # Database operations
 from .db import (
     semantic_search,
+    hybrid_search,
     get_knowledge_item,
     create_knowledge_item,
     boost_access,
@@ -153,6 +154,7 @@ __all__ = [
     "generate_embeddings_batch",
     # Database
     "semantic_search",
+    "hybrid_search",
     "get_knowledge_item",
     "create_knowledge_item",
     "boost_access",

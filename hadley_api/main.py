@@ -5879,10 +5879,10 @@ async def brain_search(
     min_similarity: float = Query(default=0.75, ge=0.0, le=1.0),
 ):
     """Semantic search across Second Brain knowledge base."""
-    from domains.second_brain import semantic_search
+    from domains.second_brain import hybrid_search
 
     try:
-        results = await semantic_search(
+        results = await hybrid_search(
             query=query,
             limit=limit,
             min_similarity=min_similarity,

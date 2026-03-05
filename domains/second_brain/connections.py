@@ -25,7 +25,7 @@ from .config import (
     KNOWN_DOMAIN_TAGS,
 )
 from .db import (
-    semantic_search,
+    hybrid_search,
     get_recent_items,
     insert_connection,
     get_connections_for_item,
@@ -77,7 +77,7 @@ async def discover_connections_for_item(
     try:
         # Search for similar items (excluding self)
         # Use lower min_decay (0.1) so older items can still form connections
-        results = await semantic_search(
+        results = await hybrid_search(
             query=search_text,
             min_similarity=min_similarity,
             min_decay_score=0.1,

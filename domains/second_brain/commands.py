@@ -14,7 +14,7 @@ from logger import logger
 from .types import CaptureType, KnowledgeItem, SearchResult
 from .pipeline import process_capture
 from .db import (
-    semantic_search,
+    hybrid_search,
     get_recent_items,
     get_total_active_count,
     get_total_connection_count,
@@ -99,7 +99,7 @@ async def handle_recall(
     logger.info(f"Processing recall command: {query}")
 
     try:
-        results = await semantic_search(
+        results = await hybrid_search(
             query=query,
             limit=limit,
         )

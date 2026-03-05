@@ -21,7 +21,7 @@ from .db import (
     get_total_active_count,
     get_total_connection_count,
     get_topics_with_counts,
-    semantic_search,
+    hybrid_search,
 )
 from .seed import run_seed_import, run_all_adapters, get_available_adapters
 
@@ -60,7 +60,7 @@ async def cmd_search(query: str, limit: int = 10) -> None:
     print(f"\n=== Searching for: '{query}' ===\n")
 
     try:
-        results = await semantic_search(query, limit=limit)
+        results = await hybrid_search(query, limit=limit)
 
         if not results:
             print("No results found.")
