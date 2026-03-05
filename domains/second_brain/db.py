@@ -357,61 +357,8 @@ async def semantic_search(
         response.raise_for_status()
         data = response.json()
 
-        # Group results by parent item
-        results_by_parent: dict[UUID, SearchResult] = {}
+        results_by_parent = _group_search_rows(data, score_key="similarity")
 
-        for row in data:
-            parent_id = UUID(row["parent_id"])
-
-            if parent_id not in results_by_parent:
-                # Create the parent item — include facts/concepts (CR-001)
-                item = KnowledgeItem.from_db_row({
-                    "id": row["parent_id"],
-                    "content_type": row["content_type"],
-                    "capture_type": row["capture_type"],
-                    "title": row.get("title"),
-                    "source_url": row.get("source_url"),
-                    "source_message_id": row.get("source_message_id"),
-                    "source_system": row.get("source_system"),
-                    "full_text": row.get("full_text"),
-                    "summary": row.get("summary"),
-                    "topics": row.get("topics", []),
-                    "base_priority": row.get("base_priority", 1.0),
-                    "last_accessed_at": row.get("last_accessed_at"),
-                    "access_count": row.get("access_count", 0),
-                    "decay_score": row.get("decay_score", 1.0),
-                    "created_at": row["created_at"],
-                    "promoted_at": row.get("promoted_at"),
-                    "status": row.get("status", "active"),
-                    "facts": row.get("facts") or [],
-                    "concepts": row.get("concepts") or [],
-                })
-                results_by_parent[parent_id] = SearchResult(
-                    item=item,
-                    chunks=[],
-                    best_similarity=0.0,
-                    relevant_excerpts=[],
-                )
-
-            result = results_by_parent[parent_id]
-            similarity = float(row.get("similarity", 0.0))
-
-            # Add chunk
-            chunk = KnowledgeChunk.from_db_row({
-                "id": row["chunk_id"],
-                "parent_id": row["parent_id"],
-                "chunk_index": row["chunk_index"],
-                "content": row["chunk_content"],
-                "embedding": None,  # Don't return embeddings
-                "created_at": row["created_at"],
-            })
-            result.chunks.append(chunk)
-            result.relevant_excerpts.append(row["chunk_content"][:200])
-
-            if similarity > result.best_similarity:
-                result.best_similarity = similarity
-
-        # Sort by best similarity
         sorted_results = sorted(
             results_by_parent.values(),
             key=lambda r: r.best_similarity,
@@ -424,6 +371,180 @@ async def semantic_search(
     except Exception as e:
         logger.error(f"Semantic search failed: {e}")
         raise
+
+
+def _group_search_rows(
+    data: list[dict],
+    score_key: str = "similarity",
+) -> dict[UUID, SearchResult]:
+    """Group chunk-level rows from a search RPC into SearchResult by parent.
+
+    Works for both semantic search (score_key='similarity') and keyword
+    search (score_key='rank').
+    """
+    results_by_parent: dict[UUID, SearchResult] = {}
+
+    for row in data:
+        parent_id = UUID(row["parent_id"])
+
+        if parent_id not in results_by_parent:
+            item = KnowledgeItem.from_db_row({
+                "id": row["parent_id"],
+                "content_type": row["content_type"],
+                "capture_type": row["capture_type"],
+                "title": row.get("title"),
+                "source_url": row.get("source_url"),
+                "source_message_id": row.get("source_message_id"),
+                "source_system": row.get("source_system"),
+                "full_text": row.get("full_text"),
+                "summary": row.get("summary"),
+                "topics": row.get("topics", []),
+                "base_priority": row.get("base_priority", 1.0),
+                "last_accessed_at": row.get("last_accessed_at"),
+                "access_count": row.get("access_count", 0),
+                "decay_score": row.get("decay_score", 1.0),
+                "created_at": row["created_at"],
+                "promoted_at": row.get("promoted_at"),
+                "status": row.get("status", "active"),
+                "facts": row.get("facts") or [],
+                "concepts": row.get("concepts") or [],
+            })
+            results_by_parent[parent_id] = SearchResult(
+                item=item,
+                chunks=[],
+                best_similarity=0.0,
+                relevant_excerpts=[],
+            )
+
+        result = results_by_parent[parent_id]
+        score = float(row.get(score_key, 0.0))
+
+        chunk = KnowledgeChunk.from_db_row({
+            "id": row["chunk_id"],
+            "parent_id": row["parent_id"],
+            "chunk_index": row["chunk_index"],
+            "content": row["chunk_content"],
+            "embedding": None,
+            "created_at": row["created_at"],
+        })
+        result.chunks.append(chunk)
+        result.relevant_excerpts.append(row["chunk_content"][:200])
+
+        if score > result.best_similarity:
+            result.best_similarity = score
+
+    return results_by_parent
+
+
+# =============================================================================
+# KEYWORD SEARCH
+# =============================================================================
+
+async def keyword_search(
+    query: str,
+    min_decay_score: float = SEARCH_MIN_DECAY,
+    capture_types: Optional[list[CaptureType]] = None,
+    exclude_parent_id: Optional[UUID] = None,
+    limit: int = MAX_SEARCH_RESULTS,
+) -> list[SearchResult]:
+    """Full-text keyword search against knowledge chunks.
+
+    Uses PostgreSQL tsvector/tsquery via the keyword_search_knowledge RPC.
+    No embedding needed — purely text-based matching.
+    """
+    params: dict = {
+        "search_query": query,
+        "match_count": MAX_CHUNKS_PER_SEARCH,
+        "min_decay": min_decay_score,
+    }
+    if capture_types:
+        params["capture_types"] = [ct.value for ct in capture_types]
+    if exclude_parent_id:
+        params["exclude_parent"] = str(exclude_parent_id)
+
+    try:
+        client = _get_http_client()
+        response = await client.post(
+            f"{_get_rest_url()}/rpc/keyword_search_knowledge",
+            headers=_get_headers(),
+            json=params,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        results_by_parent = _group_search_rows(data, score_key="rank")
+
+        sorted_results = sorted(
+            results_by_parent.values(),
+            key=lambda r: r.best_similarity,
+            reverse=True,
+        )[:limit]
+
+        logger.info(f"Keyword search found {len(sorted_results)} items")
+        return sorted_results
+
+    except Exception as e:
+        logger.error(f"Keyword search failed: {e}")
+        return []
+
+
+# =============================================================================
+# HYBRID SEARCH (vector + keyword fallback)
+# =============================================================================
+
+KEYWORD_FALLBACK_THRESHOLD = 0.80
+
+async def hybrid_search(
+    query: str,
+    min_similarity: float = 0.75,
+    min_decay_score: float = SEARCH_MIN_DECAY,
+    capture_types: Optional[list[CaptureType]] = None,
+    exclude_parent_id: Optional[UUID] = None,
+    limit: int = MAX_SEARCH_RESULTS,
+    keyword_fallback_threshold: float = KEYWORD_FALLBACK_THRESHOLD,
+) -> list[SearchResult]:
+    """Vector search with keyword fallback.
+
+    1. Run semantic (vector) search
+    2. If zero results or best similarity < keyword_fallback_threshold,
+       also run keyword search and merge unique results
+    """
+    results = await semantic_search(
+        query=query,
+        min_similarity=min_similarity,
+        min_decay_score=min_decay_score,
+        capture_types=capture_types,
+        exclude_parent_id=exclude_parent_id,
+        limit=limit,
+    )
+
+    needs_keyword = (
+        len(results) == 0
+        or results[0].best_similarity < keyword_fallback_threshold
+    )
+
+    if needs_keyword:
+        kw_results = await keyword_search(
+            query=query,
+            min_decay_score=min_decay_score,
+            capture_types=capture_types,
+            exclude_parent_id=exclude_parent_id,
+            limit=limit,
+        )
+
+        # Merge: add keyword results not already in vector results
+        seen_ids = {r.item.id for r in results}
+        for kr in kw_results:
+            if kr.item.id not in seen_ids:
+                results.append(kr)
+                seen_ids.add(kr.item.id)
+
+        logger.info(
+            f"Hybrid search: {len(results)} total "
+            f"(vector triggered keyword fallback)"
+        )
+
+    return results[:limit]
 
 
 # =============================================================================
