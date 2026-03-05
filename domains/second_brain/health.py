@@ -164,7 +164,7 @@ async def _query_connection_coverage() -> tuple[int, dict[str, int]]:
 
 async def _query_recent_capture_rate() -> tuple[int, int]:
     """Q6: Items created in last 7 days and how many are still pending."""
-    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
     try:
         client = _get_http_client()
         # All items created in last 7 days

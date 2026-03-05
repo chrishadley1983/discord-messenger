@@ -142,7 +142,70 @@ async def cmd_connections(refresh: bool = False, item_id: str | None = None) -> 
         print("Done.")
 
     else:
-        print("Use --refresh to rebuild connections or --item-id to view specific item")
+        print("Use --refresh to rebuild connections, --backfill for all unconnected, or --item-id for specific item")
+
+
+async def cmd_connections_backfill(batch_size: int = 50) -> None:
+    """Backfill connections for all unconnected active items."""
+    import asyncio
+    from .connections import discover_connections_for_item
+    from .db import _get_http_client, _get_headers, _get_rest_url
+
+    print("\n=== Connection Backfill ===\n")
+
+    # Get unconnected item IDs via RPC
+    client = _get_http_client()
+    resp = await client.post(
+        f"{_get_rest_url()}/rpc/get_connection_coverage",
+        headers=_get_headers(),
+        json={},
+    )
+    resp.raise_for_status()
+    coverage = {row["metric"]: int(row["value"]) for row in resp.json()}
+    unconnected_count = coverage.get("items_no_connections", 0)
+    print(f"Unconnected items: {unconnected_count}")
+
+    if unconnected_count == 0:
+        print("Nothing to backfill.")
+        return
+
+    # Page through all active items, skip those with connections
+    from .db import list_items, get_connections_for_item as get_conns
+    offset = 0
+    processed = 0
+    new_connections = 0
+
+    while True:
+        items, total = await list_items(limit=batch_size, offset=offset, sort_by="created_at", order="asc")
+        if not items:
+            break
+
+        for item in items:
+            # Check if item already has connections
+            existing = await get_conns(UUID(item.id))
+            if existing:
+                offset += 1
+                continue
+
+            title = item.title[:40] if item.title else "Untitled"
+            try:
+                conns = await discover_connections_for_item(item)
+                new_connections += len(conns)
+                processed += 1
+                _safe_print(f"  [{processed}] {title} -> {len(conns)} connections")
+            except Exception as e:
+                _safe_print(f"  [{processed}] {title} -> ERROR: {e}")
+                processed += 1
+
+            # Rate limit: 0.3s between items
+            await asyncio.sleep(0.3)
+
+        offset += batch_size
+
+        # Progress update every batch
+        print(f"  ... processed {processed} unconnected items, {new_connections} connections created")
+
+    print(f"\nBackfill complete: {processed} items processed, {new_connections} new connections")
 
 
 async def cmd_view(item_id: str) -> None:
@@ -283,6 +346,8 @@ def main():
     # connections command
     conn_parser = subparsers.add_parser("connections", help="Manage connections")
     conn_parser.add_argument("--refresh", action="store_true", help="Refresh all connections")
+    conn_parser.add_argument("--backfill", action="store_true", help="Backfill connections for all unconnected items")
+    conn_parser.add_argument("--batch-size", type=int, default=50, help="Batch size for backfill (default 50)")
     conn_parser.add_argument("--item-id", help="View connections for specific item")
 
     # view command
@@ -303,7 +368,10 @@ def main():
         adapter = args.adapter if hasattr(args, "adapter") else None
         asyncio.run(cmd_seed(adapter, args.dry_run))
     elif args.command == "connections":
-        asyncio.run(cmd_connections(args.refresh, getattr(args, "item_id", None)))
+        if getattr(args, "backfill", False):
+            asyncio.run(cmd_connections_backfill(getattr(args, "batch_size", 50)))
+        else:
+            asyncio.run(cmd_connections(args.refresh, getattr(args, "item_id", None)))
     elif args.command == "view":
         asyncio.run(cmd_view(args.item_id))
     elif args.command == "health":

@@ -235,16 +235,15 @@ async def process_capture(
             from .db import update_item_status
             await update_item_status(created_item.id, ItemStatus.PENDING)
 
-        # Step 8: Discover connections (async, non-blocking for explicit saves)
-        if capture_type == CaptureType.EXPLICIT:
-            try:
-                from .connections import discover_connections_for_item
-                connections = await discover_connections_for_item(created_item)
-                if connections:
-                    logger.info(f"Discovered {len(connections)} connections for {created_item.id}")
-            except Exception as e:
-                logger.warning(f"Connection discovery failed: {e}")
-                # Non-fatal - item is still saved
+        # Step 8: Discover connections for all capture types
+        try:
+            from .connections import discover_connections_for_item
+            connections = await discover_connections_for_item(created_item)
+            if connections:
+                logger.info(f"Discovered {len(connections)} connections for {created_item.id}")
+        except Exception as e:
+            logger.warning(f"Connection discovery failed: {e}")
+            # Non-fatal - item is still saved
 
         return created_item
 
