@@ -108,6 +108,14 @@ from .digest import (
     get_digest_for_skill,
 )
 
+# Health monitoring
+from .health import (
+    HealthReport,
+    get_health_report,
+    format_daily_discord,
+    format_weekly_discord,
+)
+
 __all__ = [
     # Types
     "KnowledgeItem",
@@ -181,4 +189,9 @@ __all__ = [
     "generate_weekly_digest",
     "format_digest_for_discord",
     "get_digest_for_skill",
+    # Health
+    "HealthReport",
+    "get_health_report",
+    "format_daily_discord",
+    "format_weekly_discord",
 ]

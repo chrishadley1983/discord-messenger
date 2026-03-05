@@ -186,6 +186,67 @@ async def on_ready():
     )
     logger.info("Reprocess pending items registered (every 6h)")
 
+    # Second Brain health check — daily at 7am UK
+    ALERTS_CHANNEL_ID = 1466019126194606286
+
+    async def daily_health_check():
+        """Post daily health status to #alerts."""
+        try:
+            from domains.second_brain.health import get_health_report, format_daily_discord
+            report = await get_health_report()
+            message = format_daily_discord(report)
+            channel = bot.get_channel(ALERTS_CHANNEL_ID)
+            if not channel:
+                channel = await bot.fetch_channel(ALERTS_CHANNEL_ID)
+            if channel:
+                await channel.send(message)
+                logger.info("Posted daily health check to #alerts")
+        except Exception as e:
+            logger.error(f"Daily health check failed: {e}")
+
+    scheduler.add_job(
+        daily_health_check,
+        'cron',
+        hour=7,
+        minute=0,
+        timezone="Europe/London",
+        id="__daily_health_check",
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info("Daily health check registered (7:00 AM UK)")
+
+    # Second Brain weekly digest — Sunday 9am UK
+    async def weekly_health_digest():
+        """Post weekly health + content digest to #alerts."""
+        try:
+            from domains.second_brain.health import get_health_report, format_weekly_discord
+            from domains.second_brain.digest import generate_weekly_digest
+            report = await get_health_report()
+            digest_data = await generate_weekly_digest()
+            message = format_weekly_discord(report, digest_data)
+            channel = bot.get_channel(ALERTS_CHANNEL_ID)
+            if not channel:
+                channel = await bot.fetch_channel(ALERTS_CHANNEL_ID)
+            if channel:
+                await channel.send(message)
+                logger.info("Posted weekly health digest to #alerts")
+        except Exception as e:
+            logger.error(f"Weekly health digest failed: {e}")
+
+    scheduler.add_job(
+        weekly_health_digest,
+        'cron',
+        day_of_week='sun',
+        hour=9,
+        minute=0,
+        timezone="Europe/London",
+        id="__weekly_health_digest",
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info("Weekly health digest registered (Sunday 9:00 AM UK)")
+
     logger.info(f"Bot ready - {len(registry.all_domains())} domains registered")
 
     # Claude Code domain startup - restore active session
