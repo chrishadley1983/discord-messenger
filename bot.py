@@ -167,6 +167,11 @@ async def on_ready():
     register_incremental_seed(scheduler, bot=bot)
     logger.info("Incremental seed job registered (daily at 1:00 AM UK)")
 
+    # School integration — daily emails at 7am, weekly scrape+sync Saturday 6am
+    from jobs.school_sync import register_school_sync
+    register_school_sync(scheduler, bot=bot)
+    logger.info("School sync jobs registered (daily 7:00 AM + weekly Saturday 6:00 AM UK)")
+
     # Reprocess pending passive captures — every 6 hours
     async def reprocess_pending():
         """Upgrade passive captures to full items with embeddings."""
