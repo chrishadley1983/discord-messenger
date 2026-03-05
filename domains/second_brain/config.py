@@ -104,6 +104,12 @@ SOURCE_BOOKMARKS: Final[str] = "seed:bookmarks"
 SOURCE_GARMIN: Final[str] = "seed:garmin"
 SOURCE_INSTAGRAM: Final[str] = "seed:instagram"
 
+# Health monitoring thresholds
+HEALTH_PENDING_WARN: Final[int] = 0          # Warn if pending items > this
+HEALTH_ORPHANED_WARN: Final[int] = 0         # Warn if orphaned items > this
+HEALTH_DECAY_CRITICAL_PCT: Final[float] = 50  # Warn if >50% items below SEARCH_MIN_DECAY
+HEALTH_EMBED_FAIL_RATE: Final[float] = 10    # Warn if >10% embedding failure rate (session)
+
 # Structured extraction limits
 STRUCTURED_EXTRACTION_TIMEOUT: Final[int] = 30  # seconds
 MAX_FACTS_PER_ITEM: Final[int] = 8

@@ -15,7 +15,7 @@ from .config import (
     MAX_CONTEXT_ITEMS,
     SEARCH_MIN_DECAY,
 )
-from .db import semantic_search, boost_access
+from .db import hybrid_search, boost_access
 
 
 async def get_relevant_context(
@@ -42,7 +42,7 @@ async def get_relevant_context(
         return []
 
     try:
-        results = await semantic_search(
+        results = await hybrid_search(
             query=message,
             min_similarity=min_similarity,
             min_decay_score=min_decay,

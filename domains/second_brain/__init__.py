@@ -50,6 +50,7 @@ from .embed import generate_embedding, generate_embeddings_batch, EmbeddingError
 # Database operations
 from .db import (
     semantic_search,
+    hybrid_search,
     get_knowledge_item,
     create_knowledge_item,
     boost_access,
@@ -108,6 +109,14 @@ from .digest import (
     get_digest_for_skill,
 )
 
+# Health monitoring
+from .health import (
+    HealthReport,
+    get_health_report,
+    format_daily_discord,
+    format_weekly_discord,
+)
+
 __all__ = [
     # Types
     "KnowledgeItem",
@@ -145,6 +154,7 @@ __all__ = [
     "generate_embeddings_batch",
     # Database
     "semantic_search",
+    "hybrid_search",
     "get_knowledge_item",
     "create_knowledge_item",
     "boost_access",
@@ -181,4 +191,9 @@ __all__ = [
     "generate_weekly_digest",
     "format_digest_for_discord",
     "get_digest_for_skill",
+    # Health
+    "HealthReport",
+    "get_health_report",
+    "format_daily_discord",
+    "format_weekly_discord",
 ]

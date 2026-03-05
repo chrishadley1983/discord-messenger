@@ -6,6 +6,7 @@ Usage:
     python -m domains.second_brain.admin seed --adapter github-stars
     python -m domains.second_brain.admin seed --all
     python -m domains.second_brain.admin connections --refresh
+    python -m domains.second_brain.admin health
 """
 
 import argparse
@@ -20,7 +21,7 @@ from .db import (
     get_total_active_count,
     get_total_connection_count,
     get_topics_with_counts,
-    semantic_search,
+    hybrid_search,
 )
 from .seed import run_seed_import, run_all_adapters, get_available_adapters
 
@@ -59,7 +60,7 @@ async def cmd_search(query: str, limit: int = 10) -> None:
     print(f"\n=== Searching for: '{query}' ===\n")
 
     try:
-        results = await semantic_search(query, limit=limit)
+        results = await hybrid_search(query, limit=limit)
 
         if not results:
             print("No results found.")
@@ -141,7 +142,70 @@ async def cmd_connections(refresh: bool = False, item_id: str | None = None) -> 
         print("Done.")
 
     else:
-        print("Use --refresh to rebuild connections or --item-id to view specific item")
+        print("Use --refresh to rebuild connections, --backfill for all unconnected, or --item-id for specific item")
+
+
+async def cmd_connections_backfill(batch_size: int = 50) -> None:
+    """Backfill connections for all unconnected active items."""
+    import asyncio
+    from .connections import discover_connections_for_item
+    from .db import _get_http_client, _get_headers, _get_rest_url
+
+    print("\n=== Connection Backfill ===\n")
+
+    # Get unconnected item IDs via RPC
+    client = _get_http_client()
+    resp = await client.post(
+        f"{_get_rest_url()}/rpc/get_connection_coverage",
+        headers=_get_headers(),
+        json={},
+    )
+    resp.raise_for_status()
+    coverage = {row["metric"]: int(row["value"]) for row in resp.json()}
+    unconnected_count = coverage.get("items_no_connections", 0)
+    print(f"Unconnected items: {unconnected_count}")
+
+    if unconnected_count == 0:
+        print("Nothing to backfill.")
+        return
+
+    # Page through all active items, skip those with connections
+    from .db import list_items, get_connections_for_item as get_conns
+    offset = 0
+    processed = 0
+    new_connections = 0
+
+    while True:
+        items, total = await list_items(limit=batch_size, offset=offset, sort_by="created_at", order="asc")
+        if not items:
+            break
+
+        for item in items:
+            # Check if item already has connections
+            existing = await get_conns(UUID(item.id))
+            if existing:
+                offset += 1
+                continue
+
+            title = item.title[:40] if item.title else "Untitled"
+            try:
+                conns = await discover_connections_for_item(item)
+                new_connections += len(conns)
+                processed += 1
+                _safe_print(f"  [{processed}] {title} -> {len(conns)} connections")
+            except Exception as e:
+                _safe_print(f"  [{processed}] {title} -> ERROR: {e}")
+                processed += 1
+
+            # Rate limit: 0.3s between items
+            await asyncio.sleep(0.3)
+
+        offset += batch_size
+
+        # Progress update every batch
+        print(f"  ... processed {processed} unconnected items, {new_connections} connections created")
+
+    print(f"\nBackfill complete: {processed} items processed, {new_connections} new connections")
 
 
 async def cmd_view(item_id: str) -> None:
@@ -171,6 +235,93 @@ async def cmd_view(item_id: str) -> None:
     print(content[:500])
 
 
+def _safe_print(text: str) -> None:
+    """Print text, replacing unencodable characters for Windows console."""
+    import sys
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8", errors="replace"))
+
+
+async def cmd_health() -> None:
+    """Show Second Brain health diagnostics."""
+    from .health import get_health_report, _get_warnings
+
+    _safe_print("\n=== Second Brain Health Report ===\n")
+
+    try:
+        report = await get_health_report()
+
+        # Totals
+        _safe_print(f"Total active items: {report.total_active}")
+        _safe_print(f"Total connections:  {report.total_connections}")
+
+        # Pending items
+        _safe_print(f"\n--- Pending Items ({report.pending_count}) ---")
+        if report.pending_items:
+            for item in report.pending_items:
+                title = item.title[:50] if item.title else "Untitled"
+                _safe_print(f"  - {title} (created {item.created_at})")
+        else:
+            _safe_print("  None")
+
+        # Orphaned items
+        _safe_print(f"\n--- Orphaned Items ({report.orphaned_count}) ---")
+        if report.orphaned_items:
+            for item in report.orphaned_items:
+                title = item.title[:50] if item.title else "Untitled"
+                _safe_print(f"  - {title}")
+        else:
+            _safe_print("  None")
+
+        # Decay distribution
+        total = report.decay_below_02 + report.decay_02_to_05 + report.decay_above_05
+        _safe_print("\n--- Decay Distribution ---")
+        if total > 0:
+            pct = lambda n: f"{n / total * 100:.0f}%"
+            _safe_print(f"  Healthy (>0.5):          {report.decay_above_05:>4} ({pct(report.decay_above_05)})")
+            _safe_print(f"  Fading (0.2-0.5):        {report.decay_02_to_05:>4} ({pct(report.decay_02_to_05)})")
+            _safe_print(f"  Below threshold (<0.2):  {report.decay_below_02:>4} ({pct(report.decay_below_02)})")
+        else:
+            _safe_print("  No active items")
+
+        # Embedding stats
+        stats = report.embedding_stats
+        _safe_print("\n--- Embedding Pipeline (current session) ---")
+        _safe_print(f"  Edge function: {stats.get('edge_ok', 0)} ok / {stats.get('edge_fail', 0)} fail")
+        _safe_print(f"  HuggingFace:   {stats.get('hf_single_ok', 0)} ok / {stats.get('hf_single_fail', 0)} fail")
+        _safe_print(f"  Retries: {stats.get('retries', 0)} | Cache hits: {stats.get('cache_hits', 0)}")
+
+        # Connection coverage
+        connected = report.total_active - report.items_with_zero_connections
+        _safe_print("\n--- Connection Coverage ---")
+        _safe_print(f"  Connected: {connected}/{report.total_active}")
+        if report.connection_type_breakdown:
+            for ctype, count in sorted(report.connection_type_breakdown.items()):
+                _safe_print(f"    {ctype}: {count}")
+
+        # Recent capture rate
+        _safe_print("\n--- Recent Capture (7 days) ---")
+        _safe_print(f"  Created: {report.items_created_7d}")
+        _safe_print(f"  Still pending: {report.items_pending_7d}")
+
+        # Warnings summary
+        warnings = _get_warnings(report)
+        if warnings:
+            _safe_print("\n--- WARNINGS ---")
+            for w in warnings:
+                # Strip Discord emoji syntax for CLI
+                clean = w.replace(":warning:", "!").replace(":chart_with_downwards_trend:", "!")
+                _safe_print(f"  {clean}")
+        else:
+            _safe_print("\nAll healthy.")
+
+    except Exception as e:
+        logger.error(f"Health report error: {e}")
+        _safe_print(f"Error: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Second Brain admin CLI",
@@ -195,11 +346,16 @@ def main():
     # connections command
     conn_parser = subparsers.add_parser("connections", help="Manage connections")
     conn_parser.add_argument("--refresh", action="store_true", help="Refresh all connections")
+    conn_parser.add_argument("--backfill", action="store_true", help="Backfill connections for all unconnected items")
+    conn_parser.add_argument("--batch-size", type=int, default=50, help="Batch size for backfill (default 50)")
     conn_parser.add_argument("--item-id", help="View connections for specific item")
 
     # view command
     view_parser = subparsers.add_parser("view", help="View a knowledge item")
     view_parser.add_argument("item_id", help="Item ID to view")
+
+    # health command
+    subparsers.add_parser("health", help="Show health diagnostics")
 
     args = parser.parse_args()
 
@@ -212,9 +368,14 @@ def main():
         adapter = args.adapter if hasattr(args, "adapter") else None
         asyncio.run(cmd_seed(adapter, args.dry_run))
     elif args.command == "connections":
-        asyncio.run(cmd_connections(args.refresh, getattr(args, "item_id", None)))
+        if getattr(args, "backfill", False):
+            asyncio.run(cmd_connections_backfill(getattr(args, "batch_size", 50)))
+        else:
+            asyncio.run(cmd_connections(args.refresh, getattr(args, "item_id", None)))
     elif args.command == "view":
         asyncio.run(cmd_view(args.item_id))
+    elif args.command == "health":
+        asyncio.run(cmd_health())
 
 
 if __name__ == "__main__":

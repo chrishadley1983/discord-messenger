@@ -14,7 +14,7 @@ from logger import logger
 from .types import CaptureType, KnowledgeItem, SearchResult
 from .pipeline import process_capture
 from .db import (
-    semantic_search,
+    hybrid_search,
     get_recent_items,
     get_total_active_count,
     get_total_connection_count,
@@ -99,7 +99,7 @@ async def handle_recall(
     logger.info(f"Processing recall command: {query}")
 
     try:
-        results = await semantic_search(
+        results = await hybrid_search(
             query=query,
             limit=limit,
         )
@@ -147,6 +147,28 @@ async def handle_recall(
                     await boost_access(item.id)
                 except Exception:
                     pass  # Non-critical
+
+        # Related items via connections from top result
+        if results and results[0].item.id:
+            try:
+                from .connections import get_item_connections
+                connections = await get_item_connections(results[0].item.id)
+                # Filter out items already in search results
+                result_ids = {r.item.id for r in results}
+                related = [(conn, item) for conn, item in connections if item.id not in result_ids]
+                if related:
+                    response_lines.append("🔀 **Related**")
+                    for conn, item in related[:3]:
+                        title = item.title or "Untitled"
+                        if len(title) > 45:
+                            title = title[:42] + "..."
+                        conn_icon = {"cross_domain": "🔀", "topic_overlap": "🏷️", "semantic": "🔗"}.get(
+                            conn.connection_type.value, "🔗"
+                        )
+                        response_lines.append(f"{conn_icon} {title}")
+                    response_lines.append("")
+            except Exception as e:
+                logger.debug(f"Related items lookup failed: {e}")
 
         return "\n".join(response_lines)
 

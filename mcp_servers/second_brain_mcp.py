@@ -63,7 +63,7 @@ def _item_to_dict(item: KnowledgeItem) -> dict:
 
 @mcp.tool()
 async def search_knowledge(query: str, limit: int = 5, min_similarity: float = 0.7) -> str:
-    """Search Chris's personal knowledge base (Second Brain) using semantic similarity.
+    """Search Chris's personal knowledge base (Second Brain) using semantic + keyword search.
 
     USE THIS TOOL when the user asks about their projects, preferences, past decisions,
     saved articles, bookmarks, family info, business details, or anything they may have
@@ -72,13 +72,16 @@ async def search_knowledge(query: str, limit: int = 5, min_similarity: float = 0
     Covers: LEGO business (Hadley Bricks), coding projects, family notes, recipes,
     travel plans, articles, personal preferences, and more.
 
+    Uses vector (semantic) search first, with automatic keyword fallback for exact
+    matches that embeddings might miss (e.g. proper nouns, addresses, specific terms).
+
     Args:
         query: Natural language search query
         limit: Max results to return (default 5)
         min_similarity: Minimum similarity threshold 0-1 (default 0.7)
     """
     try:
-        results = await db.semantic_search(
+        results = await db.hybrid_search(
             query=query,
             min_similarity=min_similarity,
             limit=limit,

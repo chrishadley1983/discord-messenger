@@ -20,7 +20,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from logger import logger
 from .response.pipeline import process as process_response
-from .config import USE_ROUTER_V2, SECOND_BRAIN_SAVE_SKILLS
+from .config import SECOND_BRAIN_SAVE_SKILLS
 
 # Import job history recording functions
 try:
@@ -622,24 +622,12 @@ class PeterbotScheduler:
 
             # 4. Send to Claude Code with timeout
             try:
-                if USE_ROUTER_V2:
-                    # V2: Independent CLI process — no tmux, no session lock
-                    # Timeout is handled inside invoke_claude_cli
-                    response = await self._send_to_claude_code_v2(context, job=job)
-                else:
-                    response = await asyncio.wait_for(
-                        self._send_to_claude_code(context),
-                        timeout=self.JOB_TIMEOUT_SECONDS
-                    )
+                # Independent CLI process — no tmux, no session lock
+                # Timeout is handled inside invoke_claude_cli
+                response = await self._send_to_claude_code_v2(context, job=job)
             except asyncio.TimeoutError:
                 duration = time.time() - start_time
                 logger.error(f"Job {job.name} timed out after {duration:.1f}s")
-
-                if not USE_ROUTER_V2:
-                    # Only needed for tmux — send Ctrl+C to cancel stuck operation
-                    from domains.claude_code.tools import _tmux
-                    from .config import PETERBOT_SESSION
-                    _tmux("send-keys", "-t", PETERBOT_SESSION, "C-c")
 
                 self.last_job_status[job.skill] = False
                 if health_tracker:
@@ -887,151 +875,6 @@ class PeterbotScheduler:
 
         return "\n".join(parts)
 
-    async def _send_to_claude_code(self, context: str, retry_on_empty: bool = True) -> str:
-        """Send context to Claude Code session and get response.
-
-        Uses the same mechanism as peterbot router.
-        Acquires session lock to prevent concurrent access with conversations.
-
-        Args:
-            context: Full context string to send
-            retry_on_empty: If True, retry once if response is empty (default True)
-
-        Returns:
-            Extracted response string, or empty string on failure
-        """
-        # Import router module to modify _last_channel_id (not just the variable)
-        from . import router as router_module
-        from .router import (
-            ensure_session,
-            write_context_file,
-            generate_context_filename,
-            cleanup_context_file,
-            send_to_session,
-            wait_for_response,
-            wait_for_clear,
-            extract_new_response,
-            get_session_screen,
-            _session_lock,
-        )
-        from domains.claude_code.tools import _tmux
-        from .config import PETERBOT_SESSION
-
-        # Ensure session exists
-        success, error = await ensure_session()
-        if not success:
-            logger.error(f"Failed to create Claude Code session: {error}")
-            return ""
-
-        # CRITICAL SECTION - acquire lock to prevent concurrent tmux access
-        async with _session_lock:
-            logger.debug("Acquired session lock for scheduled job")
-
-            # Always clear context before scheduled jobs (prevents contamination from conversations)
-            logger.debug("Clearing context for scheduled job isolation")
-            _tmux("send-keys", "-t", PETERBOT_SESSION, "/clear", "Enter")
-            # Wait for clear to actually complete (uses CLEAR_TIMEOUT from config, default 8s)
-            if not await wait_for_clear():
-                logger.warning("Clear may not have completed for scheduled job, proceeding anyway")
-
-            # Clear tmux scroll-back buffer to prevent old content from contaminating
-            # screen captures. /clear resets Claude Code's conversation but tmux retains
-            # scroll-back history which get_session_screen(-S -60) would pick up.
-            _tmux("clear-history", "-t", PETERBOT_SESSION)
-
-            # Capture before state (now clean - no scroll-back contamination)
-            screen_before = get_session_screen()
-
-            # Write context to UNIQUE file (prevents cross-contamination with conversations)
-            import uuid
-            operation_id = uuid.uuid4().hex[:8]
-            context_filepath = generate_context_filename(operation_id)
-            context_filename = f"context_{operation_id}.md"
-
-            written_path = write_context_file(context, context_filepath)
-            if not written_path:
-                logger.error("Failed to write context file for scheduled job")
-                return ""
-
-            # Use the same prompt marker as router for extract_new_response to work
-            send_to_session(f"Read {context_filename} and respond")
-
-            # Wait for response with content validation (prevents premature return after /clear timeout)
-            raw_response = await wait_for_response(
-                timeout=120,
-                stable_threshold=5,
-                expect_content=True,
-                context_filename=context_filename,
-            )
-
-            # Extract response
-            response = extract_new_response(screen_before, raw_response)
-
-            # Retry once if response is empty (likely /clear didn't complete properly)
-            if not response.strip() and retry_on_empty:
-                logger.warning("Empty response detected for scheduled job, attempting retry...")
-
-                # Cancel any stuck operation
-                _tmux("send-keys", "-t", PETERBOT_SESSION, "C-c")
-                await asyncio.sleep(0.5)
-
-                # Clear with longer timeout
-                _tmux("send-keys", "-t", PETERBOT_SESSION, "/clear", "Enter")
-                if not await wait_for_clear(timeout=10.0):
-                    logger.error("Clear failed on retry attempt")
-                    # Continue anyway - try to send
-
-                # Generate new context file for retry
-                retry_id = uuid.uuid4().hex[:8]
-                retry_filepath = generate_context_filename(retry_id)
-                retry_filename = f"context_{retry_id}.md"
-
-                write_context_file(context, retry_filepath)
-                screen_before = get_session_screen()
-                send_to_session(f"Read {retry_filename} and respond")
-
-                raw_response = await wait_for_response(
-                    timeout=120,
-                    stable_threshold=5,
-                    expect_content=True,
-                    context_filename=retry_filename,
-                )
-                response = extract_new_response(screen_before, raw_response)
-
-                # Cleanup retry context file
-                cleanup_context_file(retry_filepath)
-
-                if response.strip():
-                    logger.info(f"Retry successful, got {len(response)} char response")
-                else:
-                    logger.error("Retry also returned empty response")
-
-            # Cleanup original context file (prevents accumulation)
-            cleanup_context_file(context_filepath)
-
-            # Store parser capture for nightly parser-improve analysis
-            try:
-                from .capture_parser import ParserCaptureStore
-                _capture_store = ParserCaptureStore()
-                _capture_store.capture(
-                    channel_id="scheduled",
-                    channel_name="scheduled-job",
-                    screen_before=screen_before,
-                    screen_after=raw_response,
-                    parser_output=response,
-                    pipeline_output=response,
-                    is_scheduled=True,
-                )
-            except Exception as e:
-                logger.debug(f"Parser capture store failed (non-critical): {e}")
-
-            # CRITICAL: Reset channel tracking INSIDE the lock before releasing
-            # This forces the next conversation to issue /clear (channel switch detection)
-            # Must be inside _session_lock to prevent race with user messages
-            router_module._last_channel_id = None
-            logger.debug("Reset _last_channel_id, releasing session lock for scheduled job")
-        return response
-
     async def _send_to_claude_code_v2(self, context: str, job: JobConfig = None, retry_on_empty: bool = True) -> str:
         """Send context to LLM and get response. Routes via invoke_llm().
 
@@ -1184,7 +1027,7 @@ class PeterbotScheduler:
         processed = process_response(
             message,
             {'user_prompt': f'[Scheduled: {job.skill}]'},
-            pre_sanitised=USE_ROUTER_V2,
+            pre_sanitised=True,
         )
 
         # Build Discord file attachments
@@ -1362,10 +1205,7 @@ class PeterbotScheduler:
             context = self._build_skill_context_manual(job, skill_content, data)
 
             # 4. Send to Claude Code
-            if USE_ROUTER_V2:
-                response = await self._send_to_claude_code_v2(context, job=job)
-            else:
-                response = await self._send_to_claude_code(context)
+            response = await self._send_to_claude_code_v2(context, job=job)
 
             # 5. Get target channel
             channel = self.bot.get_channel(channel_id)
@@ -1393,7 +1233,7 @@ class PeterbotScheduler:
                 processed = process_response(
                     response,
                     {'user_prompt': f'[Manual: {job.skill}]'},
-                    pre_sanitised=USE_ROUTER_V2,
+                    pre_sanitised=True,
                 )
 
                 # Prepare file attachments
