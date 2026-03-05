@@ -61,14 +61,6 @@ CHANNEL_ID_TO_NAME = {
     # 123456789: "#general",
 }
 
-# --- Router V2 (Claude CLI --print mode) ---
-# V2 is the DEFAULT since Feb 2026. Uses `claude -p --output-format stream-json`
-# instead of tmux screen-scraping. Each call is an independent process (no session lock).
-#
-# To REVERT to tmux (v1): set PETERBOT_ROUTER_V2=0
-# Old router.py, parser.py, sanitiser.py are kept in-tree as fallback.
-USE_ROUTER_V2 = os.environ.get("PETERBOT_ROUTER_V2", "1").lower() not in ("0", "false", "no")
-
 # CLI execution settings
 CLI_TOTAL_TIMEOUT = 1200      # Max seconds for conversation CLI execution (20 min)
 CLI_MAX_TURNS = 50            # Max agentic turns for conversations (quality over speed)
