@@ -172,82 +172,91 @@ async def cmd_view(item_id: str) -> None:
     print(content[:500])
 
 
+def _safe_print(text: str) -> None:
+    """Print text, replacing unencodable characters for Windows console."""
+    import sys
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8", errors="replace"))
+
+
 async def cmd_health() -> None:
     """Show Second Brain health diagnostics."""
     from .health import get_health_report, _get_warnings
 
-    print("\n=== Second Brain Health Report ===\n")
+    _safe_print("\n=== Second Brain Health Report ===\n")
 
     try:
         report = await get_health_report()
 
         # Totals
-        print(f"Total active items: {report.total_active}")
-        print(f"Total connections:  {report.total_connections}")
+        _safe_print(f"Total active items: {report.total_active}")
+        _safe_print(f"Total connections:  {report.total_connections}")
 
         # Pending items
-        print(f"\n--- Pending Items ({report.pending_count}) ---")
+        _safe_print(f"\n--- Pending Items ({report.pending_count}) ---")
         if report.pending_items:
             for item in report.pending_items:
                 title = item.title[:50] if item.title else "Untitled"
-                print(f"  - {title} (created {item.created_at})")
+                _safe_print(f"  - {title} (created {item.created_at})")
         else:
-            print("  None")
+            _safe_print("  None")
 
         # Orphaned items
-        print(f"\n--- Orphaned Items ({report.orphaned_count}) ---")
+        _safe_print(f"\n--- Orphaned Items ({report.orphaned_count}) ---")
         if report.orphaned_items:
             for item in report.orphaned_items:
                 title = item.title[:50] if item.title else "Untitled"
-                print(f"  - {title}")
+                _safe_print(f"  - {title}")
         else:
-            print("  None")
+            _safe_print("  None")
 
         # Decay distribution
         total = report.decay_below_02 + report.decay_02_to_05 + report.decay_above_05
-        print("\n--- Decay Distribution ---")
+        _safe_print("\n--- Decay Distribution ---")
         if total > 0:
             pct = lambda n: f"{n / total * 100:.0f}%"
-            print(f"  Healthy (>0.5):          {report.decay_above_05:>4} ({pct(report.decay_above_05)})")
-            print(f"  Fading (0.2-0.5):        {report.decay_02_to_05:>4} ({pct(report.decay_02_to_05)})")
-            print(f"  Below threshold (<0.2):  {report.decay_below_02:>4} ({pct(report.decay_below_02)})")
+            _safe_print(f"  Healthy (>0.5):          {report.decay_above_05:>4} ({pct(report.decay_above_05)})")
+            _safe_print(f"  Fading (0.2-0.5):        {report.decay_02_to_05:>4} ({pct(report.decay_02_to_05)})")
+            _safe_print(f"  Below threshold (<0.2):  {report.decay_below_02:>4} ({pct(report.decay_below_02)})")
         else:
-            print("  No active items")
+            _safe_print("  No active items")
 
         # Embedding stats
         stats = report.embedding_stats
-        print("\n--- Embedding Pipeline (current session) ---")
-        print(f"  Edge function: {stats.get('edge_ok', 0)} ok / {stats.get('edge_fail', 0)} fail")
-        print(f"  HuggingFace:   {stats.get('hf_single_ok', 0)} ok / {stats.get('hf_single_fail', 0)} fail")
-        print(f"  Retries: {stats.get('retries', 0)} | Cache hits: {stats.get('cache_hits', 0)}")
+        _safe_print("\n--- Embedding Pipeline (current session) ---")
+        _safe_print(f"  Edge function: {stats.get('edge_ok', 0)} ok / {stats.get('edge_fail', 0)} fail")
+        _safe_print(f"  HuggingFace:   {stats.get('hf_single_ok', 0)} ok / {stats.get('hf_single_fail', 0)} fail")
+        _safe_print(f"  Retries: {stats.get('retries', 0)} | Cache hits: {stats.get('cache_hits', 0)}")
 
         # Connection coverage
         connected = report.total_active - report.items_with_zero_connections
-        print("\n--- Connection Coverage ---")
-        print(f"  Connected: {connected}/{report.total_active}")
+        _safe_print("\n--- Connection Coverage ---")
+        _safe_print(f"  Connected: {connected}/{report.total_active}")
         if report.connection_type_breakdown:
             for ctype, count in sorted(report.connection_type_breakdown.items()):
-                print(f"    {ctype}: {count}")
+                _safe_print(f"    {ctype}: {count}")
 
         # Recent capture rate
-        print("\n--- Recent Capture (7 days) ---")
-        print(f"  Created: {report.items_created_7d}")
-        print(f"  Still pending: {report.items_pending_7d}")
+        _safe_print("\n--- Recent Capture (7 days) ---")
+        _safe_print(f"  Created: {report.items_created_7d}")
+        _safe_print(f"  Still pending: {report.items_pending_7d}")
 
         # Warnings summary
         warnings = _get_warnings(report)
         if warnings:
-            print("\n--- WARNINGS ---")
+            _safe_print("\n--- WARNINGS ---")
             for w in warnings:
                 # Strip Discord emoji syntax for CLI
                 clean = w.replace(":warning:", "!").replace(":chart_with_downwards_trend:", "!")
-                print(f"  {clean}")
+                _safe_print(f"  {clean}")
         else:
-            print("\nAll healthy.")
+            _safe_print("\nAll healthy.")
 
     except Exception as e:
         logger.error(f"Health report error: {e}")
-        print(f"Error: {e}")
+        _safe_print(f"Error: {e}")
 
 
 def main():
