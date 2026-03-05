@@ -172,6 +172,11 @@ async def on_ready():
     register_school_sync(scheduler, bot=bot)
     logger.info("School sync jobs registered (daily 7:00 AM + weekly Saturday 6:00 AM UK)")
 
+    # Energy — daily consumption sync at 10am, weekly digest Sunday 9am, monthly billing 1st 10:30am
+    from jobs.energy_sync import register_energy_sync
+    register_energy_sync(scheduler, bot=bot)
+    logger.info("Energy sync jobs registered (daily 10:00 AM + weekly Sunday 9:00 AM + monthly 1st 10:30 AM UK)")
+
     # Reprocess pending passive captures — every 6 hours
     async def reprocess_pending():
         """Upgrade passive captures to full items with embeddings."""
