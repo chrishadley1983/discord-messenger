@@ -984,7 +984,7 @@ async def get_cricket_scores_data() -> dict[str, Any]:
             }
 
             series = (m.get("series_id", "") + " " + m.get("name", "")).lower()
-            if m.get("matchType") in ("t20i", "odi", "test") or "international" in series:
+            if m.get("matchType") in ("t20i", "t20", "odi", "test") or "international" in series or "icc" in series or "world cup" in series:
                 competitions["International"].append(entry)
             elif "ipl" in series or "indian premier" in series:
                 competitions["IPL"].append(entry)
@@ -1081,7 +1081,7 @@ async def get_saturday_sport_preview_data() -> dict[str, Any]:
                         teams_lower = " ".join(teams).lower()
                         is_england = "england" in teams_lower
                         is_kent = "kent" in teams_lower
-                        if is_england or is_kent or m.get("matchType") in ("t20i", "odi", "test"):
+                        if is_england or is_kent:
                             upcoming.append({
                                 "name": m.get("name", ""),
                                 "date": match_date,
