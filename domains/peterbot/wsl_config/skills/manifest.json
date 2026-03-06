@@ -21,6 +21,29 @@
     "description": "Check API credit balances and alert if low",
     "channel": null
   },
+  "ballot-reminders": {
+    "triggers": [
+      "ballot",
+      "ticket ballot",
+      "any ballots open"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Proactive alerts when ticket ballots open for England Cricket, England Football, Oval Invincibles",
+    "channel": "#peterbot+WhatsApp:chris"
+  },
+  "cricket-scores": {
+    "triggers": [
+      "cricket scores",
+      "cricket results",
+      "how did England do",
+      "county cricket"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily morning cricket score roundup from yesterday",
+    "channel": "#peterbot"
+  },
   "daily-instagram-prep": {
     "triggers": [],
     "conversational": false,
@@ -409,34 +432,6 @@
     "description": "Monitor Healthera prescription emails, ask Chris which meds to order, confirm via browser, and WhatsApp when ready to collect",
     "channel": null
   },
-  "kids-daily": {
-    "triggers": [
-      "kids today",
-      "what are the kids doing",
-      "kids schedule",
-      "kids tomorrow",
-      "what do the kids need",
-      "kids activities"
-    ],
-    "conversational": true,
-    "scheduled": true,
-    "description": "Daily kids briefing — today's and tomorrow's activities, kit needed, school notices",
-    "channel": "#peterbot"
-  },
-  "kids-weekly": {
-    "triggers": [
-      "kids next week",
-      "kids this week",
-      "kids last week",
-      "what are the kids doing next week",
-      "weekly kids",
-      "kids week"
-    ],
-    "conversational": true,
-    "scheduled": true,
-    "description": "Weekly kids summary — next week's plan (Sunday) or last week's review (on demand)",
-    "channel": "#peterbot"
-  },
   "heartbeat": {
     "triggers": [],
     "conversational": false,
@@ -476,6 +471,34 @@
     "scheduled": true,
     "description": "Process images and write captions for approved Instagram concepts",
     "channel": null
+  },
+  "kids-daily": {
+    "triggers": [
+      "kids today",
+      "what are the kids doing",
+      "kids schedule",
+      "kids tomorrow",
+      "what do the kids need",
+      "kids activities"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily kids briefing \u2014 today's and tomorrow's activities, kit needed, school notices, spellings",
+    "channel": "#peterbot"
+  },
+  "kids-weekly": {
+    "triggers": [
+      "kids next week",
+      "kids this week",
+      "kids last week",
+      "what are the kids doing next week",
+      "weekly kids",
+      "kids week"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Weekly kids summary \u2014 next week's plan (Sunday) or last week's review (on demand)",
+    "channel": "#peterbot"
   },
   "knowledge-digest": {
     "triggers": [
@@ -577,6 +600,31 @@
     "description": "Nightly parser improvement cycle",
     "channel": "#peterbot"
   },
+  "pl-results": {
+    "triggers": [
+      "PL results",
+      "premier league results",
+      "football results yesterday"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Morning Premier League results summary from yesterday",
+    "channel": "#peterbot"
+  },
+  "property-valuation": {
+    "triggers": [
+      "how much is the house worth",
+      "property value",
+      "house value",
+      "home valuation",
+      "what's our house worth",
+      "house price"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Monthly home valuation estimate using HM Land Registry House Price Index",
+    "channel": "#peterbot"
+  },
   "purchase": {
     "triggers": [],
     "conversational": true,
@@ -599,6 +647,32 @@
     "scheduled": false,
     "description": "Set, list, update, and cancel reminders via Hadley API",
     "channel": "#peterbot"
+  },
+  "security-monitor": {
+    "triggers": [
+      "security check",
+      "any security issues",
+      "security alerts",
+      "check security",
+      "security status"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Proactive security monitoring across Supabase, Google, and Vercel — flags issues and offers to help fix them",
+    "channel": "#alerts"
+  },
+  "saturday-sport-preview": {
+    "triggers": [
+      "sport this week",
+      "what sport is on",
+      "sport preview",
+      "what's on this week sport",
+      "weekend sport"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Weekly sport preview for the coming week",
+    "channel": "#peterbot+WhatsApp:chris"
   },
   "school-pickup": {
     "triggers": [
@@ -654,6 +728,13 @@
     "description": "Generate a printable shopping list PDF with categories and checkboxes",
     "channel": null
   },
+  "spurs-live": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Auto-post live Spurs score updates during matches (every 10 min)",
+    "channel": "#peterbot"
+  },
   "spurs-match": {
     "triggers": [
       "spurs score",
@@ -664,6 +745,17 @@
     "scheduled": true,
     "description": "Live Spurs match score updates during games",
     "channel": null
+  },
+  "subscription-monitor": {
+    "triggers": [
+      "subscription check",
+      "sub monitor",
+      "subscription health"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Weekly subscription health check - detect new subs, price changes, missed payments, upcoming renewals",
+    "channel": "#alerts+WhatsApp:chris"
   },
   "weekly-health": {
     "triggers": [
@@ -681,20 +773,6 @@
     "conversational": false,
     "scheduled": true,
     "description": "Check Evolution API WhatsApp connection health",
-    "channel": null
-  },
-  "property-valuation": {
-    "triggers": [
-      "how much is the house worth",
-      "property value",
-      "house value",
-      "home valuation",
-      "what's our house worth",
-      "house price"
-    ],
-    "conversational": true,
-    "scheduled": true,
-    "description": "Monthly home valuation using HM Land Registry House Price Index",
     "channel": null
   },
   "youtube-digest": {

@@ -47,6 +47,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Cricket Scores | cricket-scores | 08:30 UK | #peterbot+WhatsApp:chris | yes |
 | Ballot Reminders | ballot-reminders | 09:00 UK | #peterbot+WhatsApp:chris | yes |
 | PL Results | pl-results | 05:00 UK | #peterbot+WhatsApp:chris | yes |
+| Security Monitor | security-monitor | 06:00,10:00,14:00,18:00,22:00 UK | #alerts | yes |
 
 ## Interval Jobs
 
