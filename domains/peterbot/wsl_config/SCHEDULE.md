@@ -44,15 +44,15 @@ Run `!reload-schedule` after editing to apply changes.
 | Subscription Monitor | subscription-monitor | Sunday 09:00 UK | #alerts+WhatsApp:chris | yes |
 | Property Valuation | property-valuation | 1st 10:15 UK | #peterbot | yes |
 | Saturday Sport Preview | saturday-sport-preview | Sat 08:00 UK | #peterbot+WhatsApp:chris | yes |
-| Cricket Scores | cricket-scores | 08:30 UK | #peterbot | yes |
+| Cricket Scores | cricket-scores | 08:30 UK | #peterbot+WhatsApp:chris | yes |
 | Ballot Reminders | ballot-reminders | 09:00 UK | #peterbot+WhatsApp:chris | yes |
-| PL Results | pl-results | 05:00 UK | #peterbot | yes |
+| PL Results | pl-results | 05:00 UK | #peterbot+WhatsApp:chris | yes |
 
 ## Interval Jobs
 
 | Job | Skill | Interval | Channel | Enabled |
 |-----|-------|----------|---------|---------|
-| Spurs Live | spurs-live | 10m | #peterbot | yes |
+| Spurs Live | spurs-live | 10m | #peterbot+WhatsApp:chris | yes |
 
 ## Quiet Hours
 
