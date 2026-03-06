@@ -797,21 +797,21 @@ async def get_football_scores_data() -> dict[str, Any]:
 
 
 async def get_pl_results_data() -> dict[str, Any]:
-    """Fetch today's finished Premier League matches for end-of-day roundup.
+    """Fetch yesterday's finished Premier League matches for morning roundup.
 
-    Returns NO_REPLY trigger if no finished matches today.
+    Returns NO_REPLY trigger if no finished matches yesterday.
     """
     import httpx
     from config import FOOTBALL_DATA_API_KEY
 
-    today = datetime.now(UK_TZ).date().isoformat()
+    yesterday = (datetime.now(UK_TZ) - timedelta(days=1)).date().isoformat()
 
     try:
         if not FOOTBALL_DATA_API_KEY:
             return {"error": "Football Data API key not configured", "matches": []}
 
         url = "https://api.football-data.org/v4/competitions/PL/matches"
-        params = {"dateFrom": today, "dateTo": today, "status": "FINISHED"}
+        params = {"dateFrom": yesterday, "dateTo": yesterday, "status": "FINISHED"}
         headers = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
 
         async with httpx.AsyncClient() as client:
@@ -838,7 +838,7 @@ async def get_pl_results_data() -> dict[str, Any]:
         formatted.sort(key=lambda x: x["kickoff"])
 
         logger.info(f"PL results fetch: {len(formatted)} finished matches")
-        return {"matches": formatted, "date": today}
+        return {"matches": formatted, "date": yesterday}
 
     except Exception as e:
         logger.error(f"PL results fetch error: {e}")

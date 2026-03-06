@@ -46,7 +46,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Saturday Sport Preview | saturday-sport-preview | Sat 08:00 UK | #peterbot+WhatsApp:chris | yes |
 | Cricket Scores | cricket-scores | 08:30 UK | #peterbot | yes |
 | Ballot Reminders | ballot-reminders | 09:00 UK | #peterbot+WhatsApp:chris | yes |
-| PL Results | pl-results | Sat,Sun 21:30 UK | #peterbot | yes |
+| PL Results | pl-results | 05:00 UK | #peterbot | yes |
 
 ## Interval Jobs
 

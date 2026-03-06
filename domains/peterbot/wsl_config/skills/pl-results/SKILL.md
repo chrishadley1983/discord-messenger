@@ -1,10 +1,10 @@
 ---
 name: pl-results
-description: End-of-day Premier League results roundup
+description: Morning Premier League results summary from yesterday
 trigger:
   - "PL results"
   - "premier league results"
-  - "football results today"
+  - "football results yesterday"
 scheduled: true
 conversational: true
 channel: "#peterbot"
@@ -14,7 +14,7 @@ channel: "#peterbot"
 
 ## Purpose
 
-End-of-day roundup of all Premier League results. Runs Saturday and Sunday evenings at 21:30.
+Morning roundup of yesterday's Premier League results with a brief summary. Runs daily at 05:00 — NO_REPLY on days with no PL action.
 
 ## Pre-fetched Data
 
@@ -37,7 +37,7 @@ End-of-day roundup of all Premier League results. Runs Saturday and Sunday eveni
 
 ## NO_REPLY Cases
 
-- No finished PL matches today -> respond with just `NO_REPLY`
+- No finished PL matches yesterday -> respond with just `NO_REPLY`
 
 ## Output Format
 
@@ -49,6 +49,8 @@ Arsenal 3-0 Brighton
 Liverpool 1-1 Newcastle
 Wolves 0-2 Spurs
 
+**Summary:** Goals galore on Saturday — Arsenal demolished Brighton, while Spurs picked up a solid away win at Molineux. Liverpool and Newcastle shared the spoils in a tight affair at Anfield.
+
 Spurs win! COYS
 ```
 
@@ -56,15 +58,15 @@ Spurs win! COYS
 
 - List all finished matches, one per line
 - Format: `Home Score-Score Away`
-- If Spurs played, add a brief comment at the end (celebrate wins, commiserate losses)
+- Add a 1-2 sentence **Summary** after the results highlighting the key talking points (big wins, upsets, title race implications, relegation drama)
+- If Spurs played, add a brief Spurs-specific comment at the end (celebrate wins, commiserate losses)
 - Sort by kickoff time (earliest first)
 - Use the full date in the header (e.g. "Saturday 31st January")
-- Keep it concise - just results, no extended commentary
-- If some matches are still live/scheduled, only show finished ones and note how many are still in progress
+- Keep the summary punchy and opinionated — like a mate giving you the highlights
 - UK date format
 
 ## Conversational Use
 
 If asked about PL results in chat without pre-fetched data:
-1. Use web search for "Premier League results today"
+1. Use web search for "Premier League results yesterday"
 2. Format using the same output format above
