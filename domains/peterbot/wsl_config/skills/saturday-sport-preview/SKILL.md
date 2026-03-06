@@ -6,6 +6,7 @@ trigger:
   - "what sport is on"
   - "sport preview"
   - "what's on this week sport"
+  - "weekend sport"
 scheduled: true
 conversational: true
 channel: "#peterbot+WhatsApp:chris"
@@ -15,7 +16,7 @@ channel: "#peterbot+WhatsApp:chris"
 
 ## Purpose
 
-Weekly briefing of sport for the coming week, focused on Chris's teams and TV channels. Runs Saturday at 08:00.
+Weekly briefing of sport for the coming week, focused on Chris's teams, F1, and what's on his TV channels. Runs Saturday at 08:00.
 
 ## Chris's Teams
 - **Spurs** (Tottenham Hotspur) - Premier League
@@ -32,22 +33,34 @@ Weekly briefing of sport for the coming week, focused on Chris's teams and TV ch
 {
   "date": "2026-03-07",
   "week_ending": "2026-03-14",
-  "pl_fixtures": [
-    {"home": "Tottenham", "away": "Man City", "kickoff": "2026-03-08T16:30:00Z", "status": "TIMED"}
-  ],
-  "spurs_fixture": {"home": "Tottenham", "away": "Man City", "kickoff": "2026-03-08T16:30:00Z", "status": "TIMED"},
-  "cricket_fixtures": [
-    {"name": "England vs Australia, 4th Test", "date": "2026-03-10", "match_type": "test", "venue": "Lord's", "teams": ["England", "Australia"], "is_england": true, "is_kent": false}
-  ]
+  "pl_fixtures": [...],
+  "spurs_fixture": {...},
+  "cricket_fixtures": [...],
+  "f1": {
+    "race_name": "Australian Grand Prix",
+    "circuit": "Albert Park Grand Prix Circuit",
+    "location": "Australia",
+    "race_date": "2026-03-08",
+    "race_time": "05:00:00Z",
+    "round": "2",
+    "fp1_date": "2026-03-06",
+    "fp1_time": "02:30:00Z",
+    "qualifying_date": "2026-03-07",
+    "qualifying_time": "06:00:00Z",
+    "sprint_date": "2026-03-07",
+    "sprint_time": "02:30:00Z"
+  }
 }
 ```
 
+`f1` will be `null` if no race this week.
+
 ## Web Search Required
 
-The pre-fetched data covers PL football and cricket fixtures from APIs. You MUST also web search for:
+The pre-fetched data covers PL football, cricket fixtures, and F1 from APIs. You MUST also web search for:
 
 1. **Dover Athletic fixtures** - search "Dover Athletic fixtures this week" (too low-tier for any API)
-2. **TV schedule** - search "football on TV this week UK" and "cricket on TV this week UK"
+2. **TV sport highlights this week** - search "sport on TV this week UK Sky Sports BBC ITV Amazon Prime" to find all major live sport across Chris's channels. This is the most important search — cover ALL sport, not just football.
 3. **England football** - if international break, search "England football fixtures"
 4. **Cup matches** - if Spurs are in a cup competition, search "Tottenham next match" (PL-only API won't cover cups)
 
@@ -59,6 +72,11 @@ The pre-fetched data covers PL football and cricket fixtures from APIs. You MUST
 **Spurs**
 Sun 8th: Spurs vs Man City (16:30, Sky Sports Main Event)
 
+**F1 - Australian Grand Prix** (Albert Park, Round 2)
+Fri 6th: Practice 1 (12:30 GMT)
+Sat 7th: Qualifying (06:00 GMT)
+Sun 8th: Race (05:00 GMT, Sky Sports F1)
+
 **England Cricket**
 Tue 10th-Fri 13th: England vs Australia, 4th Test (Lord's, Sky Sports Cricket)
 
@@ -69,24 +87,27 @@ No fixtures this week
 Sat 14th: Dover vs Tonbridge Angels (15:00, Crabble)
 
 **Other PL Highlights**
-Sat 7th: Arsenal vs Liverpool (12:30, BT Sport)
+Sat 7th: Arsenal vs Liverpool (12:30, Sky Sports)
 Sun 8th: Chelsea vs Man Utd (14:00, Sky Sports)
 
-**On TV**
-- Sky Sports: Spurs vs Man City (Sun), Arsenal vs Liverpool (Sat)
-- Amazon Prime: No PL this week
-- BBC/ITV: No live football
+**On TV This Week**
+- **Sky Sports:** Spurs vs Man City (Sun), F1 Australian GP (Fri-Sun), England vs Australia Test (Tue-Fri), Arsenal vs Liverpool (Sat)
+- **Amazon Prime:** No PL this week
+- **BBC:** Six Nations rugby - England vs France (Sat 16:45)
+- **ITV:** No live football
 ```
 
 ## Rules
 
 - Lead with Spurs - always the most important fixture
+- F1 next - include full weekend schedule (practice, qualifying, sprint if applicable, race) with UK times
 - England cricket/football next
 - Kent cricket
 - Dover Athletic
-- Then other notable PL fixtures and TV schedule
-- Convert all times to UK timezone
-- Include TV channel and kickoff time where known
+- Then other notable PL fixtures
+- **On TV This Week** section at the end is critical — list ALL notable live sport across Sky Sports, Amazon Prime, BBC, and ITV. Not just football — include rugby, cricket, F1, golf, tennis, boxing, darts, whatever is on. This is the section Chris cares about most for planning his week.
+- Convert all times to UK timezone (GMT or BST as appropriate)
+- Include TV channel and kickoff/start time where known
 - If no fixtures for a team, say "No fixtures this week"
 - Keep each section brief - this is a preview, not a deep dive
 - UK date format throughout

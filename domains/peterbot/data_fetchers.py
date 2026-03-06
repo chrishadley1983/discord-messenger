@@ -1102,6 +1102,48 @@ async def get_saturday_sport_preview_data() -> dict[str, Any]:
         result["cricket_fixtures"] = []
         result["cricket_error"] = str(e)
 
+    # F1: next race weekend from Jolpica API (free, no key)
+    try:
+        url = "https://api.jolpi.ca/ergast/f1/current/next.json"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+        races = data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+        if races:
+            race = races[0]
+            race_date = race.get("date", "")
+            # Include if race is within the next 7 days
+            if race_date and today <= race_date <= next_week:
+                f1_data = {
+                    "race_name": race.get("raceName", ""),
+                    "circuit": race.get("Circuit", {}).get("circuitName", ""),
+                    "location": race.get("Circuit", {}).get("Location", {}).get("country", ""),
+                    "race_date": race_date,
+                    "race_time": race.get("time", ""),
+                    "round": race.get("round", ""),
+                }
+                # Add sprint/qualifying times if available
+                if race.get("Sprint"):
+                    f1_data["sprint_date"] = race["Sprint"].get("date", "")
+                    f1_data["sprint_time"] = race["Sprint"].get("time", "")
+                if race.get("Qualifying"):
+                    f1_data["qualifying_date"] = race["Qualifying"].get("date", "")
+                    f1_data["qualifying_time"] = race["Qualifying"].get("time", "")
+                if race.get("FirstPractice"):
+                    f1_data["fp1_date"] = race["FirstPractice"].get("date", "")
+                    f1_data["fp1_time"] = race["FirstPractice"].get("time", "")
+                result["f1"] = f1_data
+            else:
+                result["f1"] = None
+        else:
+            result["f1"] = None
+    except Exception as e:
+        logger.error(f"Saturday preview F1 error: {e}")
+        result["f1"] = None
+        result["f1_error"] = str(e)
+
     return result
 
 
