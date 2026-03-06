@@ -1077,7 +1077,7 @@ async def get_saturday_sport_preview_data() -> dict[str, Any]:
         result["pl_fixtures"] = []
         result["pl_error"] = str(e)
 
-    # Cricket: upcoming matches (England + Kent focus)
+    # Cricket: upcoming matches (international + major tournaments + England/Kent)
     try:
         if CRICKET_API_KEY:
             url = "https://api.cricapi.com/v1/matches"
@@ -1092,21 +1092,50 @@ async def get_saturday_sport_preview_data() -> dict[str, Any]:
                 upcoming = []
                 for m in data.get("data", []):
                     match_date = m.get("date", "")
-                    if match_date and today <= match_date <= next_week:
-                        teams = m.get("teams", [])
-                        teams_lower = " ".join(teams).lower()
-                        is_england = "england" in teams_lower
-                        is_kent = "kent" in teams_lower
-                        if is_england or is_kent:
-                            upcoming.append({
-                                "name": m.get("name", ""),
-                                "date": match_date,
-                                "match_type": m.get("matchType", ""),
-                                "venue": m.get("venue", ""),
-                                "teams": teams,
-                                "is_england": is_england,
-                                "is_kent": is_kent,
-                            })
+                    if not match_date or not (today <= match_date <= next_week):
+                        continue
+
+                    teams = m.get("teams", [])
+                    teams_lower = " ".join(teams).lower()
+                    name_lower = (m.get("name", "") + " " + m.get("series_id", "")).lower()
+                    is_england = "england" in teams_lower
+                    is_kent = "kent" in teams_lower
+                    match_type = m.get("matchType", "")
+
+                    # Include: ICC events, IPL, true internationals, England, Kent
+                    # Exclude: domestic leagues from other countries (SA provincial, etc.)
+                    is_icc = any(k in name_lower for k in ("icc", "world cup", "champions trophy", "world test"))
+                    is_ipl = any(k in name_lower for k in ("ipl", "indian premier"))
+                    is_domestic_noise = any(k in name_lower for k in (
+                        "csa provincial", "csa division", "sheffield shield", "big bash",
+                        "super smash", "ranji", "plunket", "ford trophy",
+                        "marsh cup", "vijay hazare", "syed mushtaq",
+                    ))
+                    # Also filter SA franchise teams that leak through as "odi"
+                    sa_teams = ("warriors", "knights", "dolphins", "titans", "lions",
+                                "kwazulu", "north west", "border", "limpopo",
+                                "eastern storm", "mpumalanga", "northern cape",
+                                "south western districts", "boland")
+                    if not is_icc and not is_england and not is_kent:
+                        if any(t in teams_lower for t in sa_teams):
+                            is_domestic_noise = True
+                    is_true_international = (
+                        match_type in ("t20i", "t20", "odi", "test")
+                        and not is_domestic_noise
+                    )
+
+                    if is_england or is_kent or is_icc or is_ipl or is_true_international:
+                        upcoming.append({
+                            "name": m.get("name", ""),
+                            "date": match_date,
+                            "match_type": match_type,
+                            "venue": m.get("venue", ""),
+                            "teams": teams,
+                            "is_england": is_england,
+                            "is_kent": is_kent,
+                            "is_icc": is_icc,
+                            "is_ipl": is_ipl,
+                        })
                 result["cricket_fixtures"] = upcoming
             else:
                 result["cricket_fixtures"] = []

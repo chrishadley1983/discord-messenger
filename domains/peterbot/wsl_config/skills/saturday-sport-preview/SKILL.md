@@ -77,11 +77,12 @@ Fri 6th: Practice 1 (12:30 GMT)
 Sat 7th: Qualifying (06:00 GMT)
 Sun 8th: Race (05:00 GMT, Sky Sports F1)
 
-**England Cricket**
-Tue 10th-Fri 13th: England vs Australia, 4th Test (Lord's, Sky Sports Cricket)
-
-**Kent Cricket**
-No fixtures this week
+**Cricket**
+*ICC T20 World Cup Final* - Sun 8th: Australia vs South Africa (14:00, Sky Sports Cricket)
+*England:* Tue 10th-Fri 13th: England vs Australia, 4th Test (Lord's, Sky Sports Cricket)
+*England Lions:* Sun 9th: Pakistan A vs England Lions, 5th Unofficial ODI (Abu Dhabi)
+*Kent:* No fixtures this week
+*IPL:* Mumbai Indians vs Chennai Super Kings (Sat 15:00, Sky Sports Cricket)
 
 **Dover Athletic**
 Sat 14th: Dover vs Tonbridge Angels (15:00, Crabble)
@@ -91,18 +92,23 @@ Sat 7th: Arsenal vs Liverpool (12:30, Sky Sports)
 Sun 8th: Chelsea vs Man Utd (14:00, Sky Sports)
 
 **On TV This Week**
-- **Sky Sports:** Spurs vs Man City (Sun), F1 Australian GP (Fri-Sun), England vs Australia Test (Tue-Fri), Arsenal vs Liverpool (Sat)
-- **Amazon Prime:** No PL this week
+- **Sky Sports:** Spurs vs Man City (Sun), F1 Australian GP (Fri-Sun), T20 World Cup Final (Sun), England vs Australia Test (Tue-Fri), Arsenal vs Liverpool (Sat), Indian Wells tennis
+- **Amazon Prime:** Newcastle vs Barcelona CL Wed 18:30
 - **BBC:** Six Nations rugby - England vs France (Sat 16:45)
-- **ITV:** No live football
+- **ITV:** Cheltenham Festival (Tue-Fri)
 ```
 
 ## Rules
 
 - Lead with Spurs - always the most important fixture
 - F1 next - include full weekend schedule (practice, qualifying, sprint if applicable, race) with UK times
-- England cricket/football next
-- Kent cricket
+- **Cricket section** — cover ALL cricket from the pre-fetched data, organised by priority:
+  1. ICC events first (World Cups, Champions Trophy) — these are unmissable
+  2. England / England Lions
+  3. Kent
+  4. IPL (if in season)
+  5. Other notable international matches (Tests, ODIs between major nations)
+  - Skip low-profile domestic matches from other countries (SA provincial, etc.)
 - Dover Athletic
 - Then other notable PL fixtures
 - **On TV This Week** section at the end is critical — list ALL notable live sport across Sky Sports, Amazon Prime, BBC, and ITV. Not just football — include rugby, cricket, F1, golf, tennis, boxing, darts, whatever is on. This is the section Chris cares about most for planning his week.
