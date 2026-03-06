@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from config import GROK_API_KEY, ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_KEY
+from config import GROK_API_KEY, SUPABASE_URL, SUPABASE_KEY, call_claude_via_cli
 from logger import logger
 
 # Channel ID for #ai-briefings
@@ -26,7 +26,6 @@ AI_BRIEFINGS_CHANNEL_ID = 1465277483866788037
 
 # Models
 GROK_MODEL = "grok-4-1-fast"
-SONNET_MODEL = "claude-sonnet-4-20250514"
 
 # Category configuration
 YOUTUBE_CATEGORIES = {
@@ -268,9 +267,6 @@ async def mark_video_shown(video: dict, category: str, summary: str) -> None:
 
 async def _generate_summary(video: dict) -> str:
     """Generate a paragraph summary using Claude based on video title and context."""
-    if not ANTHROPIC_API_KEY:
-        return video.get("context", "")[:150] + "..."
-
     prompt = f"""Based on this YouTube video's title and context, write a concise 2-3 sentence summary
 explaining what the video covers and why someone might want to watch it.
 
@@ -280,30 +276,10 @@ Context: {video.get('context', 'No additional context available')}
 Write only the summary paragraph, no preamble or labels."""
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
-                },
-                json={
-                    "model": SONNET_MODEL,
-                    "max_tokens": 200,
-                    "messages": [{"role": "user", "content": prompt}]
-                },
-                timeout=30
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                summary = data["content"][0]["text"]
-                return summary.strip()
-            else:
-                logger.error(f"Claude summary error {response.status_code}: {response.text[:100]}")
-                return video.get("context", "")[:150] + "..."
-
+        result = await call_claude_via_cli(prompt, max_tokens=200, timeout=30)
+        if result:
+            return result.strip()
+        return video.get("context", "")[:150] + "..."
     except Exception as e:
         logger.error(f"Claude summary exception: {e}")
         return video.get("context", "")[:150] + "..."

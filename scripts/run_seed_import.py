@@ -35,6 +35,7 @@ async def run_import(dry_run: bool = False, adapter_name: str = None, limit: int
         GarminActivitiesAdapter,
         CalendarEventsAdapter,
         EmailImportAdapter,
+        RecipeAdapter,
     )
 
     print("\n" + "=" * 60)
@@ -120,19 +121,47 @@ async def run_import(dry_run: bool = False, adapter_name: str = None, limit: int
     print("\nImport complete!")
 
 
+async def run_backfill_emails(dry_run: bool = False):
+    """Backfill full email bodies for existing items that only have snippets."""
+    from domains.second_brain.seed.adapters import EmailImportAdapter
+
+    print("\n" + "=" * 60)
+    print("Email Body Backfill")
+    print("=" * 60)
+
+    if dry_run:
+        print("[DRY RUN] No data will be updated\n")
+    else:
+        print("[LIVE] Items will be updated in Supabase\n")
+
+    adapter = EmailImportAdapter()
+    stats = await adapter.backfill_bodies(dry_run=dry_run)
+
+    print(f"\n[RESULTS]:")
+    print(f"   Found:   {stats['found']}")
+    print(f"   Updated: {stats['updated']}")
+    print(f"   Skipped: {stats['skipped']}")
+    print(f"   Failed:  {stats['failed']}")
+    print("\nBackfill complete!")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run Second Brain seed import")
     parser.add_argument("--dry-run", action="store_true", help="Don't save, just test")
     parser.add_argument("--adapter", "-a", type=str, help="Run specific adapter only")
     parser.add_argument("--limit", "-l", type=int, default=100, help="Max items per adapter")
+    parser.add_argument("--backfill-emails", action="store_true", help="Backfill full bodies for existing email items")
 
     args = parser.parse_args()
 
-    asyncio.run(run_import(
-        dry_run=args.dry_run,
-        adapter_name=args.adapter,
-        limit=args.limit,
-    ))
+    if args.backfill_emails:
+        asyncio.run(run_backfill_emails(dry_run=args.dry_run))
+    else:
+        asyncio.run(run_import(
+            dry_run=args.dry_run,
+            adapter_name=args.adapter,
+            limit=args.limit,
+        ))
 
 
 if __name__ == "__main__":

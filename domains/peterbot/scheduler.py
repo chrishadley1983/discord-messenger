@@ -97,6 +97,7 @@ class JobConfig:
     enabled: bool
     job_type: str  # "cron" or "interval"
     whatsapp: bool = False  # Also send to WhatsApp
+    whatsapp_target: str = ""  # "group", "chris", "abby", or "" (= chris+abby)
     exempt_quiet_hours: bool = False  # Run even during quiet hours (23:00-06:00)
 
 
@@ -325,12 +326,19 @@ class PeterbotScheduler:
         enabled = cols[4].lower() in ("yes", "true", "1")
 
         # Check for WhatsApp flag (optional 6th column or in channel name)
+        # Format: +WhatsApp (both), +WhatsApp:group (group), +WhatsApp:chris (chris only)
         whatsapp = False
+        whatsapp_target = ""
         if len(cols) > 5:
             whatsapp = cols[5].lower() in ("yes", "true", "1", "whatsapp")
-        elif "+whatsapp" in channel.lower():
-            whatsapp = True
-            channel = channel.replace("+whatsapp", "").replace("+WhatsApp", "").strip()
+        else:
+            import re as _re
+            wa_match = _re.search(r'\+[Ww]hats[Aa]pp(?::(\w+))?', channel)
+            if wa_match:
+                whatsapp = True
+                whatsapp_target = (wa_match.group(1) or "").lower()
+                channel = channel[:wa_match.start()] + channel[wa_match.end():]
+                channel = channel.strip()
 
         # Check for quiet hours exemption (!quiet suffix)
         exempt_quiet_hours = False
@@ -346,6 +354,7 @@ class PeterbotScheduler:
             enabled=enabled,
             job_type=job_type,
             whatsapp=whatsapp,
+            whatsapp_target=whatsapp_target,
             exempt_quiet_hours=exempt_quiet_hours
         )
 
@@ -952,7 +961,7 @@ class PeterbotScheduler:
 
         # WhatsApp (if configured)
         if job.whatsapp:
-            await self._send_whatsapp(message)
+            await self._send_whatsapp(message, job.whatsapp_target)
 
     async def _post_dual_channel(self, job: JobConfig, message: str, files: list = None):
         """Handle dual-channel output with markers.
@@ -1099,6 +1108,7 @@ class PeterbotScheduler:
                 capture_type=CaptureType.EXPLICIT,
                 user_note=user_note,
                 user_tags=user_tags,
+                source_system="peterbot:scheduler",
             )
 
             if item:
@@ -1108,56 +1118,49 @@ class PeterbotScheduler:
         except Exception as e:
             logger.warning(f"Failed to save {job.skill} to Second Brain: {e}")
 
-    async def _send_whatsapp(self, message: str):
-        """Send message via Twilio WhatsApp."""
-        import asyncio
+    async def _send_whatsapp(self, message: str, target: str = ""):
+        """Send message via Evolution API WhatsApp.
 
+        Args:
+            message: Message text
+            target: Routing target — "group" (extended team), "chris", "abby",
+                    or "" (default: chris + abby individually)
+        """
         try:
-            from config import (
-                TWILIO_ACCOUNT_SID,
-                TWILIO_AUTH_TOKEN,
-                TWILIO_WHATSAPP_FROM
+            from integrations.whatsapp import (
+                send_to_recipients, send_to_chris, send_to_abby, send_to_group,
+                CONTACTS,
             )
 
-            if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM]):
-                logger.debug("Twilio not configured, skipping WhatsApp")
-                return
-
-            # Convert Discord bold (**text**) to WhatsApp bold (*text*)
-            whatsapp_message = message.replace("**", "*")
-
-            from twilio.rest import Client as TwilioClient
-
-            # Recipients for school run messages
-            recipients = ["+447856182831", "+447855620978"]
-
-            def send_to_recipients():
-                """Sync function to send WhatsApp messages."""
-                client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-                results = []
-                for recipient in recipients:
-                    try:
-                        client.messages.create(
-                            body=whatsapp_message,
-                            from_=f"whatsapp:{TWILIO_WHATSAPP_FROM}",
-                            to=f"whatsapp:{recipient}"
-                        )
-                        results.append((recipient, True, None))
-                    except Exception as e:
-                        results.append((recipient, False, str(e)))
-                return results
-
-            # Run sync Twilio client in thread to avoid blocking event loop
-            results = await asyncio.to_thread(send_to_recipients)
-
-            for recipient, success, error in results:
-                if success:
-                    logger.info(f"Sent WhatsApp to {recipient}")
+            if target == "group":
+                result = await send_to_group("extended-team", message)
+                if "error" not in result:
+                    logger.info("Sent WhatsApp to group: extended-team")
                 else:
-                    logger.error(f"WhatsApp send failed to {recipient}: {error}")
+                    logger.error(f"WhatsApp group send failed: {result}")
+            elif target == "chris":
+                result = await send_to_chris(message)
+                if "error" not in result:
+                    logger.info("Sent WhatsApp to Chris")
+                else:
+                    logger.error(f"WhatsApp send to Chris failed: {result}")
+            elif target == "abby":
+                result = await send_to_abby(message)
+                if "error" not in result:
+                    logger.info("Sent WhatsApp to Abby")
+                else:
+                    logger.error(f"WhatsApp send to Abby failed: {result}")
+            else:
+                # Default: send to both individually
+                results = await send_to_recipients(message)
+                for r in results:
+                    if r["success"]:
+                        logger.info(f"Sent WhatsApp to {r['number']}")
+                    else:
+                        logger.error(f"WhatsApp send failed to {r['number']}: {r['result']}")
 
         except ImportError:
-            logger.debug("Twilio not installed")
+            logger.debug("Evolution API client not available")
         except Exception as e:
             logger.error(f"WhatsApp error: {e}")
 

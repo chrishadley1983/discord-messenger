@@ -702,9 +702,12 @@ async def get_total_connection_count() -> int:
 async def get_items_since(since: datetime, limit: int = 500) -> list[KnowledgeItem]:
     """Get items created since a given datetime."""
     try:
+        from urllib.parse import quote
         client = _get_http_client()
+        # URL-encode the ISO timestamp — the '+' in '+00:00' breaks Supabase REST
+        since_str = quote(since.isoformat(), safe="")
         response = await client.get(
-            f"{_get_rest_url()}/knowledge_items?created_at=gte.{since.isoformat()}"
+            f"{_get_rest_url()}/knowledge_items?created_at=gte.{since_str}"
             f"&status=eq.active&order=created_at.desc&limit={limit}",
             headers=_get_headers(),
         )
@@ -784,7 +787,11 @@ async def list_items(
 
 
 async def get_topics_with_counts() -> list[tuple[str, int]]:
-    """Get all topics with their counts."""
+    """Get all topics with their counts.
+
+    Tries the RPC function first, falls back to client-side aggregation
+    if the function doesn't exist.
+    """
     try:
         client = _get_http_client()
         response = await client.post(
@@ -794,10 +801,39 @@ async def get_topics_with_counts() -> list[tuple[str, int]]:
         )
         response.raise_for_status()
         data = response.json()
-
-        return [(row["topic"], row["count"]) for row in data]
+        if data:
+            return [(row["topic"], row["count"]) for row in data]
     except Exception as e:
-        logger.error(f"Failed to get topic counts: {e}")
+        logger.warning(f"RPC get_topic_counts failed ({e}), falling back to client-side aggregation")
+
+    # Fallback: fetch topics column and aggregate client-side
+    try:
+        client = _get_http_client()
+        all_topics: list[list[str]] = []
+        offset = 0
+        page_size = 1000
+        while True:
+            response = await client.get(
+                f"{_get_rest_url()}/knowledge_items?status=eq.active"
+                f"&select=topics&order=created_at.desc&limit={page_size}&offset={offset}",
+                headers=_get_headers(),
+            )
+            response.raise_for_status()
+            rows = response.json()
+            if not rows:
+                break
+            all_topics.extend(row.get("topics") or [] for row in rows)
+            offset += page_size
+            if len(rows) < page_size:
+                break
+
+        from collections import Counter
+        counter: Counter[str] = Counter()
+        for topics_list in all_topics:
+            counter.update(topics_list)
+        return counter.most_common(100)
+    except Exception as e:
+        logger.error(f"Failed to get topic counts (fallback): {e}")
         return []
 
 

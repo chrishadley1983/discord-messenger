@@ -10,8 +10,13 @@ from dateutil.parser import parse as parse_datetime
 from logger import logger
 from .store import save_reminder, delete_reminder, get_pending_reminders
 
-# Track which reminder IDs are already scheduled in APScheduler
-_scheduled_ids: set[str] = set()
+
+def _get_scheduled_reminder_ids(scheduler: AsyncIOScheduler) -> set[str]:
+    """Get IDs of all reminder jobs currently in APScheduler."""
+    return {
+        job.id for job in scheduler.get_jobs()
+        if job.id.startswith("remind_")
+    }
 
 
 async def add_reminder(
@@ -45,17 +50,17 @@ async def add_reminder(
     if not saved:
         raise Exception("Failed to save reminder to database")
 
-    # Add to APScheduler
+    # Add to APScheduler (max_instances=1 prevents concurrent execution)
     job = scheduler.add_job(
         executor_func,
         trigger=DateTrigger(run_date=run_at),
         args=[task, user_id, channel_id, reminder_id],
         id=reminder_id,
         name=f"reminder:{task[:30]}",
-        replace_existing=True
+        replace_existing=True,
+        max_instances=1
     )
 
-    _scheduled_ids.add(reminder_id)
     logger.info(f"Added reminder {reminder_id}: '{task}' at {run_at}")
     return job.id
 
@@ -100,7 +105,14 @@ async def reload_pending_reminders(
     loaded = 0
     skipped = 0
 
+    # Check what's already in APScheduler (from a previous load or hot reload)
+    already_scheduled = _get_scheduled_reminder_ids(scheduler)
+
     for r in pending:
+        # Skip if already in APScheduler
+        if r["id"] in already_scheduled:
+            continue
+
         run_at = parse_datetime(r["run_at"])
 
         # Ensure timezone aware
@@ -120,9 +132,9 @@ async def reload_pending_reminders(
                 args=[r["task"], r["user_id"], r["channel_id"], r["id"]],
                 id=r["id"],
                 name=f"reminder:{r['task'][:30]}",
-                replace_existing=True
+                replace_existing=True,
+                max_instances=1
             )
-            _scheduled_ids.add(r["id"])
             loaded += 1
         except Exception as e:
             logger.error(f"Failed to reload reminder {r['id']}: {e}")
@@ -151,9 +163,12 @@ async def poll_for_new_reminders(
     now = datetime.now(timezone.utc)
     added = 0
 
+    # Check APScheduler directly (not an in-memory set that can drift)
+    already_scheduled = _get_scheduled_reminder_ids(scheduler)
+
     for r in pending:
-        # Skip if already scheduled
-        if r["id"] in _scheduled_ids:
+        # Skip if already in APScheduler
+        if r["id"] in already_scheduled:
             continue
 
         run_at = parse_datetime(r["run_at"])
@@ -173,9 +188,9 @@ async def poll_for_new_reminders(
                 args=[r["task"], r["user_id"], r["channel_id"], r["id"]],
                 id=r["id"],
                 name=f"reminder:{r['task'][:30]}",
-                replace_existing=True
+                replace_existing=True,
+                max_instances=1
             )
-            _scheduled_ids.add(r["id"])
             added += 1
             logger.info(f"Picked up new reminder from Supabase: {r['id']} - {r['task'][:30]}")
         except Exception as e:

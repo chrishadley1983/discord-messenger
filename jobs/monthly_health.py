@@ -21,7 +21,7 @@ import httpx
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-from config import SUPABASE_URL, SUPABASE_KEY, ANTHROPIC_API_KEY
+from config import SUPABASE_URL, SUPABASE_KEY, call_claude_via_cli
 from logger import logger
 
 # Discord channel for monthly health summary
@@ -297,9 +297,6 @@ async def _get_previous_month() -> dict:
 async def _generate_monthly_summary(weight: dict, nutrition: dict, steps: dict, goals: dict, prev: dict) -> str:
     """Generate AI monthly summary using Claude Haiku."""
     try:
-        if not ANTHROPIC_API_KEY:
-            return "Another month down. Keep pushing! 💪"
-
         prompt = f"""Generate a brief (3-4 sentences) monthly health summary for Chris.
 
 This month's data:
@@ -315,31 +312,14 @@ Goal: {goals.get('target_weight_kg', 80)}kg for {goals.get('goal_reason', 'Japan
 
 Style: PT summary - celebrate wins, call out areas to improve, set focus for next month. No fluff."""
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
-                },
-                json={
-                    "model": "claude-3-5-haiku-20241022",
-                    "max_tokens": 300,
-                    "messages": [{"role": "user", "content": prompt}]
-                },
-                timeout=15
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                return data["content"][0]["text"]
-            else:
-                return "Another month down. Keep pushing toward Japan! 🇯🇵"
+        result = await call_claude_via_cli(prompt, max_tokens=300, timeout=15)
+        if result:
+            return result
+        return "Another month down. Keep pushing!"
 
     except Exception as e:
-        logger.error(f"Haiku summary error: {e}")
-        return "Another month down. Keep pushing toward Japan! 🇯🇵"
+        logger.error(f"Claude summary error: {e}")
+        return "Another month down. Keep pushing!"
 
 
 def _generate_monthly_graphs(weight: dict, nutrition: dict, steps: dict) -> io.BytesIO | None:

@@ -5933,6 +5933,554 @@ const MealPlanView = {
 
 
 // =============================================================================
+// 7b. SUBSCRIPTIONS VIEW
+// =============================================================================
+
+const SubscriptionsView = {
+  title: 'Subscriptions',
+  _data: null,
+  _scope: 'all',
+  _status: 'active',
+  _category: 'all',
+  _editingId: null,
+
+  async render(container) {
+    container.innerHTML = `
+      <div class="animate-fade-in">
+        <div class="flex items-center justify-between mb-lg">
+          <div class="flex items-center gap-sm">
+            <select id="subs-scope" class="form-input" style="width: auto;">
+              <option value="all" selected>All Scopes</option>
+              <option value="personal">Personal</option>
+              <option value="business">Business</option>
+            </select>
+            <select id="subs-status" class="form-input" style="width: auto;">
+              <option value="active" selected>Active</option>
+              <option value="all">All Statuses</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="paused">Paused</option>
+            </select>
+            <select id="subs-category" class="form-input" style="width: auto;">
+              <option value="all" selected>All Categories</option>
+            </select>
+          </div>
+          <div class="flex items-center gap-sm">
+            <button class="btn btn-sm btn-primary" onclick="SubscriptionsView.showAddModal()">
+              ${Icons.plus} Add
+            </button>
+            <button class="btn btn-sm btn-secondary" onclick="SubscriptionsView.refresh()">
+              ${Icons.refresh} Refresh
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-4 gap-md mb-lg" id="subs-stats">
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+          ${Components.skeleton('card')}
+        </div>
+
+        <div class="grid grid-cols-2 gap-md mb-lg">
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">By Category</h3>
+            </div>
+            <div class="card-body" id="subs-by-category">
+              ${Components.skeleton('table', 5)}
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">By Scope</h3>
+            </div>
+            <div class="card-body" id="subs-by-scope">
+              ${Components.skeleton('table', 3)}
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">All Subscriptions</h3>
+          </div>
+          <div class="card-body" id="subs-table">
+            ${Components.skeleton('table', 10)}
+          </div>
+        </div>
+      </div>
+    `;
+
+    ['subs-scope', 'subs-status', 'subs-category'].forEach(id => {
+      document.getElementById(id).addEventListener('change', () => this._applyFilters());
+    });
+
+    await this.loadData();
+  },
+
+  async _applyFilters() {
+    this._scope = document.getElementById('subs-scope').value;
+    this._status = document.getElementById('subs-status').value;
+    this._category = document.getElementById('subs-category').value;
+    await this.loadData();
+  },
+
+  async loadData() {
+    try {
+      const params = new URLSearchParams();
+      if (this._scope !== 'all') params.set('scope', this._scope);
+      if (this._status !== 'all') params.set('status', this._status);
+      if (this._category !== 'all') params.set('category', this._category);
+
+      const data = await API.get(`/api/subscriptions?${params}`);
+      this._data = data;
+
+      this.renderStats(data.summary);
+      this.renderByCategory(data.summary.by_category || {});
+      this.renderByScope(data.summary);
+      this.renderTable(data.subscriptions || []);
+      this._populateCategoryFilter(data.summary.by_category || {});
+    } catch (error) {
+      console.error('Failed to load subscriptions:', error);
+      Toast.error('Error', 'Failed to load subscriptions');
+    }
+  },
+
+  _populateCategoryFilter(byCategory) {
+    const sel = document.getElementById('subs-category');
+    if (!sel) return;
+    const current = sel.value;
+    const cats = Object.keys(byCategory).sort();
+    sel.innerHTML = '<option value="all">All Categories</option>' +
+      cats.map(c => `<option value="${Utils.escapeHtml(c)}" ${c === current ? 'selected' : ''}>${Utils.escapeHtml(c)}</option>`).join('');
+  },
+
+  renderStats(summary) {
+    const el = document.getElementById('subs-stats');
+    if (!el) return;
+
+    el.innerHTML = `
+      ${Components.statsCard({
+        icon: Icons.activity,
+        value: '\u00A3' + summary.total_monthly.toFixed(2),
+        label: 'Total Monthly',
+        variant: 'info'
+      })}
+      ${Components.statsCard({
+        icon: Icons.checkCircle,
+        value: summary.active_count,
+        label: 'Active Subscriptions',
+        variant: 'success'
+      })}
+      ${Components.statsCard({
+        icon: Icons.clock,
+        value: '\u00A3' + summary.personal_monthly.toFixed(2),
+        label: 'Personal Monthly',
+        variant: 'info'
+      })}
+      ${Components.statsCard({
+        icon: Icons.zap,
+        value: '\u00A3' + summary.business_monthly.toFixed(2),
+        label: 'Business Monthly',
+        variant: 'warning'
+      })}
+    `;
+  },
+
+  renderByCategory(byCategory) {
+    const el = document.getElementById('subs-by-category');
+    if (!el) return;
+
+    const entries = Object.entries(byCategory).sort((a, b) => b[1].monthly - a[1].monthly);
+    if (entries.length === 0) {
+      el.innerHTML = '<p class="text-muted text-center p-md">No data</p>';
+      return;
+    }
+
+    const rows = entries.map(([cat, d]) => `
+      <tr>
+        <td>${Utils.escapeHtml(cat)}</td>
+        <td class="text-right">${d.count}</td>
+        <td class="text-right font-mono">\u00A3${d.monthly.toFixed(2)}</td>
+        <td class="text-right font-mono text-muted">\u00A3${(d.monthly * 12).toFixed(2)}</td>
+      </tr>
+    `).join('');
+
+    el.innerHTML = `
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th class="text-right">Count</th>
+            <th class="text-right">Monthly</th>
+            <th class="text-right">Annual</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  },
+
+  renderByScope(summary) {
+    const el = document.getElementById('subs-by-scope');
+    if (!el) return;
+
+    el.innerHTML = `
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Scope</th>
+            <th class="text-right">Monthly</th>
+            <th class="text-right">Annual</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="status status-running">Personal</span></td>
+            <td class="text-right font-mono">\u00A3${summary.personal_monthly.toFixed(2)}</td>
+            <td class="text-right font-mono text-muted">\u00A3${(summary.personal_monthly * 12).toFixed(2)}</td>
+          </tr>
+          <tr>
+            <td><span class="status status-warning">Business</span></td>
+            <td class="text-right font-mono">\u00A3${summary.business_monthly.toFixed(2)}</td>
+            <td class="text-right font-mono text-muted">\u00A3${(summary.business_monthly * 12).toFixed(2)}</td>
+          </tr>
+          <tr style="font-weight: 600; border-top: 2px solid var(--border);">
+            <td>Total</td>
+            <td class="text-right font-mono">\u00A3${summary.total_monthly.toFixed(2)}</td>
+            <td class="text-right font-mono">\u00A3${summary.total_annual.toFixed(2)}</td>
+          </tr>
+        </tbody>
+      </table>
+    `;
+  },
+
+  renderTable(subs) {
+    const el = document.getElementById('subs-table');
+    if (!el) return;
+
+    if (subs.length === 0) {
+      el.innerHTML = '<p class="text-muted text-center p-md">No subscriptions found</p>';
+      return;
+    }
+
+    const rows = subs.map(s => {
+      const scopeBadge = s.scope === 'business'
+        ? '<span class="status status-warning">Biz</span>'
+        : '<span class="status status-running">Personal</span>';
+      const statusBadge = s.status === 'active'
+        ? '<span class="status status-success">Active</span>'
+        : s.status === 'cancelled'
+          ? '<span class="status status-error">Cancelled</span>'
+          : `<span class="status status-idle">${Utils.escapeHtml(s.status)}</span>`;
+
+      const freq = s.frequency === 'fortnightly' ? '/2wk'
+        : s.frequency === 'monthly' ? '/mo'
+        : s.frequency === 'annual' ? '/yr'
+        : s.frequency === 'termly' ? '/term'
+        : s.frequency === 'quarterly' ? '/qtr'
+        : s.frequency === 'weekly' ? '/wk'
+        : '';
+
+      return `
+        <tr style="cursor: pointer;" onclick="SubscriptionsView.showDetail('${s.id}')">
+          <td style="min-width: 160px;">
+            <div style="font-weight: 500;">${Utils.escapeHtml(s.name)}</div>
+            ${s.provider && s.provider !== s.name ? `<div class="text-sm text-muted">${Utils.escapeHtml(s.provider)}</div>` : ''}
+          </td>
+          <td>${scopeBadge}</td>
+          <td class="text-sm" style="white-space: nowrap;">${Utils.escapeHtml(s.category || '-')}</td>
+          <td class="text-right font-mono" style="white-space: nowrap;">\u00A3${parseFloat(s.amount).toFixed(2)}${freq}</td>
+          <td class="text-right font-mono" style="white-space: nowrap;">\u00A3${s.monthly_cost.toFixed(2)}</td>
+          <td class="text-right font-mono text-muted" style="white-space: nowrap;">\u00A3${s.annual_cost.toFixed(2)}</td>
+          <td>${statusBadge}</td>
+          <td class="text-right" style="white-space: nowrap;">
+            <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); SubscriptionsView.editSub('${s.id}')" title="Edit">
+              ${Icons.save}
+            </button>
+            <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); SubscriptionsView.deleteSub('${s.id}', '${Utils.escapeHtml(s.name)}')" title="Delete" style="margin-left: 4px;">
+              ${Icons.x}
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    el.innerHTML = `
+      <div style="overflow-x: auto;">
+        <table class="table" style="table-layout: auto; width: 100%;">
+          <thead>
+            <tr>
+              <th style="min-width: 160px;">Name</th>
+              <th>Scope</th>
+              <th>Category</th>
+              <th class="text-right" style="white-space: nowrap;">Amount</th>
+              <th class="text-right" style="white-space: nowrap;">Monthly</th>
+              <th class="text-right" style="white-space: nowrap;">Annual</th>
+              <th>Status</th>
+              <th class="text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  },
+
+  async showDetail(id) {
+    if (!this._data) return;
+    const s = this._data.subscriptions.find(sub => sub.id === id);
+    if (!s) return;
+
+    const scopeBadge = s.scope === 'business'
+      ? '<span class="status status-warning">Business</span>'
+      : '<span class="status status-running">Personal</span>';
+    const statusBadge = s.status === 'active'
+      ? '<span class="status status-success">Active</span>'
+      : s.status === 'cancelled'
+        ? '<span class="status status-error">Cancelled</span>'
+        : `<span class="status status-idle">${Utils.escapeHtml(s.status)}</span>`;
+
+    const freq = {weekly:'Weekly',fortnightly:'Fortnightly',monthly:'Monthly',quarterly:'Quarterly',termly:'Per Term',annual:'Annual'}[s.frequency] || s.frequency;
+
+    // Build detail rows
+    const fields = [
+      ['Provider', s.provider],
+      ['Scope', scopeBadge],
+      ['Category', s.category],
+      ['Amount', `\u00A3${parseFloat(s.amount).toFixed(2)} ${freq}`],
+      ['Monthly Equiv', `\u00A3${s.monthly_cost.toFixed(2)}`],
+      ['Annual Equiv', `\u00A3${s.annual_cost.toFixed(2)}`],
+      ['Status', statusBadge],
+      ['Billing Day', s.billing_day ? `Day ${s.billing_day}` : null],
+      ['Next Renewal', s.next_renewal_date],
+      ['Start Date', s.start_date],
+      ['End Date', s.end_date],
+      ['Payment', s.payment_method],
+      ['Bank Pattern', s.bank_description_pattern ? `<code>${Utils.escapeHtml(s.bank_description_pattern)}</code>` : null],
+      ['Plan Tier', s.plan_tier],
+      ['Auto Renew', s.auto_renew !== null ? (s.auto_renew ? 'Yes' : 'No') : null],
+      ['URL', s.url ? `<a href="${Utils.escapeHtml(s.url)}" target="_blank" style="color: var(--primary);">${Utils.escapeHtml(s.url)}</a>` : null],
+      ['Notes', s.notes],
+    ].filter(([, v]) => v != null && v !== '');
+
+    const detailRows = fields.map(([label, val]) => `
+      <tr>
+        <td class="text-muted text-sm" style="width: 120px; padding: 6px 8px; vertical-align: top;">${label}</td>
+        <td style="padding: 6px 8px;">${val}</td>
+      </tr>
+    `).join('');
+
+    // Show panel immediately with loading state for transactions
+    DetailPanel.open(`
+      <div style="padding: 16px;">
+        <div class="flex items-center justify-between mb-md">
+          <h3 style="margin: 0;">${Utils.escapeHtml(s.name)}</h3>
+          <div class="flex items-center gap-sm">
+            <button class="btn btn-sm btn-secondary" onclick="SubscriptionsView.editSub('${s.id}')">Edit</button>
+            <button class="btn btn-sm btn-secondary" onclick="DetailPanel.close()">${Icons.x}</button>
+          </div>
+        </div>
+
+        <table class="table" style="margin-bottom: 20px;">
+          <tbody>${detailRows}</tbody>
+        </table>
+
+        <h4 style="margin: 0 0 8px 0;">Recent Transactions</h4>
+        <div id="sub-detail-txns">
+          ${Components.skeleton('table', 5)}
+        </div>
+      </div>
+    `);
+
+    // Fetch matching transactions
+    try {
+      const data = await API.get(`/api/subscriptions/${id}/transactions?limit=20`);
+      const txnEl = document.getElementById('sub-detail-txns');
+      if (!txnEl) return;
+
+      if (!data.transactions || data.transactions.length === 0) {
+        txnEl.innerHTML = `<p class="text-muted text-sm">${data.message || 'No matching transactions found'}</p>`;
+        return;
+      }
+
+      const txnRows = data.transactions.map(t => `
+        <tr>
+          <td class="font-mono text-sm" style="white-space: nowrap;">${t.date}</td>
+          <td class="text-sm" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${Utils.escapeHtml(t.description)}">${Utils.escapeHtml(t.description)}</td>
+          <td class="text-right font-mono" style="white-space: nowrap; color: ${parseFloat(t.amount) < 0 ? 'var(--error)' : 'var(--success)'};">\u00A3${Math.abs(parseFloat(t.amount)).toFixed(2)}</td>
+        </tr>
+      `).join('');
+
+      txnEl.innerHTML = `
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th class="text-right">Amount</th>
+            </tr>
+          </thead>
+          <tbody>${txnRows}</tbody>
+        </table>
+        <p class="text-muted text-sm" style="margin-top: 8px;">${data.match_count} matching transaction${data.match_count !== 1 ? 's' : ''} found</p>
+      `;
+    } catch (error) {
+      const txnEl = document.getElementById('sub-detail-txns');
+      if (txnEl) txnEl.innerHTML = '<p class="text-muted text-sm">Failed to load transactions</p>';
+    }
+  },
+
+  showAddModal(existing = null) {
+    const isEdit = !!existing;
+    const s = existing || {};
+
+    Modal.show(
+      isEdit ? 'Edit Subscription' : 'Add Subscription',
+      `<form id="sub-form" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div>
+          <label class="form-label">Name *</label>
+          <input class="form-input" name="name" value="${Utils.escapeHtml(s.name || '')}" required>
+        </div>
+        <div>
+          <label class="form-label">Provider</label>
+          <input class="form-input" name="provider" value="${Utils.escapeHtml(s.provider || '')}">
+        </div>
+        <div>
+          <label class="form-label">Scope *</label>
+          <select class="form-input" name="scope">
+            <option value="personal" ${s.scope !== 'business' ? 'selected' : ''}>Personal</option>
+            <option value="business" ${s.scope === 'business' ? 'selected' : ''}>Business</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Category</label>
+          <input class="form-input" name="category" value="${Utils.escapeHtml(s.category || '')}" list="cat-suggestions">
+          <datalist id="cat-suggestions">
+            <option value="Entertainment">
+            <option value="AI & Tech">
+            <option value="TV & Internet">
+            <option value="Utilities">
+            <option value="Phone">
+            <option value="Insurance">
+            <option value="Kids Activities">
+            <option value="Household">
+            <option value="Shopping">
+            <option value="Family">
+            <option value="Fitness">
+            <option value="Infrastructure">
+            <option value="Platform Fees">
+          </datalist>
+        </div>
+        <div>
+          <label class="form-label">Amount *</label>
+          <input class="form-input" name="amount" type="number" step="0.01" value="${s.amount || ''}" required>
+        </div>
+        <div>
+          <label class="form-label">Frequency *</label>
+          <select class="form-input" name="frequency">
+            <option value="monthly" ${(!s.frequency || s.frequency === 'monthly') ? 'selected' : ''}>Monthly</option>
+            <option value="annual" ${s.frequency === 'annual' ? 'selected' : ''}>Annual</option>
+            <option value="weekly" ${s.frequency === 'weekly' ? 'selected' : ''}>Weekly</option>
+            <option value="fortnightly" ${s.frequency === 'fortnightly' ? 'selected' : ''}>Fortnightly</option>
+            <option value="quarterly" ${s.frequency === 'quarterly' ? 'selected' : ''}>Quarterly</option>
+            <option value="termly" ${s.frequency === 'termly' ? 'selected' : ''}>Termly</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Billing Day</label>
+          <input class="form-input" name="billing_day" type="number" min="1" max="31" value="${s.billing_day || ''}">
+        </div>
+        <div>
+          <label class="form-label">Status</label>
+          <select class="form-input" name="status">
+            <option value="active" ${(!s.status || s.status === 'active') ? 'selected' : ''}>Active</option>
+            <option value="paused" ${s.status === 'paused' ? 'selected' : ''}>Paused</option>
+            <option value="cancelled" ${s.status === 'cancelled' ? 'selected' : ''}>Cancelled</option>
+            <option value="trial" ${s.status === 'trial' ? 'selected' : ''}>Trial</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Payment Method</label>
+          <input class="form-input" name="payment_method" value="${Utils.escapeHtml(s.payment_method || '')}">
+        </div>
+        <div>
+          <label class="form-label">Bank Pattern</label>
+          <input class="form-input" name="bank_description_pattern" value="${Utils.escapeHtml(s.bank_description_pattern || '')}" placeholder="e.g. PAYPAL *NETFLIX">
+        </div>
+        <div style="grid-column: 1 / -1;">
+          <label class="form-label">Notes</label>
+          <input class="form-input" name="notes" value="${Utils.escapeHtml(s.notes || '')}">
+        </div>
+      </form>
+      <div style="margin-top: 16px; text-align: right;">
+        <button class="btn btn-secondary" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="SubscriptionsView.saveSub(${isEdit ? `'${s.id}'` : 'null'})" style="margin-left: 8px;">
+          ${isEdit ? 'Update' : 'Create'}
+        </button>
+      </div>`
+    );
+  },
+
+  async saveSub(id) {
+    const form = document.getElementById('sub-form');
+    if (!form) return;
+
+    const data = {};
+    new FormData(form).forEach((val, key) => {
+      if (val !== '') {
+        data[key] = key === 'amount' ? parseFloat(val)
+          : key === 'billing_day' ? parseInt(val)
+          : val;
+      }
+    });
+
+    if (!data.name || !data.amount) {
+      Toast.error('Error', 'Name and amount are required');
+      return;
+    }
+
+    try {
+      if (id) {
+        await API.put(`/api/subscriptions/${id}`, data);
+        Toast.success('Updated', `${data.name} updated`);
+      } else {
+        await API.post('/api/subscriptions', data);
+        Toast.success('Created', `${data.name} added`);
+      }
+      Modal.close();
+      await this.loadData();
+    } catch (error) {
+      Toast.error('Error', error.message || 'Failed to save');
+    }
+  },
+
+  editSub(id) {
+    if (!this._data) return;
+    const sub = this._data.subscriptions.find(s => s.id === id);
+    if (sub) this.showAddModal(sub);
+  },
+
+  async deleteSub(id, name) {
+    if (!confirm(`Delete subscription "${name}"?`)) return;
+
+    try {
+      await API.delete(`/api/subscriptions/${id}`);
+      Toast.success('Deleted', `${name} removed`);
+      await this.loadData();
+    } catch (error) {
+      Toast.error('Error', error.message || 'Failed to delete');
+    }
+  },
+
+  async refresh() {
+    await this.loadData();
+    Toast.info('Refreshed', 'Subscriptions data updated');
+  }
+};
+
+
+// =============================================================================
 // 8. INITIALIZATION
 // =============================================================================
 
@@ -5965,6 +6513,7 @@ const App = {
     Router.register('/costs', CostsView);
     Router.register('/tasks', TasksView);
     Router.register('/meal-plan', MealPlanView);
+    Router.register('/subscriptions', SubscriptionsView);
     Router.register('/settings', SettingsView);
 
     // Initialize router
@@ -6062,6 +6611,8 @@ const App = {
         Router.navigate('/memory');
       } else if (shortcutBuffer === 'gc') {
         Router.navigate('/costs');
+      } else if (shortcutBuffer === 'gp') {
+        Router.navigate('/subscriptions');
       }
 
       shortcutTimeout = setTimeout(() => {
@@ -6118,5 +6669,6 @@ window.FilesView = FilesView;
 window.MemoryView = MemoryView;
 window.CostsView = CostsView;
 window.MealPlanView = MealPlanView;
+window.SubscriptionsView = SubscriptionsView;
 // ApiExplorerView is defined in api-explorer.js
 window.SettingsView = SettingsView;

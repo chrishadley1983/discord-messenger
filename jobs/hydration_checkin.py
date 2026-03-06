@@ -8,14 +8,11 @@ Uses Claude Haiku for personalized, context-aware messages (~$0.02/month).
 import random
 from datetime import datetime
 
-import httpx
-
-from config import ANTHROPIC_API_KEY
+from config import call_claude_via_cli
 from domains.nutrition.services import get_today_totals, get_steps
 from domains.nutrition.config import CHANNEL_ID, DAILY_TARGETS
 from logger import logger
 
-HAIKU_MODEL = "claude-3-5-haiku-20241022"
 
 
 def _progress_bar(current: float, target: float, width: int = 10) -> str:
@@ -45,9 +42,6 @@ async def _get_haiku_motivation(water_ml: float, water_target: float, water_pct:
                                  hour: int) -> str:
     """Get personalized motivation from Claude Haiku."""
     try:
-        if not ANTHROPIC_API_KEY:
-            return _get_fallback_motivation(water_pct, steps_pct, hour)
-
         time_of_day = "morning" if hour < 12 else "afternoon" if hour < 17 else "evening"
         hours_left = 21 - hour  # Until 9pm
 
@@ -60,33 +54,14 @@ Current stats:
 
 Be specific about the numbers. If behind, be encouraging but direct. If on track, celebrate. Use 1-2 emojis max. Keep it punchy and personal."""
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
-                },
-                json={
-                    "model": HAIKU_MODEL,
-                    "max_tokens": 150,
-                    "messages": [{"role": "user", "content": prompt}]
-                },
-                timeout=15
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                message = data["content"][0]["text"]
-                logger.info(f"Haiku motivation generated ({len(message)} chars)")
-                return message
-            else:
-                logger.warning(f"Haiku API returned {response.status_code}")
-                return _get_fallback_motivation(water_pct, steps_pct, hour)
+        result = await call_claude_via_cli(prompt, max_tokens=150, timeout=15)
+        if result:
+            logger.info(f"Claude motivation generated ({len(result)} chars)")
+            return result
+        return _get_fallback_motivation(water_pct, steps_pct, hour)
 
     except Exception as e:
-        logger.error(f"Haiku motivation error: {e}")
+        logger.error(f"Claude motivation error: {e}")
         return _get_fallback_motivation(water_pct, steps_pct, hour)
 
 

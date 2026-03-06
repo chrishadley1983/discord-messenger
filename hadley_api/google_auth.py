@@ -1,4 +1,9 @@
-"""Google OAuth handling with automatic token refresh."""
+"""Google OAuth handling with automatic token refresh.
+
+Supports multiple accounts:
+- "personal" (default): Chris's personal Gmail (GOOGLE_REFRESH_TOKEN)
+- "hadley-bricks": chris@hadleybricks.co.uk (GOOGLE_REFRESH_TOKEN_HB)
+"""
 
 import os
 from pathlib import Path
@@ -16,6 +21,13 @@ load_dotenv(env_path)
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REFRESH_TOKEN = os.getenv("GOOGLE_REFRESH_TOKEN")
+GOOGLE_REFRESH_TOKEN_HB = os.getenv("GOOGLE_REFRESH_TOKEN_HB")
+
+# Account name -> refresh token mapping
+_ACCOUNT_TOKENS = {
+    "personal": GOOGLE_REFRESH_TOKEN,
+    "hadley-bricks": GOOGLE_REFRESH_TOKEN_HB,
+}
 
 # Full scopes for all Hadley API endpoints
 SCOPES = [
@@ -32,40 +44,53 @@ SCOPES = [
     "https://www.googleapis.com/auth/documents",
 ]
 
-_credentials = None
+# Per-account credential cache
+_credentials_cache: dict[str, Credentials] = {}
 
 
-def get_credentials():
-    """Get valid Google credentials, refreshing if needed."""
-    global _credentials
+def get_credentials(account: str = "personal"):
+    """Get valid Google credentials, refreshing if needed.
 
-    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN]):
+    Args:
+        account: Account name - "personal" or "hadley-bricks"
+    """
+    global _credentials_cache
+
+    refresh_token = _ACCOUNT_TOKENS.get(account, GOOGLE_REFRESH_TOKEN)
+
+    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, refresh_token]):
         return None
 
-    if _credentials and _credentials.valid:
-        return _credentials
+    cached = _credentials_cache.get(account)
+    if cached and cached.valid:
+        return cached
 
     # Create credentials from refresh token
     # Note: Don't specify scopes here - use whatever scopes the token was granted
     # Specifying scopes that don't match the original grant causes invalid_scope errors
-    _credentials = Credentials(
+    creds = Credentials(
         token=None,
-        refresh_token=GOOGLE_REFRESH_TOKEN,
+        refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
     )
 
     # Refresh to get access token
-    if _credentials.expired or not _credentials.valid:
-        _credentials.refresh(Request())
+    if creds.expired or not creds.valid:
+        creds.refresh(Request())
 
-    return _credentials
+    _credentials_cache[account] = creds
+    return creds
 
 
-def get_gmail_service():
-    """Get Gmail API service."""
-    creds = get_credentials()
+def get_gmail_service(account: str = "personal"):
+    """Get Gmail API service.
+
+    Args:
+        account: Account name - "personal" or "hadley-bricks"
+    """
+    creds = get_credentials(account)
     if not creds:
         return None
     return build('gmail', 'v1', credentials=creds)

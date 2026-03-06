@@ -4,6 +4,7 @@ READ THIS for any travel planning, trip, or destination research query.
 
 ## Data Sources
 
+- **Bookings in Second Brain**: Search for travel bookings — flights, hotels, trains, check-in instructions are auto-imported from Gmail
 - Active trip details: Check memory context + Notion (/notion/search)
 - Places: /places/search, /places/nearby, /places/details
 - Directions: /directions?destination=X, /directions/matrix
@@ -13,7 +14,46 @@ READ THIS for any travel planning, trip, or destination research query.
 - Web search: for reviews, guides, tips, opening hours
 
 IMPORTANT: Trip dates, accommodation, and itinerary details live in memory
-context and Notion. Don't assume — check what's current.
+context, Notion, AND Second Brain (booking confirmations). Check all three.
+
+## Booking Intelligence (Second Brain)
+
+Travel bookings are automatically imported from Gmail into Second Brain by the `travel-bookings` seed adapter. This means you CAN answer questions about upcoming trips, booking details, and provide proactive travel intelligence.
+
+**To find bookings, search Second Brain:**
+- `"flight british airways"` — BA flight bookings
+- `"hotel booking"` or `"airbnb"` — accommodation bookings
+- `"train trainline"` — rail bookings
+- `"check-in instructions"` — check-in details (door codes, house rules, etc.)
+- `"travel beeksebergen"` or `"travel lalandia"` — holiday park bookings
+
+**Data available per booking type:**
+
+| Type | Fields |
+|------|--------|
+| **Flights** | Airline, flight number, PNR, airports, times, terminals, seat, class, baggage, manage booking link |
+| **Hotels** | Hotel name, address, phone, check-in/out dates, room type, price, cancellation policy, parking, WiFi |
+| **Trains** | Stations, times, operator, carriage, seat, ticket type, railcard, collection method, e-ticket link |
+| **Check-in** | Check-in instructions, door codes, WiFi password, host contact, house rules, required documents |
+| **Airbnb** | Full listing details (amenities, reviews, neighbourhood) imported separately by the Airbnb scraper |
+
+**Proactive alerts to give Chris:**
+
+| Situation | What to say |
+|-----------|-------------|
+| Flight within 7 days | "Your BA flight to Tokyo is in 5 days. Ref: ABC123. Check-in opens 24hrs before departure." |
+| Airbnb check-in email received | "Your Kyoto Airbnb host sent check-in instructions — door code is 4521, WiFi: sakura2026" |
+| Hotel cancellation deadline approaching | "Free cancellation for your Booking.com hotel expires in 3 days (March 8th)" |
+| Required documents pending | "Your Japan Airbnb host has requested passport details — check-in is in 5 days" |
+| Pre-trip briefing | "Tomorrow: check-out Osaka Airbnb by 11am. Train to Kyoto at 13:30 (carriage B, seat 42). Kyoto Airbnb check-in from 3pm." |
+
+| Chris asks | Action |
+|-----------|--------|
+| "What trips have I got coming up?" | Search Second Brain for recent travel bookings, group by trip |
+| "What's my booking ref for Japan?" | Search for flight/hotel bookings with Japan-related keywords |
+| "When's check-in for the Airbnb?" | Search for check-in instructions for the relevant property |
+| "Do I need to do anything for the trip?" | Check for pending document requests, upcoming cancellation deadlines, check-in windows |
+| "What's the WiFi at the hotel?" | Search check-in instructions for WiFi details |
 
 ## What Makes Travel Queries Different
 

@@ -88,6 +88,8 @@ KNOWN_DOMAIN_TAGS: Final[list[str]] = [
     "family", "max", "emmie", "abby", "japan-trip",
     # Tech
     "tech", "development", "peterbot", "familyfuel",
+    # Entertainment
+    "spotify", "music", "netflix", "travel", "flight", "accommodation",
     # Finance
     "finance", "tax", "self-employment",
 ]
@@ -103,6 +105,11 @@ SOURCE_EMAIL: Final[str] = "seed:email"
 SOURCE_BOOKMARKS: Final[str] = "seed:bookmarks"
 SOURCE_GARMIN: Final[str] = "seed:garmin"
 SOURCE_INSTAGRAM: Final[str] = "seed:instagram"
+SOURCE_FINANCE: Final[str] = "seed:finance"
+SOURCE_FAMILYFUEL: Final[str] = "seed:familyfuel"
+SOURCE_SPOTIFY: Final[str] = "seed:spotify"
+SOURCE_NETFLIX: Final[str] = "seed:netflix"
+SOURCE_TRAVEL: Final[str] = "seed:travel"
 
 # Health monitoring thresholds
 HEALTH_PENDING_WARN: Final[int] = 0          # Warn if pending items > this
@@ -115,48 +122,29 @@ STRUCTURED_EXTRACTION_TIMEOUT: Final[int] = 30  # seconds
 MAX_FACTS_PER_ITEM: Final[int] = 8
 MAX_CONCEPTS_PER_ITEM: Final[int] = 5
 
-# Claude API configuration
-CLAUDE_API_URL: Final[str] = "https://api.anthropic.com/v1/messages"
-CLAUDE_MODEL: Final[str] = "claude-3-5-haiku-latest"
-CLAUDE_API_VERSION: Final[str] = "2023-06-01"
-
-
-# API Keys (from environment)
-def get_claude_api_key() -> str | None:
-    """Get Claude API key from environment (for summarisation/tagging)."""
-    return os.getenv("DISCORD_BOT_CLAUDE_KEY")
-
-
 async def call_claude(prompt: str, max_tokens: int = 200, timeout: int = 30) -> str | None:
-    """Shared Claude API call used by summarise, tag, and extract_structured.
+    """Call Claude via the local Hadley API /claude/extract endpoint.
 
+    Uses claude -p CLI under the hood (OAuth credentials, no API key needed).
     Returns the text response, or None on failure.
     """
     import httpx
 
-    api_key = get_claude_api_key()
-    if not api_key:
-        return None
-
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                CLAUDE_API_URL,
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": CLAUDE_API_VERSION,
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": CLAUDE_MODEL,
-                    "max_tokens": max_tokens,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-                timeout=timeout,
+                f"{HADLEY_API_BASE}/claude/extract",
+                json={"prompt": prompt, "max_tokens": max_tokens},
+                timeout=timeout + 30,  # extra buffer for CLI startup
             )
             response.raise_for_status()
-            return response.json()["content"][0]["text"].strip()
+            data = response.json()
+            if data.get("error"):
+                from logger import logger
+                logger.warning(f"Claude extract error: {data['error']}")
+                return None
+            return data.get("result")
     except Exception as e:
         from logger import logger
-        logger.warning(f"Claude API call failed: {e}")
+        logger.warning(f"Claude extract request failed: {e}")
         return None

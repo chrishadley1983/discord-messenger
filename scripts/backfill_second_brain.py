@@ -208,6 +208,7 @@ Backfilled to Second Brain
             capture_type=CaptureType.PASSIVE,  # Use passive for backfilled content
             user_note=f"Backfilled from Discord at {timestamp}",
             source_url=f"discord-backfill-{timestamp}",
+            source_system="discord:backfill",
         )
 
         if item:

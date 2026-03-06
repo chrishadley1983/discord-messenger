@@ -127,6 +127,10 @@ TOOL_EMOJI = {
     "mcp__brave-search__brave_web_search": "🔍",
     "mcp__context7__query-docs": "📚",
     "mcp__supabase__execute_sql": "🗄️",
+    "mcp__playwright__browser_navigate": "🌐",
+    "mcp__playwright__browser_click": "🖱️",
+    "mcp__playwright__browser_type": "⌨️",
+    "mcp__playwright__browser_snapshot": "📸",
 }
 
 
@@ -504,14 +508,24 @@ async def _stream_response(
             # The caller will kill the process to clean up.
             return meta
 
-    # Process exited without a result event. Check non-JSON output for credit errors.
-    if non_json_lines and not meta.result_text:
-        combined = " ".join(non_json_lines)
-        logger.warning(f"CLI exited without result event. Non-JSON output: {combined[:300]}")
-        from .provider_manager import is_credit_exhaustion_error
-        if is_credit_exhaustion_error(combined):
-            logger.warning(f"Credit exhaustion detected in non-JSON output")
-            meta.result_text = "__CREDIT_EXHAUSTED__"
+    # Process exited without a result event — log diagnostics
+    if not meta.result_text:
+        exit_code = proc.returncode
+        if non_json_lines:
+            combined = " ".join(non_json_lines)
+            logger.warning(
+                f"CLI exited without result event | exit_code={exit_code} | "
+                f"turns={meta.num_turns} | non-JSON output: {combined[:500]}"
+            )
+            from .provider_manager import is_credit_exhaustion_error
+            if is_credit_exhaustion_error(combined):
+                logger.warning(f"Credit exhaustion detected in non-JSON output")
+                meta.result_text = "__CREDIT_EXHAUSTED__"
+        else:
+            logger.warning(
+                f"CLI exited silently — no result, no output | exit_code={exit_code} | "
+                f"turns={meta.num_turns} | tools={meta.tools_used}"
+            )
 
     return meta
 
@@ -558,10 +572,17 @@ async def invoke_claude_cli(
             limit=10 * 1024 * 1024,  # 10MB — image tool results can be large
         )
     except Exception as e:
-        logger.error(f"Failed to spawn Claude CLI: {e}")
+        logger.error(
+            f"Failed to spawn Claude CLI: {e} | "
+            f"source={cost_source} | message={cost_message[:80]}"
+        )
         return "⚠️ Could not start Claude. Please try again."
 
     context_bytes = context.encode("utf-8")
+    logger.debug(
+        f"CLI started | context_bytes={len(context_bytes)} | "
+        f"source={cost_source} | message={cost_message[:80]}"
+    )
 
     # Shared meta object — updated incrementally by _stream_response
     # so we can log partial data on timeout
@@ -576,7 +597,9 @@ async def invoke_claude_cli(
         meta.duration_ms = (time.monotonic() - wall_start) * 1000
         logger.error(
             f"CLI timed out after {timeout}s | "
-            f"turns={meta.num_turns} | tools={meta.tools_used}"
+            f"turns={meta.num_turns} | model={meta.model or 'none'} | "
+            f"tools={meta.tools_used} | context_bytes={len(context_bytes)} | "
+            f"source={cost_source} | message={cost_message[:80]}"
         )
         _log_cost(meta, cost_source, cost_channel, f"TIMEOUT: {cost_message}")
         # Kill both Windows wrapper AND the WSL-side Claude process
@@ -622,23 +645,29 @@ async def invoke_claude_cli(
     # Log cost data
     _log_cost(meta, cost_source, cost_channel, cost_message)
 
-    # If no result text, check stderr for rate limit / credit errors
+    # If no result text, capture stderr and log detailed diagnostics
     if not meta.result_text:
         stderr_text = ""
         try:
             stderr_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=2)
             stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
-            if stderr_text:
-                logger.error(f"CLI stderr: {stderr_text[:500]}")
         except Exception:
             pass
+
+        exit_code = proc.returncode
+        logger.error(
+            f"CLI produced no result text | exit_code={exit_code} | "
+            f"wall_ms={wall_ms:.0f} | turns={meta.num_turns} | "
+            f"model={meta.model or 'none'} | tools={meta.tools_used} | "
+            f"stderr={stderr_text[:500] if stderr_text else '(empty)'} | "
+            f"source={cost_source} | message={cost_message[:80]}"
+        )
 
         from .provider_manager import is_credit_exhaustion_error
         if is_credit_exhaustion_error(stderr_text):
             logger.warning(f"Credit exhaustion detected in stderr: {stderr_text[:100]}")
             return CREDIT_EXHAUSTED_SENTINEL
 
-        logger.error("CLI produced no result text")
         return "⚠️ Claude encountered an issue. Please try again."
 
     return meta.result_text
@@ -803,6 +832,7 @@ async def _save_document_to_brain(response: str) -> None:
             capture_type=CaptureType.EXPLICIT,
             user_note="[Generated document from conversation]",
             user_tags=["generated", "document"],
+            source_system="peterbot:conversation",
         )
         if item:
             logger.info(f"Auto-saved document to Second Brain: {item.id}")

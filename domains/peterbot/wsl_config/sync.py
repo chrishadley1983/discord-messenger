@@ -69,6 +69,7 @@ PLAYBOOK_FILES = [
     "docs/playbooks/BUSINESS.md",
     "docs/playbooks/TRAVEL.md",
     "docs/playbooks/UTILITIES.md",
+    "docs/playbooks/MUSIC.md",
 ]
 
 

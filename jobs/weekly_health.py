@@ -21,7 +21,7 @@ import httpx
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-from config import SUPABASE_URL, SUPABASE_KEY, ANTHROPIC_API_KEY
+from config import SUPABASE_URL, SUPABASE_KEY, call_claude_via_cli
 from logger import logger
 
 # Discord channel for weekly health summary
@@ -365,9 +365,6 @@ def _calculate_grade(weight: dict, nutrition: dict, steps: dict, sleep: dict, hr
 async def _generate_pt_summary(weight: dict, nutrition: dict, steps: dict, sleep: dict, goals: dict) -> str:
     """Generate AI PT summary using Claude Haiku."""
     try:
-        if not ANTHROPIC_API_KEY:
-            return "Keep pushing towards Japan! 🇯🇵"
-
         prompt = f"""Generate a brief (2-3 sentences) weekly PT summary for Chris based on this week's data:
 
 Weight: Started {weight.get('start', '?')}kg, ended {weight.get('end', '?')}kg ({weight.get('change', 0):+.1f}kg change)
@@ -379,31 +376,14 @@ Goal: {goals.get('target_weight_kg', 80)}kg for {goals.get('goal_reason', 'Japan
 
 Style: Direct, motivational, PT-style. Call out wins and areas to improve. No fluff."""
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
-                },
-                json={
-                    "model": "claude-3-5-haiku-20241022",
-                    "max_tokens": 200,
-                    "messages": [{"role": "user", "content": prompt}]
-                },
-                timeout=15
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                return data["content"][0]["text"]
-            else:
-                return "Keep pushing towards Japan! 🇯🇵"
+        result = await call_claude_via_cli(prompt, max_tokens=200, timeout=15)
+        if result:
+            return result
+        return "Keep pushing towards Japan!"
 
     except Exception as e:
-        logger.error(f"Haiku summary error: {e}")
-        return "Keep pushing towards Japan! 🇯🇵"
+        logger.error(f"Claude summary error: {e}")
+        return "Keep pushing towards Japan!"
 
 
 def _generate_weekly_graphs(weight: dict, nutrition: dict, steps: dict) -> io.BytesIO | None:

@@ -89,6 +89,21 @@ Have a good day! 🎒
 
 **If no activities:** Omit the "Today's Activities" section entirely.
 
+**School Events Today** (from `school_events_today` in pre-fetched data):
+If events exist, add after activities:
+```
+**School Events Today:**
+World Book Day - costumes needed!
+Science Workshop (Year 2 + Year 4)
+```
+
+**INSET Day Detection** (from `is_inset_day` in pre-fetched data):
+If `is_inset_day` is true, replace the ENTIRE report with:
+```
+**INSET DAY - No School Today!**
+Enjoy the day off!
+```
+
 ## Traffic Status Indicators
 
 - 🟢 Clear (traffic adds <5 mins)

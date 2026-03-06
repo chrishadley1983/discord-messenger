@@ -40,7 +40,7 @@ DOMAIN_GROUPS = {
     'business': {'hadley-bricks', 'ebay', 'bricklink', 'brick-owl', 'amazon', 'finance', 'tax', 'self-employment'},
     'lego': {'lego', 'lego-investing', 'retired-sets', 'minifigures', 'hadley-bricks'},
     'fitness': {'running', 'marathon', 'training', 'nutrition', 'garmin'},
-    'family': {'family', 'max', 'emmie', 'abby', 'japan-trip'},
+    'family': {'family', 'max', 'emmie', 'abby', 'japan-trip', 'recipe', 'cooking', 'familyfuel'},
     'tech': {'tech', 'development', 'peterbot', 'familyfuel'},
 }
 

@@ -117,6 +117,14 @@ from .health import (
     format_weekly_discord,
 )
 
+# Audit report
+from .audit_report import (
+    run_weekly_audit,
+    generate_audit_data,
+    build_audit_email,
+    send_audit_email,
+)
+
 __all__ = [
     # Types
     "KnowledgeItem",
@@ -196,4 +204,9 @@ __all__ = [
     "get_health_report",
     "format_daily_discord",
     "format_weekly_discord",
+    # Audit report
+    "run_weekly_audit",
+    "generate_audit_data",
+    "build_audit_email",
+    "send_audit_email",
 ]

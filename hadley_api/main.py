@@ -30,6 +30,14 @@ from hadley_api.brain_routes import router as brain_graph_router
 app.include_router(brain_graph_router)
 from hadley_api.vinted_routes import router as vinted_router
 app.include_router(vinted_router)
+from hadley_api.spotify_routes import router as spotify_router
+app.include_router(spotify_router)
+from hadley_api.claude_routes import router as claude_router
+app.include_router(claude_router)
+from hadley_api.vault_routes import router as vault_router
+app.include_router(vault_router)
+from hadley_api.whatsapp_webhook import router as whatsapp_router
+app.include_router(whatsapp_router)
 
 UK_TZ = ZoneInfo("Europe/London")
 
@@ -179,13 +187,14 @@ async def gmail_unread(limit: int = Query(default=10, le=20)):
 @app.get("/gmail/search")
 async def gmail_search(
     q: str = Query(..., description="Search query"),
-    limit: int = Query(default=10, le=500, description="Max results (up to 500 for seed imports)")
+    limit: int = Query(default=10, le=500, description="Max results (up to 500 for seed imports)"),
+    account: str = Query(default="personal", description="Account: personal or hadley-bricks"),
 ):
     """Search emails with pagination support for large result sets."""
     from .google_auth import get_gmail_service
 
     try:
-        service = get_gmail_service()
+        service = get_gmail_service(account)
         if not service:
             raise HTTPException(status_code=503, detail="Gmail not configured")
 
@@ -242,7 +251,11 @@ async def gmail_search(
 
 
 @app.get("/gmail/get")
-async def gmail_get(id: str = Query(..., description="Email message ID")):
+async def gmail_get(
+    id: str = Query(..., description="Email message ID"),
+    account: str = Query(default="personal", description="Account: personal or hadley-bricks"),
+    html: bool = Query(default=False, description="Include raw HTML body in response"),
+):
     """Get full email content by ID."""
     from .google_auth import get_gmail_service
     import base64
@@ -269,7 +282,7 @@ async def gmail_get(id: str = Query(..., description="Email message ID")):
         return text.strip()
 
     try:
-        service = get_gmail_service()
+        service = get_gmail_service(account)
         if not service:
             raise HTTPException(status_code=503, detail="Gmail not configured")
 
@@ -346,7 +359,7 @@ async def gmail_get(id: str = Query(..., description="Email message ID")):
 
         find_attachments(payload)
 
-        return {
+        result = {
             "id": id,
             "from": headers.get('From', 'Unknown'),
             "to": headers.get('To', ''),
@@ -357,6 +370,12 @@ async def gmail_get(id: str = Query(..., description="Email message ID")):
             "fetched_at": datetime.now(UK_TZ).isoformat()
         }
 
+        # Include raw HTML when requested (for structured data extraction)
+        if html and html_text:
+            result["html"] = html_text[:50000]
+
+        return result
+
     except HTTPException:
         raise
     except Exception as e:
@@ -364,12 +383,14 @@ async def gmail_get(id: str = Query(..., description="Email message ID")):
 
 
 @app.get("/gmail/labels")
-async def gmail_labels():
+async def gmail_labels(
+    account: str = Query(default="personal", description="Account: personal or hadley-bricks"),
+):
     """Get all Gmail labels."""
     from .google_auth import get_gmail_service
 
     try:
-        service = get_gmail_service()
+        service = get_gmail_service(account)
         if not service:
             raise HTTPException(status_code=503, detail="Gmail not configured")
 
@@ -4520,6 +4541,32 @@ async def distance(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/location/{person}")
+async def location_lookup(person: str = "abby"):
+    """Get a family member's real-time location and distance from home.
+
+    Uses Google Maps location sharing (via cookies) + Distance Matrix API.
+    Person: 'chris' or 'abby'.
+    """
+    from integrations.location import get_location, format_location_response
+    result = await get_location(person.lower())
+    return {
+        "person": result.name,
+        "latitude": result.latitude,
+        "longitude": result.longitude,
+        "address": result.address,
+        "battery_level": result.battery_level,
+        "charging": result.charging,
+        "location_age_seconds": result.location_age_seconds,
+        "distance_km": result.distance_km,
+        "distance_miles": result.distance_miles,
+        "duration_text": result.duration_text,
+        "duration_seconds": result.duration_seconds,
+        "formatted": format_location_response(result),
+        "error": result.error,
+    }
+
+
 # ============================================================
 # BATCH 10: Utilities - Currency, Units, Calculate, Color, Encode
 # ============================================================
@@ -5929,6 +5976,7 @@ async def brain_save(body: BrainSaveRequest):
             capture_type=CaptureType.EXPLICIT,
             user_note=body.note,
             user_tags=user_tags,
+            source_system="api:hadley-api",
         )
         if not item:
             raise HTTPException(status_code=422, detail="Failed to process content")

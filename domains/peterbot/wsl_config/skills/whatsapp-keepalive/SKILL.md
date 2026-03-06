@@ -1,57 +1,54 @@
 ---
-name: whatsapp-keepalive
-description: Keep WhatsApp sandbox session alive
+name: whatsapp-health
+description: Check Evolution API WhatsApp connection health
 trigger: []
 scheduled: true
 conversational: false
-channel: #peterbot
+channel: #peter-heartbeat
 ---
 
-# WhatsApp Keepalive
+# WhatsApp Health Check
 
 ## Purpose
 
-Sends a ping to keep the Twilio WhatsApp sandbox session active.
+Checks that the Evolution API WhatsApp instance is connected and ready to send/receive messages.
 
-**Schedule:** Twice daily at 06:00 and 22:00 UK (max 16 hours between pings, well within 72-hour sandbox expiry).
-
-**Recipient:** Chris only (+447855620978) - Abby receives school run messages but not keepalives.
+**Schedule:** Twice daily at 08:00 and 20:00 UK.
 
 ## Pre-fetched Data
 
-The data fetcher sends the WhatsApp message directly.
+The data fetcher checks the Evolution API connection state.
 
-**Success:**
+**Connected:**
 ```json
 {
-  "sent": true,
-  "recipient": "+447855620978",
-  "sid": "SM..."
+  "connected": true,
+  "state": "open"
 }
 ```
 
-**Failure:**
+**Disconnected:**
 ```json
 {
-  "sent": false,
-  "error": "Error message here"
+  "connected": false,
+  "state": "close"
 }
 ```
 
 ## Output Rules
 
-**If `sent: true`:**
-Return `NO_REPLY` - the WhatsApp was sent successfully.
+**If `connected: true`:**
+Return `NO_REPLY` - everything is fine.
 
-**If `sent: false`:**
-Report the error so it's visible:
+**If `connected: false`:**
+Report the issue:
 
 ```
-⚠️ **WhatsApp Keepalive Failed**
+WhatsApp Disconnected
 
-Error: {error from pre-fetched data}
+Evolution API instance state: {state}
 
-The sandbox may expire. To reactivate:
-1. Send "join <phrase>" to +1 415 523 8886
-2. Check Twilio console for current join phrase
+To reconnect:
+1. Run: python scripts/whatsapp/evolution_setup.py
+2. Scan the QR code with the second phone (+447784072956)
 ```

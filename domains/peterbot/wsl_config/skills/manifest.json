@@ -1,4 +1,17 @@
 {
+  "amazon-purchases": {
+    "triggers": [
+      "what have I bought on amazon",
+      "amazon purchases",
+      "amazon orders",
+      "what did I order on amazon",
+      "amazon spending"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Sync and query Amazon purchase history from Gmail",
+    "channel": "#peterbot"
+  },
   "api-usage": {
     "triggers": [
       "api usage",
@@ -648,19 +661,6 @@
     "description": "Set, list, update, and cancel reminders via Hadley API",
     "channel": "#peterbot"
   },
-  "security-monitor": {
-    "triggers": [
-      "security check",
-      "any security issues",
-      "security alerts",
-      "check security",
-      "security status"
-    ],
-    "conversational": true,
-    "scheduled": true,
-    "description": "Proactive security monitoring across Supabase, Google, and Vercel — flags issues and offers to help fix them",
-    "channel": "#alerts"
-  },
   "saturday-sport-preview": {
     "triggers": [
       "sport this week",
@@ -707,6 +707,19 @@
     "scheduled": true,
     "description": "Weekly spelling list post for Max and Emmie",
     "channel": "#peter-chat"
+  },
+  "security-monitor": {
+    "triggers": [
+      "security check",
+      "any security issues",
+      "security alerts",
+      "check security",
+      "security status"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Proactive security monitoring across Supabase, Google, and Vercel \u2014 flags issues and offers to help",
+    "channel": "#alerts"
   },
   "self-reflect": {
     "triggers": [],

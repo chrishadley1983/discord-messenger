@@ -177,6 +177,61 @@ async def on_ready():
     register_energy_sync(scheduler, bot=bot)
     logger.info("Energy sync jobs registered (daily 10:00 AM + weekly Sunday 9:00 AM + monthly 1st 10:30 AM UK)")
 
+    # WhatsApp — daily export scan at 10am, weekly reminder Sunday 9am
+    from jobs.whatsapp_sync import register_whatsapp_sync
+    register_whatsapp_sync(scheduler, bot=bot)
+    logger.info("WhatsApp sync jobs registered (daily 10:00 AM + weekly Sunday 9:00 AM UK)")
+
+    # WhatsApp incoming messages — internal HTTP server for HadleyAPI to forward to
+    from aiohttp import web as aio_web
+    from integrations.whatsapp import send_text
+
+    WHATSAPP_VIRTUAL_CHANNEL_ID = 9999999999
+
+    async def _whatsapp_handler(request):
+        """Handle forwarded WhatsApp messages from HadleyAPI."""
+        try:
+            data = await request.json()
+            sender_name = data.get("sender_name", "Unknown")
+            sender_number = data.get("sender_number", "")
+            reply_to = data.get("reply_to", sender_number)
+            is_group = data.get("is_group", False)
+            text = data.get("text", "")
+
+            if not text.strip() or not sender_number:
+                return aio_web.json_response({"status": "ignored"})
+
+            source = "group" if is_group else "DM"
+            logger.info(f"WhatsApp ({source}) → Peter: [{sender_name}] {text[:100]}")
+            tagged_message = f"[WhatsApp {source} from {sender_name}] {text}"
+
+            response = await handle_peterbot(
+                message=tagged_message,
+                user_id=int(sender_number),
+                channel_id=WHATSAPP_VIRTUAL_CHANNEL_ID,
+            )
+
+            if response and response.strip() and response.strip() != "NO_REPLY":
+                await send_text(reply_to, response)
+                logger.info(f"Peter → WhatsApp [{sender_name}, {source}]: {response[:100]}")
+
+            return aio_web.json_response({"status": "ok", "replied": bool(response)})
+        except Exception as e:
+            logger.error(f"WhatsApp → Peter routing failed: {e}")
+            return aio_web.json_response({"error": str(e)}, status=500)
+
+    async def _start_whatsapp_server():
+        app = aio_web.Application()
+        app.router.add_post("/whatsapp/message", _whatsapp_handler)
+        runner = aio_web.AppRunner(app)
+        await runner.setup()
+        site = aio_web.TCPSite(runner, "127.0.0.1", 8101)
+        await site.start()
+        logger.info("WhatsApp internal server listening on 127.0.0.1:8101")
+
+    asyncio.create_task(_start_whatsapp_server())
+    logger.info("WhatsApp incoming message routing registered (port 8101)")
+
     # Reprocess pending passive captures — every 6 hours
     async def reprocess_pending():
         """Upgrade passive captures to full items with embeddings."""
@@ -977,6 +1032,11 @@ def _kill_orphaned_bots():
 
     NSSM restarts can leave zombie bot.py processes (especially via PythonManager chains).
     Each orphan runs its own scheduler, causing duplicate job execution.
+
+    Strategy:
+    1. Read PID from bot.lock (most reliable — we control the file)
+    2. Fall back to wmic scan (handles cases where lock file is stale/missing)
+    3. Wait briefly after killing to ensure process is dead before we continue
     """
     import subprocess
     import signal
@@ -984,19 +1044,58 @@ def _kill_orphaned_bots():
 
     my_pid = os.getpid()
     killed = 0
+    lock_path = Path(__file__).parent / "bot.lock"
+
+    # --- Phase 1: Kill process from lock file (most reliable) ---
+    if lock_path.exists():
+        try:
+            old_pid = int(lock_path.read_text().strip())
+            if old_pid != my_pid:
+                try:
+                    os.kill(old_pid, signal.SIGTERM)
+                    killed += 1
+                    logger.warning(f"Killed previous bot.py from lock file (PID {old_pid})")
+                except (ProcessLookupError, PermissionError):
+                    pass  # Process already dead or inaccessible
+        except (ValueError, OSError):
+            pass  # Corrupt lock file
+
+    # --- Phase 2: Stop DiscordBot NSSM service if running (it spawns a hidden bot.py) ---
     try:
+        svc_result = subprocess.run(
+            ["sc", "queryex", "DiscordBot"],
+            capture_output=True, text=True, timeout=10
+        )
+        if "RUNNING" in svc_result.stdout:
+            subprocess.run(["sc", "stop", "DiscordBot"], capture_output=True, timeout=10)
+            killed += 1
+            logger.warning("Stopped DiscordBot NSSM service (was running a duplicate bot)")
+    except Exception as e:
+        logger.debug(f"Service check skipped: {e}")
+
+    # --- Phase 3: wmic scan for any remaining python+bot.py processes ---
+    try:
+        # Use encoding="utf-16-le" — wmic outputs UTF-16 on Windows
         result = subprocess.run(
             ["wmic", "process", "where",
              "name like 'python%' and commandline like '%bot.py%'",
              "get", "processid", "/format:csv"],
-            capture_output=True, text=True, timeout=10
+            capture_output=True, timeout=10
         )
-        for line in result.stdout.strip().split("\n"):
-            line = line.strip()
+        # Decode as UTF-16-LE, falling back to UTF-8 then latin-1
+        stdout = ""
+        for enc in ("utf-16-le", "utf-8", "latin-1"):
+            try:
+                stdout = result.stdout.decode(enc)
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+
+        for line in stdout.strip().split("\n"):
+            line = line.strip().strip("\x00")  # Strip null bytes from UTF-16
             if not line:
                 continue
             parts = line.split(",")
-            # CSV format: Node,ProcessId
             pid_str = parts[-1].strip()
             if pid_str.isdigit():
                 pid = int(pid_str)
@@ -1008,14 +1107,16 @@ def _kill_orphaned_bots():
                     except (ProcessLookupError, PermissionError):
                         pass
     except Exception as e:
-        logger.debug(f"Orphan cleanup skipped: {e}")
+        logger.info(f"wmic orphan scan skipped: {e}")
+
+    # --- Phase 4: Wait for killed processes to actually die ---
+    if killed:
+        import time
+        time.sleep(2)  # Give OS time to terminate processes
+        logger.info(f"Cleaned up {killed} orphaned bot process(es)")
 
     # Update lockfile with our PID
-    lock_path = Path(__file__).parent / "bot.lock"
     lock_path.write_text(str(my_pid))
-
-    if killed:
-        logger.info(f"Cleaned up {killed} orphaned bot process(es)")
 
 
 def main():

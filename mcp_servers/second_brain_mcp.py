@@ -304,6 +304,7 @@ async def save_to_brain(content: str, note: str = "", tags: str = "") -> str:
             capture_type=CaptureType.EXPLICIT,
             user_note=note or None,
             user_tags=user_tags,
+            source_system="mcp:claude-code",
         )
 
         if not item:

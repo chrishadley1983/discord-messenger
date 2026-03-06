@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 import httpx
 
-from config import SUPABASE_URL, SUPABASE_KEY, ANTHROPIC_API_KEY
+from config import SUPABASE_URL, SUPABASE_KEY, call_claude_via_cli
 from logger import logger
 
 # Channel ID for #food-log
@@ -284,9 +284,6 @@ async def _get_weight_trend() -> dict:
 async def _generate_motivation(goals: dict, yesterday: dict) -> str:
     """Generate motivational message using Claude Haiku (cost-effective)."""
     try:
-        if not ANTHROPIC_API_KEY:
-            return _get_fallback_motivation(goals)
-
         prompt = f"""Generate a brief, punchy morning motivation message (2-3 sentences max) for Chris.
 
 Context:
@@ -304,33 +301,14 @@ Style:
 - NO emoji overload, maybe 1-2 max
 - NO "Good morning!" fluff"""
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
-                },
-                json={
-                    "model": "claude-3-5-haiku-20241022",
-                    "max_tokens": 200,
-                    "messages": [{"role": "user", "content": prompt}]
-                },
-                timeout=15
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                message = data["content"][0]["text"]
-                logger.info(f"Haiku motivation generated ({len(message)} chars)")
-                return message
-            else:
-                logger.warning(f"Haiku API returned {response.status_code}")
-                return _get_fallback_motivation(goals)
+        result = await call_claude_via_cli(prompt, max_tokens=200, timeout=15)
+        if result:
+            logger.info(f"Claude motivation generated ({len(result)} chars)")
+            return result
+        return _get_fallback_motivation(goals)
 
     except Exception as e:
-        logger.error(f"Haiku motivation error: {e}")
+        logger.error(f"Claude motivation error: {e}")
         return _get_fallback_motivation(goals)
 
 

@@ -59,11 +59,12 @@ RAW_LOG_PATH = f"{PETERBOT_SESSION_PATH}/raw_output.log"
 CHANNEL_ID_TO_NAME = {
     # Add channel mappings as needed, e.g.:
     # 123456789: "#general",
+    9999999999: "#whatsapp",
 }
 
 # CLI execution settings
 CLI_TOTAL_TIMEOUT = 1200      # Max seconds for conversation CLI execution (20 min)
-CLI_MAX_TURNS = 50            # Max agentic turns for conversations (quality over speed)
+CLI_MAX_TURNS = 80            # Max agentic turns for conversations (browser flows need 40-60)
 CLI_SCHEDULED_MAX_TURNS = 50  # Max agentic turns for scheduled jobs (same as conversations)
 # No --max-budget-usd flag needed: CLI runs on subscription, not API billing.
 # The subscription's own rate limits are the safety net.

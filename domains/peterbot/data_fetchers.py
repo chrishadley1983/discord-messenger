@@ -1240,6 +1240,317 @@ async def get_ballot_reminders_data() -> dict[str, Any]:
         return {"error": str(e), "no_ballots": True}
 
 
+def _parse_amazon_order_email(body: str) -> list[dict]:
+    """Parse Amazon order confirmation email body into structured items.
+
+    Expected format per item:
+      * Item Name
+        Quantity: N
+        XX.XX GBP
+    """
+    import re
+
+    items = []
+    # Normalise line endings
+    body = body.replace('\r\n', '\n').replace('\r', '\n')
+
+    # Match: order number
+    order_numbers = re.findall(r'Order #\s*\n?\s*([\d-]+)', body)
+
+    # Match item blocks: "* ItemName\n  Quantity: N\n  XX.XX GBP"
+    item_pattern = re.compile(
+        r'\*\s+(.+?)\n'           # item name after *
+        r'\s+Quantity:\s+(\d+)\n'  # quantity
+        r'\s+([\d,.]+)\s+GBP',    # price
+        re.MULTILINE
+    )
+
+    for match in item_pattern.finditer(body):
+        name = match.group(1).strip()
+        qty = int(match.group(2))
+        price = float(match.group(3).replace(",", ""))
+        items.append({
+            "name": name,
+            "quantity": qty,
+            "price_gbp": price,
+        })
+
+    # Assign order numbers to items (emails may contain multiple orders)
+    # Each order block has its own items, but for simplicity assign first order
+    # number found before each item block
+    if order_numbers and items:
+        # Simple: if 1 order number, assign to all items
+        if len(order_numbers) == 1:
+            for item in items:
+                item["order_number"] = order_numbers[0]
+        else:
+            # Multiple orders in one email — match by position in text
+            for item in items:
+                item["order_number"] = order_numbers[0]  # default
+                item_pos = body.find(item["name"])
+                for on in reversed(order_numbers):
+                    on_pos = body.find(on)
+                    if on_pos < item_pos:
+                        item["order_number"] = on
+                        break
+
+    return items
+
+
+def _classify_by_item_name(name: str) -> str:
+    """Heuristic classification based on item description keywords."""
+    n = name.lower()
+
+    # Business keywords — Hadley Bricks LEGO resale supplies
+    biz_keywords = (
+        "bubble wrap", "packing tape", "packaging tape", "parcel tape",
+        "shipping label", "mailing bag", "jiffy bag", "padded envelope",
+        "cardboard box",
+        "lego ", "lego\xa0", "minifig",
+        "label printer", "thermal label", "barcode",
+        "sellotape", "stretch wrap", "void fill", "tissue paper",
+        "poly mailer", "postal", "postage", "fragile tape",
+        "weighing scale", "letter scale",
+    )
+    if any(k in n for k in biz_keywords):
+        return "business"
+
+    # Personal keywords — household, personal, family
+    personal_keywords = (
+        "running sock", "running shoe", "garmin", "fitbit",
+        "kitchen", "cookware", "pan ", "pot ", "lid for pot",
+        "bulb", "lamp", "light ", "lighting",
+        "phone holder", "phone case", "phone charger",
+        "kids", "children", "toy ", "costume",
+        "clothing", "shirt", "socks", "underwear", "shoe",
+        "food", "snack", "vitamin", "supplement",
+        "book ", "kindle",
+        "cleaning", "washing", "laundry", "dishwasher",
+        "garden", "plant", "compost",
+        "bathroom", "shower", "toothbrush",
+        "pet ", "dog ", "cat ",
+        "moisture absorber", "dehumidifier",
+        "storage box", "storage container", "tote box",
+        "picture frame", "hanging", "pegs",
+        "radio", "dab",
+        "cable", "charger",
+    )
+    if any(k in n for k in personal_keywords):
+        return "personal"
+
+    return "unknown"
+
+
+async def _classify_amazon_purchase(
+    amount: float, email_date: str, item_name: str = ""
+) -> str:
+    """Classify an Amazon purchase as 'business' or 'personal'.
+
+    Priority: 1) Monzo transaction match, 2) Item name heuristics.
+    Chris uses his business card on his personal Amazon account.
+    Monzo shows 'AMZNMktplace' for business card, 'AMAZON' for personal.
+    """
+    import os
+    import httpx
+    from datetime import datetime, timedelta
+
+    supabase_url = os.getenv("SUPABASE_URL", "")
+    api_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "") or os.getenv("SUPABASE_KEY", "")
+    if not supabase_url or not api_key:
+        return "unknown"
+
+    try:
+        # Parse the email date to get a search window (±3 days for settlement lag)
+        # Email dates come as e.g. "Thu, 6 Mar 2026 10:23:45 +0000"
+        parsed_date = None
+        for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%Y-%m-%d"):
+            try:
+                parsed_date = datetime.strptime(email_date.strip(), fmt).date()
+                break
+            except ValueError:
+                continue
+        if not parsed_date:
+            # Try just extracting a date-like string
+            import re
+            m = re.search(r'(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})', email_date)
+            if m:
+                from datetime import datetime as dt
+                parsed_date = dt.strptime(f"{m.group(1)} {m.group(2)} {m.group(3)}", "%d %b %Y").date()
+        if not parsed_date:
+            return "unknown"
+
+        start = (parsed_date - timedelta(days=3)).isoformat()
+        end = (parsed_date + timedelta(days=3)).isoformat()
+
+        headers = {
+            "apikey": api_key,
+            "Authorization": f"Bearer {api_key}",
+            "Accept-Profile": "finance",
+        }
+
+        # Search for Amazon transactions near this amount and date
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{supabase_url}/rest/v1/transactions",
+                params={
+                    "or": "(description.ilike.*amazon*,description.ilike.*AMZN*)",
+                    "date": f"gte.{start}",
+                    "and": f"(date.lte.{end})",
+                    "select": "description,amount,date",
+                    "order": "date.desc",
+                    "limit": "20",
+                },
+                headers=headers,
+            )
+            if resp.status_code != 200:
+                return "unknown"
+
+            txns = resp.json()
+
+        # Match by amount (within £0.05 tolerance for rounding)
+        for txn in txns:
+            txn_amount = abs(float(txn.get("amount", 0)))
+            if abs(txn_amount - amount) < 0.05:
+                desc = txn.get("description", "").upper()
+                if "AMZNMKTPLACE" in desc or "AMZN MKTP" in desc:
+                    return "business"
+                elif "AMAZON" in desc:
+                    return "personal"
+
+        # No Monzo match — fall back to item name heuristics
+        return _classify_by_item_name(item_name)
+    except Exception as e:
+        logger.debug(f"Monzo classification failed: {e}")
+        return _classify_by_item_name(item_name)
+
+
+async def _sync_amazon_emails(query: str, limit: int, timeout: int) -> dict[str, Any]:
+    """Shared logic for syncing Amazon purchase emails to Second Brain."""
+    import httpx
+    from domains.second_brain import db
+    from domains.second_brain.types import ContentType, CaptureType
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{HADLEY_API_URL}/gmail/search",
+                params={
+                    "q": query,
+                    "limit": limit,
+                    "account": "personal",
+                },
+                timeout=timeout,
+            )
+            if response.status_code != 200:
+                return {"error": f"Gmail search failed: {response.status_code}"}
+
+            emails = response.json().get("emails", [])
+            if not emails:
+                return {"synced": 0, "message": "No Amazon orders found"}
+
+            synced = 0
+            skipped = 0
+            all_items: list[dict] = []
+
+            for email in emails:
+                email_id = email["id"]
+                email_date = email.get("date", "")
+
+                # Check if already saved (deduplicate by source URL)
+                source_url = f"amazon-order://{email_id}"
+                existing = await db.get_item_by_source(source_url)
+                if existing:
+                    skipped += 1
+                    continue
+
+                # Fetch full email body
+                body_resp = await client.get(
+                    f"{HADLEY_API_URL}/gmail/get",
+                    params={"id": email_id, "account": "personal"},
+                    timeout=15,
+                )
+                if body_resp.status_code != 200:
+                    continue
+
+                body = body_resp.json().get("body", "")
+                items = _parse_amazon_order_email(body)
+
+                if not items:
+                    continue
+
+                # Save each item as a Second Brain entry
+                for item in items:
+                    # Classify as business or personal via Monzo
+                    total_price = item["price_gbp"] * item["quantity"]
+                    category = await _classify_amazon_purchase(total_price, email_date, item["name"])
+                    item["category"] = category
+
+                    category_tag = f"amazon-{category}" if category != "unknown" else "amazon"
+                    title = f"Amazon Purchase: {item['name'][:80]}"
+                    full_text = (
+                        f"Amazon Purchase: {item['name']}\n"
+                        f"Price: £{item['price_gbp']:.2f}\n"
+                        f"Quantity: {item['quantity']}\n"
+                        f"Order: {item.get('order_number', 'Unknown')}\n"
+                        f"Date: {email_date}\n"
+                        f"Category: {category}\n"
+                    )
+                    summary = (
+                        f"Amazon purchase ({category}): {item['name'][:60]} "
+                        f"- £{item['price_gbp']:.2f} (Qty: {item['quantity']})"
+                    )
+
+                    await db.insert_knowledge_item(
+                        content_type=ContentType.NOTE,
+                        capture_type=CaptureType.SEED,
+                        title=title,
+                        source_url=source_url,
+                        full_text=full_text,
+                        summary=summary,
+                        topics=["amazon", "purchase", category_tag],
+                    )
+                    synced += 1
+                    all_items.append(item)
+
+            logger.info(f"Amazon purchases sync: {synced} saved, {skipped} skipped")
+            return {
+                "synced": synced,
+                "skipped": skipped,
+                "total_emails": len(emails),
+                "items": all_items,
+            }
+
+    except Exception as e:
+        logger.error(f"Amazon purchases sync error: {e}")
+        return {"error": str(e), "synced": 0}
+
+
+async def get_amazon_purchases_data() -> dict[str, Any]:
+    """Sync Amazon purchase confirmation emails to Second Brain.
+
+    Searches Gmail for order confirmations from the last 2 days,
+    parses items/prices, classifies as business/personal via Monzo,
+    and saves structured entries to Second Brain.
+    """
+    return await _sync_amazon_emails(
+        query="from:auto-confirm@amazon.co.uk subject:Ordered newer_than:2d",
+        limit=20,
+        timeout=30,
+    )
+
+
+async def get_amazon_purchases_backfill_data(days: int = 365) -> dict[str, Any]:
+    """Backfill Amazon purchases from the last N days.
+
+    Same as get_amazon_purchases_data but with a wider time window.
+    """
+    return await _sync_amazon_emails(
+        query=f"from:auto-confirm@amazon.co.uk subject:Ordered newer_than:{days}d",
+        limit=200,
+        timeout=60,
+    )
+
+
 # ============================================================
 # PHASE 8a: Gmail / Calendar / Notion Data Fetchers
 # Uses Hadley API (localhost:8100) for all requests
@@ -2729,4 +3040,6 @@ SKILL_DATA_FETCHERS = {
     "github-weekly": get_github_weekly_data,
     # Subscriptions
     "subscription-monitor": get_subscription_monitor_data,
+    # Amazon purchases
+    "amazon-purchases": get_amazon_purchases_data,
 }

@@ -66,8 +66,19 @@ This ensures Peter's knowledge base stays in sync with new features.
     - `SCHEDULE.md` - Scheduled jobs definition
     - `skills/` - Skill definitions for scheduled jobs
 - `domains/claude_code/` - Direct Claude Code tunnel (dumb pipe)
+- `domains/second_brain/` - Second Brain knowledge base (Supabase + pgvector)
+  - `seed/adapters/` - Import adapters (email, calendar, GitHub, Garmin, recipes, finance)
 - `peter_dashboard/` - Dashboard Web UI (port 5000)
 - `hadley_api/` - REST API for external services (port 8100)
+- `mcp_servers/` - MCP servers for Claude Desktop & Claude Code
+  - `second_brain_mcp.py` - Knowledge base search & save (6 tools)
+  - `financial_data_mcp.py` - Personal finance + Hadley Bricks business data (11 tools)
+  - `financial_data/` - Financial data query modules
+    - `config.py` - Env vars, date helpers
+    - `supabase_client.py` - httpx async client (finance + public schema)
+    - `personal_finance.py` - Net worth, budget, spending, savings, FIRE, transactions
+    - `business_finance.py` - Platform revenue, P&L (eBay, Amazon, BrickLink, Brick Owl)
+    - `formatters.py` - Currency/table formatting
 
 ## Key Patterns
 

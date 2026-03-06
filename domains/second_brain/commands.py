@@ -50,6 +50,7 @@ async def handle_save(
             capture_type=CaptureType.EXPLICIT,
             user_note=user_note,
             user_tags=user_tags,
+            source_system="discord:save-command",
         )
 
         if not item:

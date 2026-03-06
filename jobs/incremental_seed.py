@@ -30,6 +30,13 @@ ADAPTER_LABELS = {
     "github-projects": "GitHub",
     "garmin-activities": "Garmin",
     "bookmarks": "Bookmarks",
+    "email-link-scraper": "Email Links",
+    "hadley-bricks-email": "HB Email",
+    "finance-summary": "Finance",
+    "family-fuel-recipes": "Recipes",
+    "spotify-listening": "Spotify",
+    "netflix-viewing": "Netflix",
+    "travel-bookings": "Travel",
 }
 
 
@@ -126,11 +133,12 @@ async def incremental_seed_import(bot=None):
     - GitHub: 30 items (new commits/repos)
     - Garmin: 30 items (recent activities/health data)
     - Bookmarks: 50 items (from Chrome's live file — dedup handles repeats)
+    - Email Links: 10 items (Gousto recipes, Airbnb bookings scraped from email links)
     """
     from domains.second_brain.seed.runner import run_seed_import, get_available_adapters
 
     # Import adapters to register them
-    from domains.second_brain.seed.adapters import calendar, email, github, garmin, bookmarks
+    from domains.second_brain.seed.adapters import calendar, email, github, garmin, bookmarks, email_links, hadley_bricks_email, finance_summary, recipes, spotify, netflix, travel
 
     adapters = get_available_adapters()
 
@@ -141,7 +149,26 @@ async def incremental_seed_import(bot=None):
         "github-projects": 30,
         "garmin-activities": 30,
         "bookmarks": 50,
+        "email-link-scraper": 10,
+        "hadley-bricks-email": 100,
     }
+
+    # Recipes: sync all (dedup handles repeats, low volume)
+    adapter_limits["family-fuel-recipes"] = 500
+
+    # Spotify: daily listening history + monthly top tracks
+    adapter_limits["spotify-listening"] = 50
+
+    # Netflix: viewing history (weekly scrape is enough, dedup handles repeats)
+    adapter_limits["netflix-viewing"] = 100
+
+    # Travel: booking confirmations + check-in instructions from Gmail
+    adapter_limits["travel-bookings"] = 100
+
+    # Finance summary runs monthly (2nd of month generates previous month's summary)
+    from datetime import date
+    if date.today().day <= 3:
+        adapter_limits["finance-summary"] = 1
 
     results = []
     outcomes: list[_AdapterOutcome] = []
@@ -175,6 +202,16 @@ async def incremental_seed_import(bot=None):
                 config = {"years_back": 0.02}  # ~1 week of activities
             elif adapter_name == "bookmarks":
                 config = {"file_path": CHROME_BOOKMARKS_PATH}
+            elif adapter_name == "email-link-scraper":
+                config = {"years_back": 0.1, "per_scraper_limit": 10}
+            elif adapter_name == "hadley-bricks-email":
+                config = {"years_back": 0.1, "per_category_limit": 20}
+            elif adapter_name == "spotify-listening":
+                config = {"include_recent": True, "include_top": True, "recent_limit": 50}
+            elif adapter_name == "netflix-viewing":
+                config = {"max_pages": 2}
+            elif adapter_name == "travel-bookings":
+                config = {"years_back": 0.5, "per_provider_limit": 10, "include_checkin": True}
 
             adapter = adapter_class(config)
 
@@ -210,6 +247,17 @@ async def incremental_seed_import(bot=None):
             logger.error(f"Adapter {adapter_name} failed: {e}")
             outcomes.append(_AdapterOutcome(label=label, validated=False, validate_error=str(e)[:30]))
 
+    # --- Provider discovery: flag unknown travel providers ---
+    provider_suggestions = []
+    try:
+        from domains.second_brain.seed.adapters.travel import TravelBookingAdapter
+        travel_adapter = TravelBookingAdapter({"years_back": 1.0})
+        provider_suggestions = await travel_adapter.discover_unknown_providers()
+        if provider_suggestions:
+            logger.info(f"Travel provider discovery: {len(provider_suggestions)} suggestions")
+    except Exception as e:
+        logger.warning(f"Travel provider discovery failed: {e}")
+
     logger.info(
         f"Incremental seed complete: {total_imported} imported, "
         f"{total_skipped} skipped, {total_failed} failed"
@@ -225,6 +273,19 @@ async def incremental_seed_import(bot=None):
                 message = _build_summary_message(outcomes)
                 await channel.send(message)
                 logger.info("Posted seed import summary to #alerts")
+
+                # Post provider discovery suggestions
+                if provider_suggestions:
+                    lines = ["\U0001F50D **Travel Provider Discovery**", ""]
+                    lines.append("Spotted repeat booking emails from providers we don't track yet:")
+                    for s in provider_suggestions[:5]:
+                        lines.append(f"- **{s['domain']}** ({s['count']} emails)")
+                        for subj in s['sample_subjects'][:2]:
+                            lines.append(f"  \u2022 {subj}")
+                    lines.append("")
+                    lines.append('Say "add X as a travel provider" to start tracking.')
+                    await channel.send("\n".join(lines))
+                    logger.info(f"Posted {len(provider_suggestions)} provider suggestions to #alerts")
             else:
                 logger.warning(f"Could not find #alerts channel {ALERTS_CHANNEL_ID}")
         except Exception as e:

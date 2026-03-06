@@ -1,0 +1,15 @@
+{
+  "browser": {
+    "launchOptions": {
+      "executablePath": "/home/chris_hadley/.cache/ms-playwright/chromium-1212/chrome-linux64/chrome",
+      "args": [
+        "--disable-blink-features=AutomationControlled",
+        "--no-first-run",
+        "--no-default-browser-check"
+      ]
+    },
+    "contextOptions": {
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    }
+  }
+}

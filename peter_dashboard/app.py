@@ -424,13 +424,16 @@ templates = Jinja2Templates(directory=str(_templates_dir)) if _templates_dir.exi
 try:
     from .api import jobs as jobs_api
     from .api import logs as logs_api
+    from .api import subscriptions as subscriptions_api
 except ImportError:
     from api import jobs as jobs_api  # When running directly with uvicorn
     from api import logs as logs_api
+    from api import subscriptions as subscriptions_api
 
 # Register API routers
 app.include_router(jobs_api.router)
 app.include_router(logs_api.router, prefix="/api/logs")
+app.include_router(subscriptions_api.router)
 
 # Configuration
 CONFIG = {

@@ -5,6 +5,9 @@ import discord
 from logger import logger
 from .store import mark_reminder_fired
 
+# Guard against duplicate execution (multiple APScheduler triggers for same ID)
+_fired_ids: set[str] = set()
+
 
 async def execute_reminder(
     task: str,
@@ -24,6 +27,15 @@ async def execute_reminder(
         reminder_id: The reminder ID
         bot: Discord bot instance
     """
+    # Prevent duplicate execution — mark fired BEFORE doing anything
+    if reminder_id in _fired_ids:
+        logger.warning(f"Skipping duplicate execution of reminder {reminder_id}")
+        return
+    _fired_ids.add(reminder_id)
+
+    # Mark as fired in Supabase immediately (at-most-once delivery)
+    await mark_reminder_fired(reminder_id)
+
     try:
         channel = bot.get_channel(channel_id)
         if not channel:
@@ -44,10 +56,6 @@ async def execute_reminder(
 
     except Exception as e:
         logger.error(f"Failed to execute reminder {reminder_id}: {e}")
-
-    finally:
-        # Mark as fired in Supabase (keeps history, prevents re-fire on restart)
-        await mark_reminder_fired(reminder_id)
 
 
 def _is_actionable(task: str) -> bool:
@@ -79,7 +87,7 @@ async def _trigger_peter(channel, task: str, user_id: int, bot):
     """
     try:
         # Import here to avoid circular imports
-        from ..router import handle_message
+        from ..router_v2 import handle_message
 
         # Prefix so Peter knows this is from the reminder system
         reminder_prompt = f"[REMINDER TRIGGERED] The user set a reminder to: {task}. Please help them with this now."

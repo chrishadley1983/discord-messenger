@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 
 import httpx
 
-from config import GROK_API_KEY, ANTHROPIC_API_KEY
+from config import GROK_API_KEY, call_claude_via_cli
 from logger import logger
 
 # Channel ID for #ai-briefings
@@ -28,7 +28,6 @@ AI_BRIEFINGS_CHANNEL_ID = 1465277483866788037
 
 # Models
 GROK_MODEL = "grok-4-1-fast"
-SONNET_MODEL = "claude-sonnet-4-20250514"
 
 
 def _extract_urls_with_context(text: str, url_pattern: str) -> list[dict]:
@@ -403,9 +402,6 @@ async def _fetch_raw_data_from_grok() -> str:
 async def _curate_with_sonnet(raw_data: str, date_str: str) -> str:
     """Stage 2: Use Sonnet to curate raw data into polished briefing."""
     try:
-        if not ANTHROPIC_API_KEY:
-            return raw_data  # Fallback to raw if no API key
-
         prompt = f"""You are curating an AI morning briefing for Discord. Here's VERIFIED search results with REAL URLs from X, Reddit, and web sources:
 
 ---
@@ -421,37 +417,27 @@ Create a polished, engaging briefing. IMPORTANT:
 
 Format:
 
-**☀️ AI Morning Briefing — {date_str}**
+**AI Morning Briefing -- {date_str}**
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**📰 NEWS HEADLINES**
+NEWS HEADLINES
 > 5 most significant AI stories from Web Articles
 > Format: **One-liner summary** <exact-url-from-data>
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**🛠️ CLAUDE CODE CORNER**
+CLAUDE CODE CORNER
 > 5 Claude Code related items from ANY source
 > Format: **One-liner summary** <exact-url-from-data>
 > If none found: "Nothing found today - submit your projects!"
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**💬 COMMUNITY BUZZ**
+COMMUNITY BUZZ
 > 5 interesting X posts from the X section
 > Format: **@handle: One-liner summary** <exact-url-from-data>
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**📢 REDDIT ROUNDUP**
+REDDIT ROUNDUP
 > 5 interesting Reddit discussions
 > Format: **One-liner summary** (r/subreddit) <exact-url-from-data>
 > If none found: "No Reddit buzz today"
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**🤖 MOLTBOT CORNER**
+MOLTBOT CORNER
 > 5 Moltbot/Clawdbot/OpenClaw mentions FROM THE DATA
 > Format: **One-liner summary** <exact-url-from-data>
 > If nothing found: "Quiet day in the Moltverse"
@@ -463,33 +449,15 @@ RULES:
 - If a section has fewer than 5 items, include all available
 - Do NOT invent or hallucinate any URLs"""
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
-                },
-                json={
-                    "model": SONNET_MODEL,
-                    "max_tokens": 4000,
-                    "messages": [{"role": "user", "content": prompt}]
-                },
-                timeout=60
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                content = data["content"][0]["text"]
-                logger.info(f"Sonnet curation complete ({len(content)} chars)")
-                return content
-            else:
-                logger.error(f"Sonnet API error {response.status_code}: {response.text}")
-                return raw_data  # Fallback to raw
+        result = await call_claude_via_cli(prompt, max_tokens=4000, timeout=60)
+        if result:
+            logger.info(f"Claude curation complete ({len(result)} chars)")
+            return result
+        logger.warning("Claude curation returned no result, using raw data")
+        return raw_data
 
     except Exception as e:
-        logger.error(f"Sonnet curation error: {e}")
+        logger.error(f"Claude curation error: {e}")
         return raw_data
 
 
