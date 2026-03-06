@@ -23,20 +23,11 @@ from config import (
     GOOGLE_MAPS_API_KEY,
     SUPABASE_URL,
     SUPABASE_KEY,
-    TWILIO_ACCOUNT_SID,
-    TWILIO_AUTH_TOKEN,
-    TWILIO_WHATSAPP_FROM
 )
 from logger import logger
 
 # Discord channel for school run reports
 SCHOOL_RUN_CHANNEL_ID = 1466522078462083325  # #traffic-reports
-
-# WhatsApp recipients (when Twilio is configured)
-RECIPIENTS = [
-    "+447856182831",  # Abby
-    "+447855620978",  # Chris
-]
 
 # Route details
 ORIGIN = "47 Correnden Road, TN10 3AU"
@@ -68,10 +59,9 @@ TONBRIDGE_LON = 0.2833
 
 # Uniform schedules
 # Max: PE on Monday, Thursday
-# Emmie: PE on Wednesday, Friday; Gymnastics on Thursday
+# Emmie: PE on Wednesday, Thursday
 MAX_PE_DAYS = [0, 3]  # Monday=0, Thursday=3 (weekday() where Monday=0)
-EMMIE_PE_DAYS = [2, 4]  # Wednesday=2, Friday=4
-EMMIE_GYMNASTICS_DAYS = [3]  # Thursday=3
+EMMIE_PE_DAYS = [2, 3]  # Wednesday=2, Thursday=3
 
 # Day names for display
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
@@ -312,13 +302,7 @@ def _get_uniform(weekday: int) -> dict:
         weekday: Monday=0, Tuesday=1, etc.
     """
     max_uniform = "🏃 PE day – PE kit needed" if weekday in MAX_PE_DAYS else "School uniform ✅"
-
-    if weekday in EMMIE_GYMNASTICS_DAYS:
-        emmie_uniform = "🤸 Gymnastics kit needed"
-    elif weekday in EMMIE_PE_DAYS:
-        emmie_uniform = "🏃 PE day – PE kit needed"
-    else:
-        emmie_uniform = "School uniform ✅"
+    emmie_uniform = "🏃 PE day – PE kit needed" if weekday in EMMIE_PE_DAYS else "School uniform ✅"
 
     return {
         "max": max_uniform,
@@ -374,35 +358,23 @@ def _calculate_pickup_leave_time(eta_minutes: int, weekday: int) -> tuple[str, s
     return leave_time, pickup_time
 
 
-def _is_twilio_configured() -> bool:
-    """Check if Twilio credentials are configured."""
-    return all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM])
-
-
 async def _send_whatsapp(message: str):
-    """Send WhatsApp message via Twilio."""
+    """Send WhatsApp message via Evolution API."""
     try:
-        if not _is_twilio_configured():
-            logger.warning("Twilio credentials not configured - skipping WhatsApp")
-            return False
+        from integrations.whatsapp import send_to_recipients
 
-        from twilio.rest import Client as TwilioClient
-        client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        results = await send_to_recipients(message)
+        success = all(r["success"] for r in results)
 
-        for recipient in RECIPIENTS:
-            try:
-                client.messages.create(
-                    body=message,
-                    from_=f"whatsapp:{TWILIO_WHATSAPP_FROM}",
-                    to=f"whatsapp:{recipient}"
-                )
-                logger.info(f"Sent WhatsApp to {recipient}")
-            except Exception as e:
-                logger.error(f"Failed to send WhatsApp to {recipient}: {e}")
+        for r in results:
+            if r["success"]:
+                logger.info(f"Sent WhatsApp to {r['number']}")
+            else:
+                logger.error(f"Failed to send WhatsApp to {r['number']}: {r['result']}")
 
-        return True
+        return success
     except Exception as e:
-        logger.error(f"Twilio error: {e}")
+        logger.error(f"WhatsApp error: {e}")
         return False
 
 
@@ -522,8 +494,7 @@ async def school_run_report(bot):
         message = "\n".join(lines)
 
         # Send to both WhatsApp AND Discord
-        if _is_twilio_configured():
-            await _send_whatsapp(message)
+        await _send_whatsapp(message)
 
         # Always send to Discord as well
         await _send_discord(bot, message)
@@ -616,8 +587,7 @@ async def school_pickup_report(bot):
         message = "\n".join(lines)
 
         # Send to both WhatsApp AND Discord
-        if _is_twilio_configured():
-            await _send_whatsapp(message)
+        await _send_whatsapp(message)
 
         await _send_discord(bot, message)
 

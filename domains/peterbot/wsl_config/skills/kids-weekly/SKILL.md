@@ -19,16 +19,31 @@ whatsapp: true
 ## Purpose
 
 Two modes:
-1. **Next Week** — Scheduled Sunday 18:00. Planning view of the coming Mon–Sun.
+1. **Next Week** — Scheduled Sunday 18:10. Planning view of the coming Mon-Sun.
 2. **Last Week** — On demand only ("kids last week"). Review of what happened.
 
 ## Data Sources
 
-### 1. Activity Config
+### 1. Clubs & Activities (Supabase `evening_clubs` table)
 
-Read `activities.json` from the `kids-daily` skill directory for recurring activities.
+Source of truth for recurring activities. Query all active clubs:
 
-### 2. Calendar Events
+```bash
+curl -s "${SUPABASE_URL}/rest/v1/evening_clubs?is_active=eq.true&select=child_name,club_name,pickup_time,pickup_location,notes,weekday,time_category" \
+  -H "apikey: ${SUPABASE_KEY}" \
+  -H "Authorization: Bearer ${SUPABASE_KEY}"
+```
+
+- `weekday`: 0=Monday, 1=Tuesday, ... 6=Sunday
+- `time_category`: "morning" (during school) or "afternoon" (after school / evening)
+
+### 2. Uniform / PE Days
+
+Hardcoded in `jobs/school_run.py`:
+- **Max**: PE on Monday (0), Thursday (3)
+- **Emmie**: PE on Wednesday (2), Thursday (3)
+
+### 3. Calendar Events
 
 Fetch from Hadley API for the relevant week:
 
@@ -40,9 +55,9 @@ curl -s "http://172.19.64.1:8100/calendar/range?start_date=YYYY-MM-DD&end_date=Y
 curl -s "http://172.19.64.1:8100/calendar/range?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD"
 ```
 
-Calculate the correct Monday–Sunday date range for next or last week.
+Calculate the correct Monday-Sunday date range for next or last week.
 
-### 3. School Data
+### 4. School Data
 
 Search Second Brain for school notices relevant to the period:
 
@@ -50,52 +65,57 @@ Search Second Brain for school notices relevant to the period:
 mcp__second-brain__search_knowledge("Stocks Green school next week", limit=5)
 ```
 
-### 4. Spellings
+### 5. Spellings
 
 For next week, show the upcoming spelling words. For last week, show what they were practising.
 
 The current spelling week number is calculated by the school data fetcher. For next week, add 1. For last week, subtract 1.
 
+## Children
+
+- **Max** (Year 2) — emoji: boy
+- **Emmie** (Year 4) — emoji: girl
+
 ## Determining Mode
 
-- **Scheduled (Sunday 18:00)**: Always "Next Week"
+- **Scheduled (Sunday 18:10)**: Always "Next Week"
 - **Conversational**: Determine from trigger:
-  - "next week", "this week", "coming week" → Next Week
-  - "last week", "past week" → Last Week
-  - Ambiguous → Ask: "Do you want next week's plan or last week's review?"
+  - "next week", "this week", "coming week" -> Next Week
+  - "last week", "past week" -> Last Week
+  - Ambiguous -> Ask: "Do you want next week's plan or last week's review?"
 
 ## Output Format — Next Week
 
 ```
-📅 **Kids Next Week** — 10–16 Mar
+KIDS NEXT WEEK — 10-16 Mar
 
-👦 **MAX (Year 6)**
-  Mon: School
-  Tue: School → Swimming 4pm 🏊
-  Wed: School → Afterschool Club 🏫 (pickup 4:30pm)
-  Thu: School
-  Fri: School → Swimming 4pm 🏊
-  Sat: Piano 11am 🎹
-  Sun: Piano 11am 🎹
+MAX (Year 2)
+  Mon: School (PE kit)
+  Tue: School -> Swimming 4pm
+  Wed: School -> Afterschool Club (pickup 4:30pm)
+  Thu: School (PE kit)
+  Fri: School -> Swimming 4pm
+  Sat: Piano 11am
+  Sun: Piano 11am
 
-👧 **EMMIE (Year 4)**
-  Mon: School → Tutoring 4pm 📚
-  Tue: School → Swimming 4pm 🏊
-  Wed: School → Afterschool Club 🏫 (pickup 4:30pm)
-  Thu: School
-  Fri: School → Swimming 4pm 🏊
-  Sat: Piano 11am 🎹
-  Sun: Piano 11am 🎹, Tutoring 4pm 📚
+EMMIE (Year 4)
+  Mon: School -> Tutoring 4pm
+  Tue: School -> Choir 12-1pm, Swimming 4pm
+  Wed: School (PE kit) -> Afterschool Club (pickup 4:30pm)
+  Thu: School (PE kit)
+  Fri: School -> Swimming 4pm
+  Sat: Piano 11am
+  Sun: Piano 11am, Tutoring 4pm
 
-📝 **Spellings** — Week 20
-  👦 Max: [word list or phoneme]
-  👧 Emmie: [word list or phoneme]
+Spellings — Week 20
+  Max: [word list or phoneme]
+  Emmie: [word list or phoneme]
 
-🎒 **Kit to prepare:**
+Kit to prepare:
   Mon night: Swimming kit (both) for Tuesday
   Thu night: Swimming kit (both) for Friday
 
-⚠️ **Heads up:**
+Heads up:
   - [Any school events, trips, non-uniform days, etc.]
   - [Any one-off calendar events — parties, playdates]
 ```
@@ -103,29 +123,29 @@ The current spelling week number is calculated by the school data fetcher. For n
 ## Output Format — Last Week
 
 ```
-📋 **Kids Last Week** — 3–9 Mar
+KIDS LAST WEEK — 3-9 Mar
 
-👦 **MAX (Year 6)**
-  Mon: School ✓
-  Tue: School → Swimming ✓
-  Wed: School → Afterschool Club ✓
-  Thu: School ✓
-  Fri: School → Swimming ✓
-  Sat: Piano ✓
-  Sun: Piano ✓
+MAX (Year 2)
+  Mon: School
+  Tue: School -> Swimming
+  Wed: School -> Afterschool Club
+  Thu: School
+  Fri: School -> Swimming
+  Sat: Piano
+  Sun: Piano
 
-👧 **EMMIE (Year 4)**
-  Mon: School → Tutoring ✓
-  Tue: School → Swimming ✓
-  Wed: School → Afterschool Club ✓
-  Thu: School ✓
-  Fri: School → Swimming ✓
-  Sat: Piano ✓
-  Sun: Piano ✓, Tutoring ✓
+EMMIE (Year 4)
+  Mon: School -> Tutoring
+  Tue: School -> Choir, Swimming
+  Wed: School -> Afterschool Club
+  Thu: School
+  Fri: School -> Swimming
+  Sat: Piano
+  Sun: Piano, Tutoring
 
-📝 **Spellings were:** Week 19 (phoneme "m") — [word list]
+Spellings were: Week 19 (phoneme "m") — [word list]
 
-🏫 **School notices last week:**
+School notices last week:
   - [Any newsletters, announcements, event follow-ups]
 ```
 
@@ -133,16 +153,16 @@ The current spelling week number is calculated by the school data fetcher. For n
 
 ### Building the weekly grid
 
-1. For each day (Mon–Sun), determine the date
-2. Look up recurring activities from `activities.json` for that day of week
-3. Merge any one-off calendar events (filter for kids-related — see kids-daily for keywords)
+1. For each day (Mon-Sun), determine the date
+2. Query `evening_clubs` for all active clubs, group by weekday
+3. Merge any one-off calendar events (filter for kids-related)
 4. Build per-child per-day summary line
-5. Weekdays: prefix with "School" (unless INSET/holiday)
+5. Weekdays: prefix with "School" (unless INSET/holiday), include PE kit note on PE days
 6. Weekend: just show activities or "Free"
 
 ### Kit summary (Next Week only)
 
-- Scan all days for activities with `kit` specified
+- Scan all days for activities that need kit (swimming kit, etc.)
 - Show which night to pack for which day's activity
 - E.g., "Mon night: Swimming kit for Tuesday"
 
@@ -154,7 +174,7 @@ The current spelling week number is calculated by the school data fetcher. For n
 
 ### Last Week — tick marks
 
-- For "last week" mode, show ✓ after each activity
+- For "last week" mode, show activities without times (briefer)
 - If a school event happened, mention it
 - Include any tutoring feedback if found in Second Brain
 
@@ -168,6 +188,6 @@ The current spelling week number is calculated by the school data fetcher. For n
 - Keep it structured and scannable
 - Always show BOTH children with their year groups
 - Spelling words only if available from school data
-- For "next week", emphasise preparation (kit, heads up)
+- For "next week", emphasise preparation (kit, heads up, PE days)
 - For "last week", keep it brief — just confirmation + any notable events
 - Posts to both Discord AND WhatsApp
