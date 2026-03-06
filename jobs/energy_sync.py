@@ -15,10 +15,17 @@ import os
 from logger import logger
 
 # Path to energy scripts (in hadley-bricks repo)
-ENERGY_SCRIPTS_DIR = os.path.join(
-    os.path.expanduser("~"), "claude-projects",
-    "hadley-bricks-inventory-management", "scripts", "energy",
-)
+# Bot runs on WSL but repo lives on Windows — use /mnt/c path
+_home = os.path.expanduser("~")
+if _home.startswith("/home/"):
+    # WSL: access Windows filesystem via /mnt/c
+    ENERGY_SCRIPTS_DIR = "/mnt/c/Users/Chris Hadley/claude-projects/hadley-bricks-inventory-management/scripts/energy"
+else:
+    # Windows native
+    ENERGY_SCRIPTS_DIR = os.path.join(
+        _home, "claude-projects",
+        "hadley-bricks-inventory-management", "scripts", "energy",
+    )
 
 
 def _run_script(name: str, script: str, timeout: int = 300) -> tuple[bool, str]:
