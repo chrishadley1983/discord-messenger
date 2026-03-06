@@ -42,6 +42,7 @@ Run `!reload-schedule` after editing to apply changes.
 | HB Full Sync + Print | hb-full-sync-print | 09:35 UK | #peterbot | yes |
 | Weekly Spellings | school-weekly-spellings | Mon 07:30 UK | #peter-chat+WhatsApp:group | yes |
 | Subscription Monitor | subscription-monitor | Sunday 09:00 UK | #alerts+WhatsApp:chris | yes |
+| Property Valuation | property-valuation | 1st 10:15 UK | #peterbot | yes |
 
 ## Interval Jobs
 

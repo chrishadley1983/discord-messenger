@@ -683,6 +683,20 @@
     "description": "Check Evolution API WhatsApp connection health",
     "channel": null
   },
+  "property-valuation": {
+    "triggers": [
+      "how much is the house worth",
+      "property value",
+      "house value",
+      "home valuation",
+      "what's our house worth",
+      "house price"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Monthly home valuation using HM Land Registry House Price Index",
+    "channel": null
+  },
   "youtube-digest": {
     "triggers": [
       "youtube",
