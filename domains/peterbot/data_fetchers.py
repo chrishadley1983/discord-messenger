@@ -796,6 +796,363 @@ async def get_football_scores_data() -> dict[str, Any]:
         return {"error": str(e), "matches": []}
 
 
+async def get_pl_results_data() -> dict[str, Any]:
+    """Fetch today's finished Premier League matches for end-of-day roundup.
+
+    Returns NO_REPLY trigger if no finished matches today.
+    """
+    import httpx
+    from config import FOOTBALL_DATA_API_KEY
+
+    today = datetime.now(UK_TZ).date().isoformat()
+
+    try:
+        if not FOOTBALL_DATA_API_KEY:
+            return {"error": "Football Data API key not configured", "matches": []}
+
+        url = "https://api.football-data.org/v4/competitions/PL/matches"
+        params = {"dateFrom": today, "dateTo": today, "status": "FINISHED"}
+        headers = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+        matches = data.get("matches", [])
+        if not matches:
+            return {"no_matches": True}
+
+        formatted = []
+        for m in matches:
+            formatted.append({
+                "home": m["homeTeam"]["shortName"],
+                "away": m["awayTeam"]["shortName"],
+                "home_score": m["score"]["fullTime"]["home"],
+                "away_score": m["score"]["fullTime"]["away"],
+                "status": "FINISHED",
+                "minute": None,
+                "kickoff": m["utcDate"],
+            })
+
+        formatted.sort(key=lambda x: x["kickoff"])
+
+        logger.info(f"PL results fetch: {len(formatted)} finished matches")
+        return {"matches": formatted, "date": today}
+
+    except Exception as e:
+        logger.error(f"PL results fetch error: {e}")
+        return {"error": str(e), "matches": []}
+
+
+async def get_spurs_live_data() -> dict[str, Any]:
+    """Fetch live Spurs match data for 10-minute update cycle.
+
+    Short-circuits with spurs_playing=false on non-match days (~100ms).
+    Only returns full data during match window (kickoff-15min to FT+15min).
+    """
+    import httpx
+    from config import FOOTBALL_DATA_API_KEY
+
+    today = datetime.now(UK_TZ).date().isoformat()
+    now = datetime.now(UK_TZ)
+
+    try:
+        if not FOOTBALL_DATA_API_KEY:
+            return {"spurs_playing": False, "error": "No API key"}
+
+        url = "https://api.football-data.org/v4/competitions/PL/matches"
+        params = {"dateFrom": today, "dateTo": today}
+        headers = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+        matches = data.get("matches", [])
+        spurs_match = None
+        for m in matches:
+            if m["homeTeam"]["id"] == 73 or m["awayTeam"]["id"] == 73:
+                spurs_match = m
+                break
+
+        if not spurs_match:
+            return {"spurs_playing": False}
+
+        # Parse kickoff time
+        kickoff_str = spurs_match["utcDate"]
+        kickoff = datetime.fromisoformat(kickoff_str.replace("Z", "+00:00")).astimezone(UK_TZ)
+
+        # Match window: 15 min before kickoff to 15 min after expected FT (~105 min)
+        window_start = kickoff - timedelta(minutes=15)
+        window_end = kickoff + timedelta(minutes=120)
+
+        status = spurs_match["status"]
+        is_live = status in ("IN_PLAY", "LIVE", "PAUSED")
+        is_finished = status == "FINISHED"
+
+        # Outside window and not live/finished -> silent
+        if not is_live and not is_finished and (now < window_start or now > window_end):
+            return {"spurs_playing": False}
+
+        # Build match data
+        home = spurs_match["homeTeam"]["shortName"]
+        away = spurs_match["awayTeam"]["shortName"]
+        score = spurs_match["score"]
+        scorers = []
+        if spurs_match.get("goals"):
+            for g in spurs_match["goals"]:
+                scorers.append({
+                    "player": g.get("scorer", {}).get("name", "Unknown"),
+                    "minute": g.get("minute"),
+                    "team": g.get("team", {}).get("shortName", ""),
+                })
+
+        return {
+            "spurs_playing": True,
+            "home": home,
+            "away": away,
+            "home_score": score["fullTime"]["home"] if score["fullTime"]["home"] is not None else score.get("halfTime", {}).get("home", 0),
+            "away_score": score["fullTime"]["away"] if score["fullTime"]["away"] is not None else score.get("halfTime", {}).get("away", 0),
+            "status": status,
+            "minute": spurs_match.get("minute"),
+            "kickoff": kickoff_str,
+            "kickoff_uk": kickoff.strftime("%H:%M"),
+            "scorers": scorers,
+            "venue": spurs_match.get("venue", ""),
+            "date": today,
+        }
+
+    except Exception as e:
+        logger.error(f"Spurs live fetch error: {e}")
+        return {"spurs_playing": False, "error": str(e)}
+
+
+async def get_cricket_scores_data() -> dict[str, Any]:
+    """Fetch yesterday's cricket scores from CricAPI (cricketdata.org).
+
+    Covers: English Domestic, Australian Domestic, IPL, International.
+    Returns no_matches=true if nothing yesterday.
+    """
+    import httpx
+    from config import CRICKET_API_KEY
+
+    yesterday = (datetime.now(UK_TZ) - timedelta(days=1)).date().isoformat()
+
+    try:
+        if not CRICKET_API_KEY:
+            return {"error": "Cricket API key not configured — sign up at cricketdata.org"}
+
+        url = "https://api.cricapi.com/v1/currentMatches"
+        params = {"apikey": CRICKET_API_KEY, "offset": 0}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+
+        if data.get("status") != "success":
+            return {"error": data.get("status", "API error"), "matches_by_competition": {}}
+
+        all_matches = data.get("data", [])
+
+        # Filter to matches that were active yesterday
+        competitions = {
+            "International": [],
+            "IPL": [],
+            "English Domestic": [],
+            "Australian Domestic": [],
+            "Other": [],
+        }
+
+        for m in all_matches:
+            match_date = m.get("date", "")
+            if not match_date.startswith(yesterday):
+                # Also check dateTimeGMT for multi-day matches active yesterday
+                dt_str = m.get("dateTimeGMT", "")
+                if not dt_str or yesterday not in dt_str:
+                    continue
+
+            entry = {
+                "name": m.get("name", ""),
+                "status": m.get("status", ""),
+                "match_type": m.get("matchType", ""),
+                "venue": m.get("venue", ""),
+                "score": m.get("score", []),
+                "teams": m.get("teams", []),
+            }
+
+            series = (m.get("series_id", "") + " " + m.get("name", "")).lower()
+            if m.get("matchType") in ("t20i", "odi", "test") or "international" in series:
+                competitions["International"].append(entry)
+            elif "ipl" in series or "indian premier" in series:
+                competitions["IPL"].append(entry)
+            elif any(k in series for k in ("county", "vitality", "hundred", "blast", "royal london")):
+                competitions["English Domestic"].append(entry)
+            elif any(k in series for k in ("sheffield", "big bash", "bbl")):
+                competitions["Australian Domestic"].append(entry)
+            else:
+                competitions["Other"].append(entry)
+
+        # Remove empty categories
+        competitions = {k: v for k, v in competitions.items() if v}
+
+        if not competitions:
+            return {"no_matches": True}
+
+        total = sum(len(v) for v in competitions.values())
+        logger.info(f"Cricket scores fetch: {total} matches across {len(competitions)} competitions")
+        return {"matches_by_competition": competitions, "date": yesterday}
+
+    except Exception as e:
+        logger.error(f"Cricket scores fetch error: {e}")
+        return {"error": str(e), "matches_by_competition": {}}
+
+
+async def get_saturday_sport_preview_data() -> dict[str, Any]:
+    """Fetch sport preview data for the coming week.
+
+    Combines football fixtures (Football-Data.org) and cricket fixtures (CricAPI).
+    Dover Athletic and TV schedule are handled by web search in the skill.
+    """
+    import httpx
+    from config import FOOTBALL_DATA_API_KEY, CRICKET_API_KEY
+
+    now = datetime.now(UK_TZ)
+    today = now.date().isoformat()
+    next_week = (now + timedelta(days=7)).date().isoformat()
+
+    result: dict[str, Any] = {"date": today, "week_ending": next_week}
+
+    # Football: next 7 days of PL fixtures (filter for Spurs specifically)
+    try:
+        if FOOTBALL_DATA_API_KEY:
+            url = "https://api.football-data.org/v4/competitions/PL/matches"
+            params = {"dateFrom": today, "dateTo": next_week}
+            headers = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
+
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=headers, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+
+            matches = data.get("matches", [])
+            all_fixtures = []
+            spurs_fixture = None
+            for m in matches:
+                fixture = {
+                    "home": m["homeTeam"]["shortName"],
+                    "away": m["awayTeam"]["shortName"],
+                    "kickoff": m["utcDate"],
+                    "status": m["status"],
+                }
+                all_fixtures.append(fixture)
+                if m["homeTeam"]["id"] == 73 or m["awayTeam"]["id"] == 73:
+                    spurs_fixture = fixture
+
+            result["pl_fixtures"] = all_fixtures
+            result["spurs_fixture"] = spurs_fixture
+        else:
+            result["pl_fixtures"] = []
+            result["pl_error"] = "No Football Data API key"
+    except Exception as e:
+        logger.error(f"Saturday preview football error: {e}")
+        result["pl_fixtures"] = []
+        result["pl_error"] = str(e)
+
+    # Cricket: upcoming matches (England + Kent focus)
+    try:
+        if CRICKET_API_KEY:
+            url = "https://api.cricapi.com/v1/matches"
+            params = {"apikey": CRICKET_API_KEY, "offset": 0}
+
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, params=params, timeout=15)
+                response.raise_for_status()
+                data = response.json()
+
+            if data.get("status") == "success":
+                upcoming = []
+                for m in data.get("data", []):
+                    match_date = m.get("date", "")
+                    if match_date and today <= match_date <= next_week:
+                        teams = m.get("teams", [])
+                        teams_lower = " ".join(teams).lower()
+                        is_england = "england" in teams_lower
+                        is_kent = "kent" in teams_lower
+                        if is_england or is_kent or m.get("matchType") in ("t20i", "odi", "test"):
+                            upcoming.append({
+                                "name": m.get("name", ""),
+                                "date": match_date,
+                                "match_type": m.get("matchType", ""),
+                                "venue": m.get("venue", ""),
+                                "teams": teams,
+                                "is_england": is_england,
+                                "is_kent": is_kent,
+                            })
+                result["cricket_fixtures"] = upcoming
+            else:
+                result["cricket_fixtures"] = []
+        else:
+            result["cricket_fixtures"] = []
+            result["cricket_error"] = "No Cricket API key"
+    except Exception as e:
+        logger.error(f"Saturday preview cricket error: {e}")
+        result["cricket_fixtures"] = []
+        result["cricket_error"] = str(e)
+
+    return result
+
+
+async def get_ballot_reminders_data() -> dict[str, Any]:
+    """Check Gmail for recent ticket ballot notifications.
+
+    Searches for ECB, FA, and Oval Invincibles ballot emails from the last 7 days.
+    Returns no_ballots=true if nothing found.
+    """
+    import httpx
+
+    try:
+        queries = [
+            '(from:ecb OR from:englandcricket OR from:kiaoval) (ballot OR "priority window" OR "register" OR ticket) newer_than:7d',
+            '(from:thefa OR from:englandfootball) (ballot OR "priority window" OR "register" OR ticket) newer_than:7d',
+        ]
+
+        all_ballots: list[dict] = []
+
+        async with httpx.AsyncClient() as client:
+            for query in queries:
+                try:
+                    response = await client.get(
+                        f"{HADLEY_API_URL}/gmail/search",
+                        params={"q": query, "max_results": 5},
+                        timeout=15,
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        messages = data.get("messages", [])
+                        for msg in messages:
+                            all_ballots.append({
+                                "subject": msg.get("subject", ""),
+                                "from": msg.get("from", ""),
+                                "date": msg.get("date", ""),
+                                "snippet": msg.get("snippet", ""),
+                            })
+                except Exception as e:
+                    logger.warning(f"Ballot Gmail search error: {e}")
+
+        if not all_ballots:
+            return {"no_ballots": True}
+
+        logger.info(f"Ballot reminders: {len(all_ballots)} emails found")
+        return {"ballots": all_ballots, "count": len(all_ballots)}
+
+    except Exception as e:
+        logger.error(f"Ballot reminders fetch error: {e}")
+        return {"error": str(e), "no_ballots": True}
+
+
 # ============================================================
 # PHASE 8a: Gmail / Calendar / Notion Data Fetchers
 # Uses Hadley API (localhost:8100) for all requests
@@ -1852,6 +2209,371 @@ async def get_school_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
+async def get_github_activity_data(mode: str = "daily") -> dict[str, Any]:
+    """Fetch GitHub activity for the github-activity skill.
+
+    Args:
+        mode: "daily" (yesterday) or "weekly" (last 7 days)
+
+    Returns:
+        Dict with commits and merged PRs per repo
+    """
+    import os
+    import httpx
+
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        return {"error": "GITHUB_TOKEN not configured"}
+
+    repos = [
+        "chrishadley1983/discord-messenger",
+        "chrishadley1983/hadley-bricks-inventory-management",
+        "chrishadley1983/finance-tracker",
+        "chrishadley1983/family-meal-planner",
+    ]
+
+    now = datetime.now(UK_TZ)
+    if mode == "weekly":
+        since = (now - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
+        wc_date = now - timedelta(days=7)
+        period_label = f"w/c {wc_date.day} {wc_date.strftime('%B')}"
+    else:
+        since = (now - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+        yesterday = now - timedelta(days=1)
+        period_label = f"{yesterday.strftime('%A')}, {yesterday.day} {yesterday.strftime('%B')}"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+    repo_data = {}
+    total_commits = 0
+    total_prs = 0
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            for repo_full in repos:
+                repo_name = repo_full.split("/")[1]
+
+                # Fetch commits since period start
+                commits_resp = await client.get(
+                    f"https://api.github.com/repos/{repo_full}/commits",
+                    headers=headers,
+                    params={"since": since, "per_page": 50},
+                )
+
+                commits = []
+                if commits_resp.status_code == 200:
+                    for c in commits_resp.json():
+                        msg = c.get("commit", {}).get("message", "")
+                        if msg.startswith("Merge ") or len(msg) < 10:
+                            continue
+                        commits.append({
+                            "sha": c.get("sha", "")[:7],
+                            "message": msg.split("\n")[0][:80],
+                            "author": c.get("commit", {}).get("author", {}).get("name", "Unknown"),
+                            "date": c.get("commit", {}).get("author", {}).get("date", ""),
+                            "url": c.get("html_url", ""),
+                        })
+
+                # Fetch merged PRs in period
+                prs_resp = await client.get(
+                    f"https://api.github.com/repos/{repo_full}/pulls",
+                    headers=headers,
+                    params={"state": "closed", "sort": "updated", "direction": "desc", "per_page": 20},
+                )
+
+                prs_merged = []
+                if prs_resp.status_code == 200:
+                    for pr in prs_resp.json():
+                        merged_at = pr.get("merged_at")
+                        if merged_at and merged_at >= since:
+                            prs_merged.append({
+                                "number": pr["number"],
+                                "title": pr["title"][:80],
+                                "merged_at": merged_at,
+                                "url": pr.get("html_url", ""),
+                            })
+
+                if commits or prs_merged:
+                    repo_data[repo_name] = {
+                        "commits": commits,
+                        "prs_merged": prs_merged,
+                        "commit_count": len(commits),
+                        "pr_count": len(prs_merged),
+                    }
+                    total_commits += len(commits)
+                    total_prs += len(prs_merged)
+
+        return {
+            "mode": mode,
+            "period": period_label,
+            "repos": repo_data,
+            "totals": {
+                "commits": total_commits,
+                "prs_merged": total_prs,
+                "active_repos": len(repo_data),
+            },
+            "fetch_time": now.strftime("%Y-%m-%d %H:%M"),
+        }
+
+    except Exception as e:
+        logger.error(f"GitHub activity data fetch error: {e}")
+        return {"error": str(e)}
+
+
+async def get_github_daily_data() -> dict[str, Any]:
+    """Daily wrapper - yesterday's activity."""
+    return await get_github_activity_data(mode="daily")
+
+
+async def get_github_weekly_data() -> dict[str, Any]:
+    """Weekly wrapper - last 7 days activity."""
+    return await get_github_activity_data(mode="weekly")
+
+
+# ---------------------------------------------------------------------------
+# Subscription Monitor
+# ---------------------------------------------------------------------------
+
+async def get_subscription_monitor_data() -> dict[str, Any]:
+    """Analyse subscriptions against bank transactions.
+
+    Detects: price changes, missed payments, new recurring charges,
+    upcoming renewals, and cancellation windows.
+    """
+    import re
+    from collections import defaultdict
+    from datetime import date
+
+    try:
+        from mcp_servers.financial_data.supabase_client import finance_query
+    except ImportError:
+        return {"error": "finance_query not available"}
+
+    now = datetime.now(UK_TZ)
+    today = date.today()
+    alerts: list[dict] = []
+
+    try:
+        # 1. Fetch all subscriptions
+        subs = await finance_query("subscriptions", {
+            "select": "*",
+            "order": "name.asc",
+        }, paginate=True)
+
+        active_subs = [s for s in subs if s.get("status") == "active"]
+
+        # 2. Fetch last 6 months of outgoing transactions for analysis
+        six_months_ago = (today - timedelta(days=180)).isoformat()
+        all_txns = await finance_query("transactions", {
+            "select": "description,amount,date",
+            "amount": "lt.0",
+            "date": f"gte.{six_months_ago}",
+            "order": "date.desc",
+        }, paginate=True)
+
+        # 3. For each active sub with a bank pattern, find matching transactions
+        tracked_patterns: list[str] = []
+        for sub in active_subs:
+            pattern = sub.get("bank_description_pattern")
+            if not pattern:
+                continue
+
+            clean = pattern.replace("*", "").strip()
+            if not clean:
+                continue
+
+            tracked_patterns.append(clean.lower())
+
+            # Find matching transactions
+            matching = [
+                t for t in all_txns
+                if clean.lower() in t.get("description", "").lower()
+            ]
+
+            if not matching:
+                continue
+
+            # --- Price change detection ---
+            stored_amount = abs(float(sub["amount"]))
+            latest_txn = matching[0]
+            latest_amount = abs(float(latest_txn["amount"]))
+
+            # Allow 10% tolerance for FX-converted amounts
+            if stored_amount > 0 and abs(latest_amount - stored_amount) / stored_amount > 0.10:
+                alerts.append({
+                    "type": "price_change",
+                    "subscription": sub["name"],
+                    "scope": sub.get("scope", "personal"),
+                    "old_amount": stored_amount,
+                    "new_amount": latest_amount,
+                    "last_transaction_date": latest_txn["date"],
+                    "description": latest_txn["description"][:60],
+                })
+
+            # --- Missed payment detection ---
+            freq = sub.get("frequency", "monthly")
+            expected_gap_days = {
+                "weekly": 10,
+                "fortnightly": 20,
+                "monthly": 45,
+                "quarterly": 105,
+                "termly": 140,
+                "annual": 400,
+            }.get(freq, 45)
+
+            latest_date = date.fromisoformat(latest_txn["date"])
+            days_since = (today - latest_date).days
+
+            if days_since > expected_gap_days:
+                alerts.append({
+                    "type": "missed_payment",
+                    "subscription": sub["name"],
+                    "scope": sub.get("scope", "personal"),
+                    "amount": stored_amount,
+                    "frequency": freq,
+                    "last_payment_date": latest_txn["date"],
+                    "days_overdue": days_since - expected_gap_days,
+                    "expected_by": (latest_date + timedelta(days=expected_gap_days)).isoformat(),
+                })
+
+        # 4. Cancellation window alerts
+        for sub in active_subs:
+            notice_days = sub.get("cancellation_notice_days")
+            renewal_date = sub.get("next_renewal_date")
+            if not notice_days or not renewal_date:
+                continue
+
+            renewal = date.fromisoformat(renewal_date)
+            deadline = renewal - timedelta(days=notice_days)
+            # Alert if within the cancellation window (deadline is in next 14 days)
+            if today <= deadline <= today + timedelta(days=14):
+                alerts.append({
+                    "type": "cancellation_window",
+                    "subscription": sub["name"],
+                    "scope": sub.get("scope", "personal"),
+                    "renewal_date": renewal_date,
+                    "cancellation_deadline": deadline.isoformat(),
+                    "amount": float(sub["amount"]),
+                    "frequency": sub.get("frequency", "monthly"),
+                })
+
+        # 5. Upcoming renewals (next 7 days)
+        upcoming = []
+        for sub in active_subs:
+            renewal_date = sub.get("next_renewal_date")
+            if not renewal_date:
+                continue
+            renewal = date.fromisoformat(renewal_date)
+            if today <= renewal <= today + timedelta(days=7):
+                upcoming.append({
+                    "name": sub["name"],
+                    "renewal_date": renewal_date,
+                    "amount": float(sub["amount"]),
+                    "frequency": sub.get("frequency", "monthly"),
+                    "scope": sub.get("scope", "personal"),
+                })
+
+        # 6. Detect new recurring transactions not yet tracked
+        groups: dict[str, list[dict]] = defaultdict(list)
+        for t in all_txns:
+            desc = t.get("description", "").strip()
+            norm = re.sub(r"\s+\d{2,}[/-]\d{2,}.*$", "", desc.lower()).strip()
+            norm = re.sub(r"\s+", " ", norm)
+            if norm:
+                groups[norm].append(t)
+
+        # Filter: 3+ occurrences, not already tracked, not MMBILL
+        # Load user-dismissed exclusions
+        exclusion_rows = await finance_query("subscription_exclusions", {
+            "select": "description_pattern",
+        })
+        user_exclusions = [r["description_pattern"].lower() for r in exclusion_rows]
+
+        # Exclude known non-subscription merchants
+        _EXCLUDE = {
+            "aldi", "tesco", "sainsbury", "lidl", "asda", "waitrose", "co-op",
+            "morrisons", "marks and spencer", "m&s", "ocado",
+            "pret a manger", "costa", "starbucks", "greggs", "mcdonalds",
+            "nandos", "pizza", "burger", "kitchen", "restaurant", "cafe",
+            "bar ", "pub ", "deli", "bakery", "chippy",
+            "tfl travel", "ringgo", "parking", "petrol", "shell", "bp ",
+            "amazon marketplace", "amazon.co.uk", "ebay", "paypal",
+            "hsbc", "non-sterling", "transaction fee", "interest",
+            "atm", "cash", "withdrawal",
+            "stocks green prima", "burnhill", "next directory",
+            "box bar", "se hildenborough", "accenture",
+        }
+
+        for desc, txs in groups.items():
+            if len(txs) < 3:
+                continue
+            if "mmbill" in desc.lower() or "mmbil" in desc.lower():
+                continue
+            if any(excl in desc for excl in _EXCLUDE):
+                continue
+            if any(excl in desc for excl in user_exclusions):
+                continue
+
+            already_tracked = any(tp in desc for tp in tracked_patterns)
+            if already_tracked:
+                continue
+
+            amounts = [abs(float(t["amount"])) for t in txs]
+            avg = sum(amounts) / len(amounts)
+            if avg < 2:
+                continue
+
+            # Subscription heuristic: consistent amounts (low CV)
+            if len(amounts) >= 3:
+                std_dev = (sum((a - avg) ** 2 for a in amounts) / len(amounts)) ** 0.5
+                cv = std_dev / avg if avg > 0 else 1
+                if cv > 0.20:
+                    continue
+
+            alerts.append({
+                "type": "new_recurring",
+                "description": txs[0].get("description", desc)[:60],
+                "avg_amount": round(avg, 2),
+                "occurrences": len(txs),
+                "first_seen": txs[-1].get("date", ""),
+                "latest": txs[0].get("date", ""),
+            })
+
+        # 7. Summary
+        total_monthly = sum(
+            _sub_monthly_cost(float(s["amount"]), s.get("frequency", "monthly"))
+            for s in active_subs
+        )
+
+        return {
+            "alerts": alerts,
+            "upcoming_renewals": upcoming,
+            "summary": {
+                "total_active": len(active_subs),
+                "total_monthly_cost": round(total_monthly, 2),
+                "alerts_count": len(alerts),
+                "scanned_transactions": len(all_txns),
+            },
+            "timestamp": now.strftime("%Y-%m-%d %H:%M"),
+        }
+
+    except Exception as e:
+        logger.error(f"Subscription monitor data fetch error: {e}")
+        return {"error": str(e)}
+
+
+def _sub_monthly_cost(amount: float, frequency: str) -> float:
+    """Convert any frequency to monthly cost."""
+    multipliers = {
+        "weekly": 52, "fortnightly": 26, "monthly": 12,
+        "quarterly": 4, "termly": 3, "annual": 1,
+    }
+    return amount * multipliers.get(frequency, 12) / 12
+
+
 # Map skill names to their data fetchers
 # Skills not in this dict use web search (news, etc.)
 SKILL_DATA_FETCHERS = {
@@ -1867,6 +2589,11 @@ SKILL_DATA_FETCHERS = {
     "morning-briefing": get_morning_briefing_data,
     "whatsapp-health": get_whatsapp_health_data,
     "football-scores": get_football_scores_data,
+    "pl-results": get_pl_results_data,
+    "spurs-live": get_spurs_live_data,
+    "cricket-scores": get_cricket_scores_data,
+    "saturday-sport-preview": get_saturday_sport_preview_data,
+    "ballot-reminders": get_ballot_reminders_data,
     # Meal plan
     "meal-plan": get_meal_plan_data,
     # Phase 8a
@@ -1910,4 +2637,9 @@ SKILL_DATA_FETCHERS = {
     "daily-instagram-prep": get_instagram_prep_data,
     # School - spellings + events
     "school-weekly-spellings": get_school_data,
+    # GitHub activity
+    "github-activity": get_github_daily_data,
+    "github-weekly": get_github_weekly_data,
+    # Subscriptions
+    "subscription-monitor": get_subscription_monitor_data,
 }

@@ -43,10 +43,16 @@ Run `!reload-schedule` after editing to apply changes.
 | Weekly Spellings | school-weekly-spellings | Mon 07:30 UK | #peter-chat+WhatsApp:group | yes |
 | Subscription Monitor | subscription-monitor | Sunday 09:00 UK | #alerts+WhatsApp:chris | yes |
 | Property Valuation | property-valuation | 1st 10:15 UK | #peterbot | yes |
+| Saturday Sport Preview | saturday-sport-preview | Sat 08:00 UK | #peterbot+WhatsApp:chris | yes |
+| Cricket Scores | cricket-scores | 08:30 UK | #peterbot | yes |
+| Ballot Reminders | ballot-reminders | 09:00 UK | #peterbot+WhatsApp:chris | yes |
+| PL Results | pl-results | Sat,Sun 21:30 UK | #peterbot | yes |
 
 ## Interval Jobs
 
-*All interval jobs converted to fixed cron schedules above (see Balance Monitor, Heartbeat)*
+| Job | Skill | Interval | Channel | Enabled |
+|-----|-------|----------|---------|---------|
+| Spurs Live | spurs-live | 10m | #peterbot | yes |
 
 ## Quiet Hours
 
