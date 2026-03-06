@@ -14,7 +14,7 @@ channel: "#peterbot"
 
 ## Purpose
 
-Morning roundup of yesterday's Premier League results with detailed match reports. Runs daily at 05:00 — NO_REPLY on days with no PL action.
+Morning roundup of yesterday's Premier League results with detailed match reports based on real match coverage. Runs daily at 05:00 — NO_REPLY on days with no PL action.
 
 ## Pre-fetched Data
 
@@ -31,9 +31,7 @@ Morning roundup of yesterday's Premier League results with detailed match report
       "status": "FINISHED",
       "kickoff": "2026-01-31T12:30:00Z",
       "scorers": [
-        {"player": "Cole Palmer", "minute": 23, "team": "Chelsea", "type": "REGULAR"},
-        {"player": "Nicolas Jackson", "minute": 67, "team": "Chelsea", "type": "REGULAR"},
-        {"player": "Jarrod Bowen", "minute": 55, "team": "West Ham", "type": "PENALTY"}
+        {"player": "Cole Palmer", "minute": 23, "team": "Chelsea", "type": "REGULAR"}
       ],
       "venue": "Stamford Bridge",
       "referee": "Michael Oliver"
@@ -45,6 +43,18 @@ Morning roundup of yesterday's Premier League results with detailed match report
 ```
 
 `spurs_match` is populated when Spurs played, `null` otherwise.
+
+## MANDATORY: Web Search Before Writing
+
+**You MUST web search before writing the report.** The pre-fetched data gives you scores and structure, but web search gives you the actual story. Do NOT write reports from the API data alone — it often lacks scorers and has no context.
+
+### Required searches:
+
+1. **If Spurs played:** Search `"Tottenham [opponent] match report"` and `"Tottenham [opponent] player ratings"` — read at least 2 sources (BBC Sport, Sky Sports, Guardian, etc.) to get scorers, key incidents, talking points, manager quotes
+2. **For all other matches:** Search `"Premier League results [date]"` and `"Premier League match reports [date]"` — get scorers and headlines for every game
+3. **If multiple matches:** Search `"Premier League talking points [date]"` for broader narrative (title race, relegation, individual performances)
+
+Use the search results to write factual, informed reports — not generic filler. Include real scorer names, real minutes, real incidents, real quotes where available.
 
 ## NO_REPLY Cases
 
@@ -74,10 +84,10 @@ Molineux
 ---
 
 **Spurs Report**
-A professional away performance from Spurs at Molineux. Son opened the scoring before half-time with a trademark curling effort from the edge of the box, and Kulusevski doubled the lead midway through the second half with a well-placed finish after a slick counter-attack. Wolves barely threatened and Spurs were comfortable throughout — Ange's side moving up to 4th with this win. A clean sheet too, which has been rare lately. Exactly the kind of result you want heading into a busy run of fixtures. COYS!
+[~150-200 words based on actual match reports from web search. Real details — who scored and how, key chances, tactical setup, turning points, manager reaction, what it means for the table. Written as a knowledgeable Spurs fan, not a neutral commentator.]
 
 **Around the League**
-Arsenal made light work of Brighton at the Emirates — Saka was unplayable again, opening the scoring after just 12 minutes before Havertz and Trossard added to the tally. They're looking ominous in the title race. At Anfield, Newcastle took a surprise lead through Isak's clinical finish but Salah equalised from the spot in the second half. A point each feels fair — Liverpool will be disappointed not to win at home but Newcastle remain a tough nut to crack. Chelsea ground out a win against West Ham thanks to Palmer's brilliance and a late Jackson goal, despite Bowen pulling one back from the penalty spot.
+[~100-150 words covering highlights from the other matches. Based on web search — real scorers, real incidents, title/relegation implications. Opinionated and punchy.]
 ```
 
 ## Rules
@@ -87,27 +97,28 @@ Arsenal made light work of Brighton at the Emirates — Saka was unplayable agai
 - Scorers format: `Name minute'` — separate home and away scorers with `|`
 - Mark penalties as `(pen)`, own goals as `(og)`
 - Sort by kickoff time
+- Scorers MUST come from web search or API data — never guess or fabricate
 
 ### Spurs Report (when Spurs played)
-- **Detailed write-up, roughly 100-150 words** about the Spurs match specifically
-- Cover the key moments, goalscorers, how they played, what it means for the table
-- Tone: passionate Spurs fan — celebrate wins properly, be honest about poor performances
-- End with "COYS!" on wins or draws. On losses, be measured but don't sugarcoat.
+- **150-200 words** about the Spurs match specifically
+- MUST be based on web search results — include real details: how goals were scored, key saves, tactical decisions, red/yellow cards, injuries, manager quotes
+- Cover what went right and wrong — balanced but from a Spurs perspective
+- End with "COYS!" on wins or draws. On losses, be honest and measured.
 
 ### Around the League
-- **Detailed write-up, roughly 100-150 words** covering highlights from ALL the other matches
-- Pick out the main talking points: title race, relegation battles, individual performances, upsets, controversy
-- Tone: knowledgeable football mate giving you the morning briefing
-- Punchy and opinionated — have a take, don't just list facts
+- **100-150 words** covering highlights from ALL the other matches
+- Based on web search — pick out the real talking points
+- Title race, relegation battles, individual brilliance, controversy, VAR incidents
+- Tone: knowledgeable football mate — punchy, opinionated, informed
 
 ### General
-- If Spurs didn't play, skip the Spurs Report section — just do results + Around the League
+- If Spurs didn't play, skip the Spurs Report section — just do results + Around the League (make it longer, ~200 words)
 - If only 1 match played (no other games), skip Around the League
-- Web search for additional context if the pre-fetched data lacks scorer details (the API sometimes omits goals)
+- NEVER fabricate scorer names, minutes, or match details. If you can't find them via web search, say "scorers TBC" rather than guessing
 - UK date format throughout
 
 ## Conversational Use
 
 If asked about PL results in chat without pre-fetched data:
-1. Use web search for "Premier League results yesterday" and "Premier League scorers yesterday"
+1. Web search for "Premier League results yesterday" and specific match reports
 2. Format using the same output format above
