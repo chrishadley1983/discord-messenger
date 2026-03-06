@@ -1,0 +1,55 @@
+{
+  "children": {
+    "Max": {
+      "year_group": "Year 6",
+      "emoji": "👦"
+    },
+    "Emmie": {
+      "year_group": "Year 4",
+      "emoji": "👧"
+    }
+  },
+  "recurring_activities": [
+    {
+      "child": "both",
+      "activity": "Swimming",
+      "emoji": "🏊",
+      "days": ["Tue", "Fri"],
+      "time": "16:00",
+      "kit": "Swimming kit + towel",
+      "notes": "Pack night before"
+    },
+    {
+      "child": "both",
+      "activity": "Piano",
+      "emoji": "🎹",
+      "days": ["Sat", "Sun"],
+      "time": "11:00",
+      "kit": null,
+      "notes": null
+    },
+    {
+      "child": "Emmie",
+      "activity": "Tutoring",
+      "emoji": "📚",
+      "days": ["Mon", "Sun"],
+      "time": "16:00",
+      "kit": null,
+      "notes": "5by5 Tutoring (Catherine)"
+    },
+    {
+      "child": "both",
+      "activity": "Afterschool Club",
+      "emoji": "🏫",
+      "days": ["Wed"],
+      "time": "15:30-16:30",
+      "kit": null,
+      "notes": "Pickup 16:30 instead of 15:15"
+    }
+  ],
+  "school": {
+    "name": "Stocks Green Primary",
+    "normal_pickup": "15:15",
+    "gate": "Main gate"
+  }
+}

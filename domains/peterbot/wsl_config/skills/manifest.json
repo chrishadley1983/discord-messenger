@@ -64,6 +64,30 @@
     "description": "Get live/recent Premier League scores",
     "channel": null
   },
+  "github-activity": {
+    "triggers": [
+      "github activity",
+      "github summary",
+      "what did I commit",
+      "dev activity",
+      "code changes"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily and weekly GitHub activity summary across all repos",
+    "channel": "#peterbot"
+  },
+  "github-weekly": {
+    "triggers": [
+      "weekly dev recap",
+      "weekly github",
+      "week's commits"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Weekly GitHub activity recap across all repos",
+    "channel": "#peterbot"
+  },
   "hb-add-inventory": {
     "triggers": [
       "add inventory",
@@ -370,6 +394,49 @@
     "description": "Morning health digest with sleep, weight, steps, HR and comparison to yesterday",
     "channel": null
   },
+  "healthera-prescriptions": {
+    "triggers": [
+      "prescription",
+      "healthera",
+      "repeat prescription",
+      "order my meds",
+      "medication",
+      "sertraline",
+      "inhaler"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Monitor Healthera prescription emails, ask Chris which meds to order, confirm via browser, and WhatsApp when ready to collect",
+    "channel": null
+  },
+  "kids-daily": {
+    "triggers": [
+      "kids today",
+      "what are the kids doing",
+      "kids schedule",
+      "kids tomorrow",
+      "what do the kids need",
+      "kids activities"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily kids briefing — today's and tomorrow's activities, kit needed, school notices",
+    "channel": "#peterbot"
+  },
+  "kids-weekly": {
+    "triggers": [
+      "kids next week",
+      "kids this week",
+      "kids last week",
+      "what are the kids doing next week",
+      "weekly kids",
+      "kids week"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Weekly kids summary — next week's plan (Sunday) or last week's review (on demand)",
+    "channel": "#peterbot"
+  },
   "heartbeat": {
     "triggers": [],
     "conversational": false,
@@ -555,6 +622,18 @@
     "description": "Morning school run traffic report with weather and uniform requirements",
     "channel": null
   },
+  "school-weekly-spellings": {
+    "triggers": [
+      "spellings this week",
+      "spelling words",
+      "what are the spellings",
+      "this weeks spellings"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Weekly spelling list post for Max and Emmie",
+    "channel": "#peter-chat"
+  },
   "self-reflect": {
     "triggers": [],
     "conversational": false,
@@ -597,11 +676,11 @@
     "description": "Weekly health summary with trends, grades, and insights",
     "channel": null
   },
-  "whatsapp-keepalive": {
+  "whatsapp-health": {
     "triggers": [],
     "conversational": false,
     "scheduled": true,
-    "description": "Keep WhatsApp sandbox session alive",
+    "description": "Check Evolution API WhatsApp connection health",
     "channel": null
   },
   "youtube-digest": {
