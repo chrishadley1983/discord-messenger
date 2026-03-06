@@ -824,21 +824,37 @@ async def get_pl_results_data() -> dict[str, Any]:
             return {"no_matches": True}
 
         formatted = []
+        spurs_match = None
         for m in matches:
-            formatted.append({
+            scorers = []
+            for g in m.get("goals", []):
+                scorers.append({
+                    "player": g.get("scorer", {}).get("name", "Unknown"),
+                    "minute": g.get("minute"),
+                    "team": g.get("team", {}).get("shortName", ""),
+                    "type": g.get("type", "REGULAR"),
+                })
+            entry = {
                 "home": m["homeTeam"]["shortName"],
                 "away": m["awayTeam"]["shortName"],
                 "home_score": m["score"]["fullTime"]["home"],
                 "away_score": m["score"]["fullTime"]["away"],
+                "ht_home": m["score"].get("halfTime", {}).get("home"),
+                "ht_away": m["score"].get("halfTime", {}).get("away"),
                 "status": "FINISHED",
-                "minute": None,
                 "kickoff": m["utcDate"],
-            })
+                "scorers": scorers,
+                "venue": m.get("venue", ""),
+                "referee": m.get("referees", [{}])[0].get("name", "") if m.get("referees") else "",
+            }
+            formatted.append(entry)
+            if m["homeTeam"]["id"] == 73 or m["awayTeam"]["id"] == 73:
+                spurs_match = entry
 
         formatted.sort(key=lambda x: x["kickoff"])
 
         logger.info(f"PL results fetch: {len(formatted)} finished matches")
-        return {"matches": formatted, "date": yesterday}
+        return {"matches": formatted, "spurs_match": spurs_match, "date": yesterday}
 
     except Exception as e:
         logger.error(f"PL results fetch error: {e}")
