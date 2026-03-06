@@ -357,13 +357,14 @@ async def get_balance_data() -> dict[str, Any]:
     Returns:
         Dict with Claude, Moonshot, and Grok balances
     """
-    from jobs.balance_monitor import _get_claude_balance, _get_moonshot_balance, _get_grok_balance
+    from jobs.balance_monitor import _get_claude_data, _get_moonshot_data, _get_grok_data, _get_max_usage
 
     try:
-        claude_data, moonshot_data, grok_data = await asyncio.gather(
-            _get_claude_balance(),
-            _get_moonshot_balance(),
-            _get_grok_balance(),
+        claude_data, moonshot_data, grok_data, max_data = await asyncio.gather(
+            _get_claude_data(),
+            _get_moonshot_data(),
+            _get_grok_data(),
+            _get_max_usage(),
             return_exceptions=True
         )
 
@@ -371,6 +372,7 @@ async def get_balance_data() -> dict[str, Any]:
             "claude": claude_data if not isinstance(claude_data, Exception) else {"error": str(claude_data)},
             "moonshot": moonshot_data if not isinstance(moonshot_data, Exception) else {"error": str(moonshot_data)},
             "grok": grok_data if not isinstance(grok_data, Exception) else {"error": str(grok_data)},
+            "max": max_data if not isinstance(max_data, Exception) else {"error": str(max_data)},
             "threshold": 5.00,
             "timestamp": datetime.now(UK_TZ).strftime("%Y-%m-%d %H:%M")
         }
@@ -468,11 +470,12 @@ async def get_school_run_data() -> dict[str, Any]:
         now = datetime.now(UK_TZ)
         weekday = now.weekday()
 
-        # Parallel fetch traffic, weather, and clubs
-        traffic_data, weather_data, morning_activities = await asyncio.gather(
+        # Parallel fetch traffic, weather, clubs, and school events
+        traffic_data, weather_data, morning_activities, school_data = await asyncio.gather(
             _get_traffic(),
             _get_weather(),
             _get_morning_activities(weekday),
+            get_school_data(),
             return_exceptions=True
         )
 
@@ -486,6 +489,9 @@ async def get_school_run_data() -> dict[str, Any]:
         if isinstance(morning_activities, Exception):
             logger.warning(f"Failed to get activities: {morning_activities}")
             morning_activities = []
+        if isinstance(school_data, Exception):
+            logger.warning(f"Failed to get school data: {school_data}")
+            school_data = {}
 
         # Get uniform requirements
         uniform = _get_uniform(weekday)
@@ -506,6 +512,8 @@ async def get_school_run_data() -> dict[str, Any]:
                 "emmie": uniform["emmie"]
             },
             "activities": morning_activities,
+            "school_events_today": school_data.get("today_events", []) if isinstance(school_data, dict) else [],
+            "is_inset_day": school_data.get("is_inset_day", False) if isinstance(school_data, dict) else False,
             "suggested_leave": leave_time,
             "target_arrival": arrival_time,
             "day_of_week": DAY_NAMES[weekday] if weekday < 5 else "Weekend",
@@ -720,47 +728,22 @@ async def get_morning_briefing_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
-async def get_whatsapp_keepalive_data() -> dict[str, Any]:
-    """Send WhatsApp keepalive ping to maintain sandbox session.
+async def get_whatsapp_health_data() -> dict[str, Any]:
+    """Check Evolution API WhatsApp connection health.
 
-    Sends directly - no Claude Code output needed.
-    Runs twice daily (06:00 and 22:00) to keep sandbox active.
+    Replaces Twilio keepalive — Evolution API maintains its own session,
+    so this just checks the connection is alive.
     """
     try:
-        from twilio.rest import Client
-        from config import (
-            TWILIO_ACCOUNT_SID,
-            TWILIO_AUTH_TOKEN,
-            TWILIO_WHATSAPP_FROM
-        )
+        from integrations.whatsapp import check_connection
 
-        if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM]):
-            return {"sent": False, "error": "Twilio not configured"}
-
-        # Only send to Chris
-        recipient = "+447855620978"
-        now = datetime.now(UK_TZ)
-        time_str = "morning" if now.hour < 12 else "evening"
-        message = f"📍 {time_str.title()} keepalive - WhatsApp sandbox active"
-
-        def send_message():
-            """Sync function to send WhatsApp via Twilio."""
-            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-            return client.messages.create(
-                body=message,
-                from_=f"whatsapp:{TWILIO_WHATSAPP_FROM}",
-                to=f"whatsapp:{recipient}"
-            )
-
-        # Run sync Twilio client in thread to avoid blocking event loop
-        msg = await asyncio.to_thread(send_message)
-
-        logger.info(f"WhatsApp keepalive sent: {msg.sid}")
-        return {"sent": True, "recipient": recipient, "sid": msg.sid}
+        result = await check_connection()
+        state = result.get("instance", {}).get("state", "unknown")
+        return {"connected": state == "open", "state": state}
 
     except Exception as e:
-        logger.error(f"WhatsApp keepalive error: {e}")
-        return {"sent": False, "error": str(e)}
+        logger.error(f"WhatsApp health check error: {e}")
+        return {"connected": False, "error": str(e)}
 
 
 async def get_football_scores_data() -> dict[str, Any]:
@@ -1359,7 +1342,42 @@ async def get_hb_full_sync_and_print_data() -> dict[str, Any]:
         result["pick_lists"]["ebay"]["pick_url"] = f"{app_url}/pick/ebay"
     result["print_status"]["skipped"] = "Printing disabled — use interactive pick lists"
 
-    logger.info(f"HB Full Sync complete: {result['pick_lists']['amazon']['items']} Amazon, {result['pick_lists']['ebay']['items']} eBay items")
+    # Step 5: Send pick list summary to Chris via WhatsApp
+    amazon_items = result["pick_lists"]["amazon"]["items"]
+    ebay_items = result["pick_lists"]["ebay"]["items"]
+    if amazon_items > 0 or ebay_items > 0:
+        try:
+            from integrations.whatsapp import send_to_chris
+            lines = ["*Pick List*"]
+            if amazon_items > 0:
+                amazon_orders = result["pick_lists"]["amazon"].get("orders", 0)
+                lines.append(f"Amazon: {amazon_items} items ({amazon_orders} orders)")
+                amazon_pick_data = result["pick_lists"]["amazon"].get("data", {})
+                for item in amazon_pick_data.get("items", [])[:15]:
+                    loc = item.get("location") or "?"
+                    set_no = item.get("setNo") or item.get("asin") or "-"
+                    qty = item.get("quantity", 1)
+                    lines.append(f"  {set_no} x{qty} → {loc}")
+                if amazon_items > 15:
+                    lines.append(f"  ... +{amazon_items - 15} more")
+                lines.append(f"  {app_url}/pick/amazon")
+            if ebay_items > 0:
+                ebay_orders = result["pick_lists"]["ebay"].get("orders", 0)
+                lines.append(f"eBay: {ebay_items} items ({ebay_orders} orders)")
+                ebay_pick_data = result["pick_lists"]["ebay"].get("data", {})
+                for item in ebay_pick_data.get("items", [])[:15]:
+                    loc = item.get("location") or "?"
+                    set_no = item.get("setNo") or "-"
+                    qty = item.get("quantity", 1)
+                    lines.append(f"  {set_no} x{qty} → {loc}")
+                if ebay_items > 15:
+                    lines.append(f"  ... +{ebay_items - 15} more")
+                lines.append(f"  {app_url}/pick/ebay")
+            await send_to_chris("\n".join(lines))
+        except Exception as e:
+            logger.warning(f"WhatsApp pick list send failed: {e}")
+
+    logger.info(f"HB Full Sync complete: {amazon_items} Amazon, {ebay_items} eBay items")
     return result
 
 
@@ -1732,6 +1750,108 @@ async def get_vinted_collections_data() -> dict[str, Any]:
     return result
 
 
+async def get_school_data() -> dict[str, Any]:
+    """Fetch school data: this week's spellings + upcoming events from Supabase.
+
+    Returns:
+        Dict with spellings for both children and upcoming school events
+    """
+    import httpx
+    import os
+    import json as _json
+    from datetime import date, timedelta
+
+    SUPABASE_URL = "https://modjoikyuhqzouxvieua.supabase.co"
+    SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+    }
+
+    try:
+        now = datetime.now(UK_TZ)
+        today = now.date()
+        week_ahead = (today + timedelta(days=7)).isoformat()
+
+        # Calculate teaching week by counting Mondays within term dates
+        # (naive calendar weeks overcount by ~8 weeks due to holidays)
+        # Calibrated: 2026-03-06 = spelling week 19 (confirmed by parent)
+        TERM_DATES_2025_26 = [
+            (date(2025, 9, 4),  date(2025, 10, 24)),  # Autumn 1
+            (date(2025, 11, 3), date(2025, 12, 19)),   # Autumn 2
+            (date(2026, 1, 5),  date(2026, 2, 13)),    # Spring 1
+            (date(2026, 2, 23), date(2026, 3, 27)),    # Spring 2
+            (date(2026, 4, 13), date(2026, 5, 22)),    # Summer 1
+            (date(2026, 6, 1),  date(2026, 7, 22)),    # Summer 2
+        ]
+        # Offset accounts for inset days and assessment weeks with no spellings
+        SPELLING_WEEK_OFFSET = -3
+        teaching_week = 0
+        for term_start, term_end in TERM_DATES_2025_26:
+            monday = term_start + timedelta(days=(7 - term_start.weekday()) % 7)
+            while monday <= min(today, term_end):
+                teaching_week += 1
+                monday += timedelta(days=7)
+            if today <= term_end:
+                break
+        current_week = max(1, min(36, teaching_week + SPELLING_WEEK_OFFSET))
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            spellings_resp, events_resp, today_events_resp, inset_resp = await asyncio.gather(
+                client.get(
+                    f"{SUPABASE_URL}/rest/v1/school_spellings",
+                    params={"academic_year": "eq.2025-26", "week_number": f"eq.{current_week}", "select": "*"},
+                    headers=headers,
+                ),
+                client.get(
+                    f"{SUPABASE_URL}/rest/v1/school_events",
+                    params={"event_date": f"gte.{today.isoformat()}", "order": "event_date", "limit": "10", "select": "*"},
+                    headers=headers,
+                ),
+                client.get(
+                    f"{SUPABASE_URL}/rest/v1/school_events",
+                    params={"event_date": f"eq.{today.isoformat()}", "select": "*"},
+                    headers=headers,
+                ),
+                client.get(
+                    f"{SUPABASE_URL}/rest/v1/school_inset_days",
+                    params={"inset_date": f"eq.{today.isoformat()}", "select": "*"},
+                    headers=headers,
+                ),
+                return_exceptions=True,
+            )
+
+        spellings = spellings_resp.json() if not isinstance(spellings_resp, Exception) and spellings_resp.status_code == 200 else []
+        upcoming_events = events_resp.json() if not isinstance(events_resp, Exception) and events_resp.status_code == 200 else []
+        today_events = today_events_resp.json() if not isinstance(today_events_resp, Exception) and today_events_resp.status_code == 200 else []
+        is_inset = len(inset_resp.json()) > 0 if not isinstance(inset_resp, Exception) and inset_resp.status_code == 200 else False
+
+        # Parse spelling words (stored as JSON string or list)
+        children_spellings = {}
+        for s in spellings:
+            words = s["words"]
+            if isinstance(words, str):
+                words = _json.loads(words)
+            children_spellings[s["child_name"]] = {
+                "words": words,
+                "phoneme": s.get("phoneme"),
+                "year_group": s["year_group"],
+            }
+
+        return {
+            "spellings": {"week_number": current_week, "children": children_spellings},
+            "today_events": today_events,
+            "upcoming_events": upcoming_events[:10],
+            "is_inset_day": is_inset,
+            "date": today.isoformat(),
+        }
+
+    except Exception as e:
+        logger.error(f"School data fetch error: {e}")
+        return {"error": str(e)}
+
+
 # Map skill names to their data fetchers
 # Skills not in this dict use web search (news, etc.)
 SKILL_DATA_FETCHERS = {
@@ -1745,7 +1865,7 @@ SKILL_DATA_FETCHERS = {
     "school-run": get_school_run_data,
     "school-pickup": get_school_pickup_data,
     "morning-briefing": get_morning_briefing_data,
-    "whatsapp-keepalive": get_whatsapp_keepalive_data,
+    "whatsapp-health": get_whatsapp_health_data,
     "football-scores": get_football_scores_data,
     # Meal plan
     "meal-plan": get_meal_plan_data,
@@ -1788,4 +1908,6 @@ SKILL_DATA_FETCHERS = {
     "self-reflect": get_self_reflect_data,
     # Instagram - pre-source images via APIs
     "daily-instagram-prep": get_instagram_prep_data,
+    # School - spellings + events
+    "school-weekly-spellings": get_school_data,
 }
