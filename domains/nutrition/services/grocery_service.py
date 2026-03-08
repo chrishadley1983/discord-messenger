@@ -746,3 +746,40 @@ async def add_shopping_list(store: str, items: list[dict]) -> dict:
         f"{result.get('summary', {}).get('not_found', 0)} not found"
     )
     return result
+
+
+async def resolve_item(store: str, product_uid: str, quantity: int = 1, item_name: str = "") -> dict:
+    """Resolve an ambiguous item by adding a specific product to the trolley."""
+    def _resolve():
+        p, browser = _connect_browser()
+        try:
+            page = _get_page(browser)
+            try:
+                if store != "sainsburys":
+                    raise ValueError(f"Store '{store}' not supported yet")
+
+                if "sainsburys.co.uk" not in page.url:
+                    page.goto(
+                        "https://www.sainsburys.co.uk/gol-ui/groceries",
+                        wait_until="domcontentloaded",
+                        timeout=20000,
+                    )
+                    page.wait_for_timeout(2000)
+
+                result = _add_to_sainsburys_trolley(page, product_uid, quantity)
+                return {
+                    "item_name": item_name,
+                    "product_uid": product_uid,
+                    "added": result.get("ok", False),
+                    "status": result.get("status"),
+                    "details": result.get("data"),
+                }
+            finally:
+                page.close()
+        finally:
+            browser.close()
+            p.stop()
+
+    result = await asyncio.to_thread(_resolve)
+    logger.info(f"Resolved item '{item_name}' for {store}: {'added' if result.get('added') else 'failed'}")
+    return result

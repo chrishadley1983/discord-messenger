@@ -1611,10 +1611,12 @@ async def get_meal_plan_generator_data() -> dict[str, Any]:
         _fetch("/meal-plan/current"),
         _fetch("/meal-plan/history?days=21"),
         _fetch("/meal-plan/staples/due"),
-        _fetch("/calendar/week"),
+        _fetch("/calendar/meal-context"),
+        _fetch("/recipes/batch-friendly?limit=10"),
+        _fetch("/grocery/price-cache"),
     )
 
-    template_data, prefs_data, current_plan, history_data, staples_data, calendar_data = results
+    template_data, prefs_data, current_plan, history_data, staples_data, calendar_data, batch_data, price_data = results
 
     # Search Second Brain for candidate recipes
     recipe_candidates = {"error": "not fetched"}
@@ -1635,8 +1637,10 @@ async def get_meal_plan_generator_data() -> dict[str, Any]:
         "current_plan": current_plan.get("plan"),
         "recent_history": history_data.get("history", []),
         "due_staples": staples_data.get("staples", []),
-        "calendar_events": calendar_data.get("events", []),
+        "calendar_context": calendar_data,
         "recipe_candidates": recipe_candidates.get("results", []),
+        "batch_candidates": batch_data.get("recipes", []),
+        "price_data": price_data,
         "week_start": (datetime.now().date() - timedelta(days=datetime.now().date().weekday())).isoformat(),
     }
 
@@ -1679,6 +1683,67 @@ async def get_meal_rating_data() -> dict[str, Any]:
 
     logger.info(f"Meal rating data: {len(todays_meals)} meals planned, {len(rated_today)} rated")
     return data
+
+
+async def get_cooking_reminder_data() -> dict[str, Any]:
+    """Fetch cooking reminders. Returns evening or morning reminders based on time of day."""
+    hour = datetime.now(UK_TZ).hour
+
+    if hour < 12:
+        # Morning run — defrost reminders for today
+        result = await _hadley_request("/meal-plan/reminders?timing=morning")
+        result["reminder_type"] = "morning"
+    else:
+        # Evening run — prep reminders for tomorrow
+        result = await _hadley_request("/meal-plan/reminders?timing=night_before")
+        result["reminder_type"] = "evening"
+
+    logger.info(f"Cooking reminders ({result.get('reminder_type')}): {result.get('count', 0)} reminders")
+    return result
+
+
+async def get_price_scanner_data() -> dict[str, Any]:
+    """Fetch current price cache for the price scanner report."""
+    result = await _hadley_request("/grocery/price-cache")
+    logger.info(f"Price cache data: {result.get('on_offer_count', 0)} deals")
+    return result
+
+
+async def get_grocery_shop_data() -> dict[str, Any]:
+    """Fetch data needed for grocery shopping: shopping list, trolley, login status."""
+    import asyncio
+
+    results = await asyncio.gather(
+        _hadley_request("/meal-plan/shopping-list"),
+        _hadley_request("/grocery/sainsburys/trolley"),
+        _hadley_request("/grocery/sainsburys/login-check"),
+    )
+
+    shopping_list, trolley, login_status = results
+
+    data = {
+        "shopping_list": shopping_list.get("ingredients", shopping_list.get("items", [])),
+        "trolley": trolley if "error" not in trolley else {"items": [], "error": trolley.get("error")},
+        "login_status": login_status,
+        "store": "sainsburys",
+    }
+
+    logger.info(
+        f"Grocery shop data: {len(data['shopping_list'])} shopping items, "
+        f"trolley={'ok' if 'error' not in trolley else 'error'}, "
+        f"login={'yes' if login_status.get('logged_in') else 'no'}"
+    )
+    return data
+
+
+async def get_recipe_discovery_data() -> dict[str, Any]:
+    """Fetch discovery context for recipe recommendations."""
+    result = await _hadley_request("/recipes/discover?count=3")
+    logger.info(
+        f"Recipe discovery data: {result.get('top_rated_count', 0)} top-rated, "
+        f"cuisines={result.get('preferred_cuisines', [])}"
+    )
+    return result
 
 
 async def get_email_summary_data() -> dict[str, Any]:
@@ -3088,6 +3153,9 @@ SKILL_DATA_FETCHERS = {
     "meal-plan": get_meal_plan_data,
     "meal-plan-generator": get_meal_plan_generator_data,
     "meal-rating": get_meal_rating_data,
+    "grocery-shop": get_grocery_shop_data,
+    "recipe-discovery": get_recipe_discovery_data,
+    "price-scanner": get_price_scanner_data,
     # Phase 8a
     "email-summary": get_email_summary_data,
     "schedule-today": get_schedule_today_data,
@@ -3136,4 +3204,6 @@ SKILL_DATA_FETCHERS = {
     "subscription-monitor": get_subscription_monitor_data,
     # Amazon purchases
     "amazon-purchases": get_amazon_purchases_data,
+    # Cooking reminders
+    "cooking-reminder": get_cooking_reminder_data,
 }

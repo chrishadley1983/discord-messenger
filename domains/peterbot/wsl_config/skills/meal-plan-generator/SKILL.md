@@ -29,8 +29,10 @@ Data fetcher: `meal-plan-generator` — pulls all of the following in parallel:
 - `data.current_plan` — Current week's plan (for Gousto lock-ins with source_tag='gousto')
 - `data.recent_history` — Last 21 days of meal history (for recency penalty)
 - `data.due_staples` — Shopping staples due this cycle
-- `data.calendar_events` — This week's calendar events (detect busy evenings)
+- `data.calendar_context` — This week's calendar meal context (auto-detected overrides for busy evenings, eating out, guests)
 - `data.recipe_candidates` — Top 20 recipes from Second Brain (semantic search)
+- `data.batch_candidates` — Batch-friendly recipes (freezable or yields multiple meals) from Family Fuel
+- `data.price_data` — Cached Sainsbury's prices and current deals (from weekly price scan)
 - `data.week_start` — Monday date for the plan week
 
 ## Workflow
@@ -54,10 +56,7 @@ Right, let's sort this week's meals. Here's your default template:
 Any changes this week, or shall I crack on?
 ```
 
-**Calendar auto-detection rules:**
-- Events ending after 18:00 on a weekday → reduce that day's max_prep_mins to 15
-- All-day events or events containing "out", "dinner", "restaurant" → set day type to "out"
-- Events containing "away", "holiday", "trip" → set day type to "skip"
+**Calendar overrides** are pre-computed in `data.calendar_context.overrides` (per-day dict with `type_override`, `max_prep_override`, `portions_override`, and `reasons`) and `data.calendar_context.summary` (one-line human-readable summary). Display these to Chris and let him confirm or adjust — no need to re-analyse raw events.
 
 ### Step 2: Generate the Plan
 
@@ -75,8 +74,33 @@ Once Chris confirms (or provides overrides), generate the meal plan:
 - **Rating**: Prefer meals rated 4-5 stars, never suggest meals rated 1-2 with would_make_again=false
 - **Cuisine diversity**: Don't repeat the same cuisine on consecutive days
 - **Dietary compliance**: Must match adult/kids dietary rules from preferences
+- **Price awareness**: If `data.price_data.deals` contains proteins/ingredients used by a candidate recipe, boost its score. Flag if estimated weekly spend exceeds `preferences.budget_per_week_pence`.
 - **Disliked ingredients**: Exclude recipes containing disliked ingredients
-- **Batch cook**: If batch_cook_per_week >= 1, pick one freezable/batch recipe early in the week
+- **Batch cook**: If batch_cook_per_week >= 1, pick one freezable/batch recipe early in the week (see Batch Cook Logic below)
+
+### Batch Cook Logic
+
+When `preferences.batch_cook_per_week >= 1`:
+
+1. **Select a batch recipe** from `data.batch_candidates` for early in the week (Monday or Tuesday preferred)
+   - Must meet the day's prep time and portion constraints
+   - Prefer recipes with `mealsYielded >= 2`
+   - Apply the same recency/rating/variety scoring as regular meals
+
+2. **Auto-schedule leftovers** on a later day (within 3 days of the batch cook day)
+   - The leftovers day should be a "cook" day with `max_prep_mins >= 15` (reheating)
+   - Mark the leftovers day with: `adults_meal: "Leftovers: {batch recipe name}"`, `source_tag: "leftovers"`
+   - Don't count leftovers toward protein variety limits (it's the same protein)
+
+3. **Double the ingredients** for the batch recipe on the shopping list
+   - If recipe serves 4 and `mealsYielded` is 2, multiply ingredients by 1.5x (extra half for leftovers)
+   - If `mealsYielded` is not set, default to 2x ingredients
+
+4. **Display in plan:**
+```
+**Monday** — Beef Chilli 🍲 _(batch cook, 45 min, 8 portions)_
+**Wednesday** — Leftovers: Beef Chilli 🔄 _(reheat, 10 min)_
+```
 
 4. **Present the draft plan:**
 
@@ -92,6 +116,7 @@ Here's this week's plan:
 **Sunday** — OUT
 
 Protein balance: 🐔×2 🐷×1 🐟×1 🥬×1 🍕×1
+💰 Deals used: chicken breast (save £1), prawns (2 for £6)
 Any swaps?
 ```
 
@@ -149,6 +174,23 @@ For each recipe that isn't from Gousto:
 11. Mark staples as added via `POST /meal-plan/staples/mark-added`
 12. Send both links to Chris (and optionally Abby via WhatsApp)
 
+#### Step 4c: Offer Trolley Add
+
+After deploying the shopping list, ask:
+
+```
+Want me to add this to the Sainsbury's trolley? I'll match everything and you can pick for any unclear items.
+```
+
+If Chris says yes:
+1. Call `POST http://172.19.64.1:8100/meal-plan/shopping-list/to-trolley?store=sainsburys`
+2. This auto-deduplicates against items already in the trolley
+3. Present results using the same format as the `grocery-shop` skill (added / need your pick / not found)
+4. Follow the same resolve flow for ambiguous items
+5. Offer to book a delivery slot
+
+If Chris says no or ignores, that's fine — the shopping list is still available as HTML.
+
 ## Recipe Sources (Priority Order)
 
 1. **Family Fuel API** — Structured search with full ingredient data for shopping list generation. `GET http://172.19.64.1:8100/recipes/search?q=chicken&cuisine=italian&limit=20`. Preferred source because ingredients are structured (name, quantity, unit, category).
@@ -164,8 +206,9 @@ When a Family Fuel recipe is used in a plan, call `PATCH /recipes/{id}/usage` to
 - `GET /meal-plan/current` — Current plan (for Gousto lock-ins)
 - `GET /meal-plan/history?days=21` — Recent history
 - `GET /meal-plan/staples/due` — Due staples
-- `GET /calendar/week` — Calendar events
+- `GET /calendar/meal-context` — Calendar meal context (pre-computed overrides)
 - `POST /recipes/extract` — Extract + optionally save recipe from URL via Chrome CDP (body: `{url, auto_save?}`)
+- `GET /recipes/batch-friendly?limit=10` — Batch-cook-friendly recipes (freezable or yields multiple meals)
 - `GET /recipes/search?q=&cuisine=&meal_type=&tags=&limit=` — Search Family Fuel recipes
 - `GET /recipes/{id}` — Full recipe with ingredients + instructions
 - `POST /recipes` — Save a new recipe to Family Fuel (manual)
@@ -176,6 +219,8 @@ When a Family Fuel recipe is used in a plan, call `PATCH /recipes/{id}/usage` to
 - `POST /meal-plan/view/html` — Generate interactive HTML meal plan page (deploy to surge.sh)
 - `POST /meal-plan/shopping-list/html` — Generate interactive HTML shopping list
 - `POST /meal-plan/shopping-list/generate` — Generate PDF shopping list
+- `POST /meal-plan/shopping-list/to-trolley?store=sainsburys` — One-click add shopping list to trolley (with dedup)
+- `POST /grocery/sainsburys/trolley/resolve` — Resolve ambiguous item (body: `{item_name, product_uid, quantity?}`)
 
 ## Output Format
 

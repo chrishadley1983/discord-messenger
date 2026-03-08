@@ -57,6 +57,19 @@
     "description": "Daily morning cricket score roundup from yesterday",
     "channel": "#peterbot"
   },
+  "cooking-reminder": {
+    "triggers": [
+      "cooking reminders",
+      "any prep needed",
+      "do I need to prep anything",
+      "what needs defrosting",
+      "anything to prep tonight"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Proactive cooking prep reminders for marinating, defrosting, and advance prep",
+    "channel": "#food-log"
+  },
   "daily-instagram-prep": {
     "triggers": [],
     "conversational": false,
@@ -123,6 +136,23 @@
     "scheduled": true,
     "description": "Weekly GitHub activity recap across all repos",
     "channel": "#peterbot"
+  },
+  "grocery-shop": {
+    "triggers": [
+      "do the shopping",
+      "add shopping list to sainsburys",
+      "sainsburys order",
+      "grocery shop",
+      "add to trolley",
+      "book a delivery",
+      "book a slot",
+      "do the sainsburys",
+      "sainsburys shop"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Add shopping list to Sainsbury's trolley and book delivery slot",
+    "channel": null
   },
   "hb-add-inventory": {
     "triggers": [
@@ -540,6 +570,55 @@
     "description": "View, import, and manage weekly meal plans with shopping list generation",
     "channel": null
   },
+  "meal-plan-generator": {
+    "triggers": [
+      "plan meals",
+      "plan meals for the week",
+      "generate meal plan",
+      "what should we eat this week",
+      "sort this week's meals",
+      "meal plan for next week",
+      "plan dinners"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Generate a balanced weekly meal plan using templates, preferences, Gousto, recipes, and calendar data",
+    "channel": null
+  },
+  "meal-plan-setup": {
+    "triggers": [
+      "set up meal template",
+      "update meal template",
+      "meal plan template",
+      "food preferences",
+      "update food preferences",
+      "disliked ingredients",
+      "meal preferences",
+      "weekly meal shape",
+      "add staple",
+      "shopping staples",
+      "manage staples"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Set up and manage weekly meal plan templates, food preferences, and meal ratings",
+    "channel": null
+  },
+  "meal-rating": {
+    "triggers": [
+      "rate dinner",
+      "rate that meal",
+      "how was dinner",
+      "dinner was",
+      "meal was",
+      "that was delicious",
+      "that was awful"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Prompt for meal ratings and log feedback to meal history",
+    "channel": "#food-log"
+  },
   "monthly-health": {
     "triggers": [
       "monthly summary",
@@ -624,6 +703,20 @@
     "description": "Morning Premier League results summary from yesterday",
     "channel": "#peterbot"
   },
+  "price-scanner": {
+    "triggers": [
+      "check prices",
+      "what's on offer",
+      "sainsburys deals",
+      "price scan",
+      "any deals",
+      "what's cheap this week"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Scan Sainsbury's prices for common proteins and staples, report deals",
+    "channel": "#food-log"
+  },
   "property-valuation": {
     "triggers": [
       "how much is the house worth",
@@ -644,6 +737,21 @@
     "scheduled": false,
     "description": "Help find products and provide direct purchase links",
     "channel": "#peterbot"
+  },
+  "recipe-discovery": {
+    "triggers": [
+      "find new recipes",
+      "recipe ideas",
+      "suggest recipes",
+      "new recipe suggestions",
+      "what should I try",
+      "discover recipes",
+      "new dinner ideas"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Discover new recipes based on ratings and preferences",
+    "channel": "#food-log"
   },
   "remind": {
     "triggers": [

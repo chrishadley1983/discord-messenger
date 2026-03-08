@@ -717,6 +717,164 @@ async def calendar_week():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/calendar/meal-context")
+async def calendar_meal_context(
+    week_start: Optional[str] = Query(default=None, description="Monday date (YYYY-MM-DD), defaults to this week's Monday")
+):
+    """Analyse calendar events for meal planning overrides (busy evenings, eating out, guests)."""
+    from .google_auth import get_calendar_service
+    import re
+
+    try:
+        service = get_calendar_service()
+        if not service:
+            raise HTTPException(status_code=503, detail="Calendar not configured")
+
+        now = datetime.now(UK_TZ)
+
+        if week_start:
+            monday = datetime.strptime(week_start, "%Y-%m-%d").replace(tzinfo=UK_TZ)
+        else:
+            monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        sunday_end = monday + timedelta(days=7)
+
+        all_items = _fetch_all_calendars(
+            service,
+            timeMin=monday.isoformat(),
+            timeMax=sunday_end.isoformat(),
+            singleEvents=True,
+            orderBy='startTime'
+        )
+
+        # Override detection patterns
+        EATING_OUT = re.compile(r'\b(dinner|restaurant|eat\s*out|eating\s*out)\b', re.IGNORECASE)
+        AWAY = re.compile(r'\b(away|holiday|trip|vacation)\b', re.IGNORECASE)
+        KIDS_ACTIVITY = re.compile(r'\b(swimming|football|rugby|gymnastics|karate|club)\b', re.IGNORECASE)
+        GUESTS = re.compile(r'\b(visiting|guests|coming\s*over|party)\b', re.IGNORECASE)
+
+        overrides: dict[str, dict] = {}
+
+        def ensure_day(day_key: str):
+            if day_key not in overrides:
+                overrides[day_key] = {
+                    "type_override": None,
+                    "max_prep_override": None,
+                    "portions_override": None,
+                    "reasons": []
+                }
+
+        for event in all_items:
+            title = event.get('summary', '(no title)')
+            start_raw = event.get('start', {})
+            end_raw = event.get('end', {})
+            attendees = event.get('attendees', [])
+
+            start_dt_str = start_raw.get('dateTime')
+            end_dt_str = end_raw.get('dateTime')
+            start_date = start_raw.get('date')
+            end_date = end_raw.get('date')
+
+            is_all_day = start_date is not None and start_dt_str is None
+
+            if is_all_day:
+                # All-day events: apply to each day in range
+                day_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+                day_end_excl = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else day_start + timedelta(days=1)
+                current = day_start
+                while current < day_end_excl:
+                    day_key = current.isoformat()
+                    if EATING_OUT.search(title):
+                        ensure_day(day_key)
+                        overrides[day_key]["type_override"] = "out"
+                        overrides[day_key]["reasons"].append(title)
+                    if AWAY.search(title):
+                        ensure_day(day_key)
+                        overrides[day_key]["type_override"] = "skip"
+                        overrides[day_key]["reasons"].append(title)
+                    current += timedelta(days=1)
+                continue
+
+            if not end_dt_str:
+                continue
+
+            # Timed events
+            end_dt = datetime.fromisoformat(end_dt_str)
+            if end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=UK_TZ)
+
+            day_key = end_dt.strftime("%Y-%m-%d")
+            end_time = end_dt.strftime("%H:%M")
+            day_of_week = end_dt.weekday()  # 0=Mon, 6=Sun
+
+            # Eating out override
+            if EATING_OUT.search(title):
+                ensure_day(day_key)
+                overrides[day_key]["type_override"] = "out"
+                overrides[day_key]["reasons"].append(title)
+
+            # Away/skip override
+            if AWAY.search(title):
+                ensure_day(day_key)
+                overrides[day_key]["type_override"] = "skip"
+                overrides[day_key]["reasons"].append(title)
+
+            # Guests / large gathering override
+            if len(attendees) > 4 or GUESTS.search(title):
+                ensure_day(day_key)
+                overrides[day_key]["portions_override"] = 6
+                overrides[day_key]["reasons"].append(title)
+
+            # Kids activity ending after 17:30 on weekdays
+            if KIDS_ACTIVITY.search(title) and day_of_week < 5 and end_dt.hour * 60 + end_dt.minute > 17 * 60 + 30:
+                ensure_day(day_key)
+                if overrides[day_key]["max_prep_override"] is None or overrides[day_key]["max_prep_override"] > 20:
+                    overrides[day_key]["max_prep_override"] = 20
+                overrides[day_key]["reasons"].append(f"{title} - quick meal night")
+
+            # Generic event ending after 18:00 on weekday (but not if already handled above)
+            elif day_of_week < 5 and end_dt.hour * 60 + end_dt.minute > 18 * 60:
+                if not EATING_OUT.search(title) and not AWAY.search(title):
+                    ensure_day(day_key)
+                    reason = f"{title} until {end_time}"
+                    if overrides[day_key]["max_prep_override"] is None or overrides[day_key]["max_prep_override"] > 15:
+                        overrides[day_key]["max_prep_override"] = 15
+                    overrides[day_key]["reasons"].append(reason)
+
+        # Deduplicate reasons
+        for day_data in overrides.values():
+            day_data["reasons"] = list(dict.fromkeys(day_data["reasons"]))
+
+        # Build summary
+        DAY_NAMES = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
+        summary_parts = []
+        for day_key in sorted(overrides.keys()):
+            day_data = overrides[day_key]
+            dt = datetime.strptime(day_key, "%Y-%m-%d")
+            day_name = DAY_NAMES.get(dt.weekday(), day_key)
+            reasons_str = ", ".join(day_data["reasons"])
+
+            if day_data["type_override"] == "out":
+                summary_parts.append(f"{day_name}: eating out ({reasons_str})")
+            elif day_data["type_override"] == "skip":
+                summary_parts.append(f"{day_name}: skip ({reasons_str})")
+            elif day_data["max_prep_override"]:
+                summary_parts.append(f"{day_name}: quick meal ({reasons_str})")
+            elif day_data["portions_override"]:
+                summary_parts.append(f"{day_name}: extra portions ({reasons_str})")
+
+        return {
+            "week_start": monday.strftime("%Y-%m-%d"),
+            "overrides": overrides,
+            "summary": " | ".join(summary_parts) if summary_parts else "No overrides detected"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/calendar/free")
 async def calendar_free(
     date: Optional[str] = Query(default=None, description="Date to check (YYYY-MM-DD)"),
@@ -6349,6 +6507,33 @@ async def meal_plan_current():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/meal-plan/reminders")
+async def meal_plan_reminders(
+    date: str = Query(default=None, description="Date to check (YYYY-MM-DD), defaults to today"),
+    timing: str = Query(default=None, description="Filter by timing: night_before, morning"),
+):
+    """Get cooking prep reminders for a specific date."""
+    from domains.nutrition.services.cooking_reminder_service import (
+        get_reminders_for_date, get_evening_reminders, get_morning_reminders
+    )
+    try:
+        if timing == "night_before":
+            reminders = await get_evening_reminders()
+        elif timing == "morning":
+            reminders = await get_morning_reminders()
+        elif date:
+            reminders = await get_reminders_for_date(date)
+        else:
+            # Default: both evening (for tomorrow) and morning (for today)
+            evening = await get_evening_reminders()
+            morning = await get_morning_reminders()
+            reminders = morning + evening
+
+        return {"reminders": reminders, "count": len(reminders)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/meal-plan/week")
 async def meal_plan_by_week(date: str = Query(default=None, description="Any date within the week (YYYY-MM-DD), defaults to today")):
     """Get the meal plan for the week containing the given date."""
@@ -7908,6 +8093,60 @@ render();
     return Response(content=html, media_type="text/html")
 
 
+@app.post("/meal-plan/shopping-list/to-trolley")
+async def shopping_list_to_trolley(store: str = Query(default="sainsburys")):
+    """Add current meal plan's shopping list directly to the store's trolley.
+
+    Fetches the current plan's ingredients, checks trolley for duplicates,
+    then adds new items via add_shopping_list.
+    """
+    from domains.nutrition.services.grocery_service import add_shopping_list, get_trolley
+    from domains.nutrition.services.meal_plan_service import get_current_meal_plan
+
+    try:
+        # Get current plan's ingredients
+        plan = await get_current_meal_plan()
+        if not plan or not plan.get("ingredients"):
+            raise HTTPException(status_code=404, detail="No meal plan with ingredients found for this week")
+
+        ingredients = plan.get("ingredients", [])
+
+        # Get current trolley to dedup
+        trolley = await get_trolley(store)
+        trolley_items = {item["name"].lower() for item in trolley.get("items", [])} if "error" not in trolley else set()
+
+        # Build shopping list, excluding items already in trolley
+        items_to_add = []
+        already_in_trolley = []
+        for ing in ingredients:
+            item_name = ing.get("item", ing.get("name", ""))
+            if not item_name:
+                continue
+            if item_name.lower() in trolley_items or any(item_name.lower() in t for t in trolley_items):
+                already_in_trolley.append(item_name)
+            else:
+                items_to_add.append({"name": item_name, "quantity": ing.get("quantity", ""), "category": ing.get("category", "")})
+
+        if not items_to_add:
+            return {
+                "message": "All items are already in your trolley!",
+                "already_in_trolley": already_in_trolley,
+                "matched": [], "ambiguous": [], "not_found": [],
+                "summary": {"total_items": 0, "auto_added": 0, "needs_choice": 0, "not_found": 0, "already_in_trolley": len(already_in_trolley)}
+            }
+
+        # Add to trolley
+        result = await add_shopping_list(store, items_to_add)
+        result["already_in_trolley"] = already_in_trolley
+        result["summary"]["already_in_trolley"] = len(already_in_trolley)
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.put("/meal-plan/{plan_id}/ingredients")
 async def meal_plan_update_ingredients(plan_id: str, req: MealPlanIngredientsUpdate):
     """Replace all ingredients for a meal plan.
@@ -8016,7 +8255,39 @@ async def extract_recipe_endpoint(req: RecipeExtractRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# --- /recipes/search must be BEFORE /recipes/{recipe_id} to avoid route shadowing ---
+# --- /recipes/batch-friendly, /recipes/discover, and /recipes/search must be BEFORE /recipes/{recipe_id} to avoid route shadowing ---
+
+@app.get("/recipes/discover")
+async def discover_recipes(count: int = Query(default=3, ge=1, le=10)):
+    """Get discovery context for recipe recommendations.
+
+    Returns analysis of top-rated recipes, preferred cuisines,
+    recent history (to exclude), and preferences. Peter uses this
+    context to search for new recipe recommendations.
+    """
+    from domains.nutrition.services.recipe_discovery_service import get_discovery_context
+
+    try:
+        context = await get_discovery_context()
+        context["requested_count"] = count
+        return context
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recipes/batch-friendly")
+async def get_batch_friendly_recipes(
+    limit: int = Query(default=10, ge=1, le=50, description="Max results"),
+):
+    """Get recipes suitable for batch cooking (freezable or yields multiple meals)."""
+    from domains.nutrition.services.family_fuel_service import search_batch_friendly_recipes
+
+    try:
+        recipes = await search_batch_friendly_recipes(limit=limit)
+        return {"recipes": recipes, "count": len(recipes)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/recipes/search")
 async def search_recipes_endpoint(
@@ -8326,6 +8597,75 @@ async def deploy_to_surge(req: SurgeDeployRequest):
 # ============================================================
 
 
+@app.get("/grocery/price-cache")
+async def grocery_price_cache():
+    """Get cached prices and current deals from the most recent scan."""
+    from domains.nutrition.services.price_cache_service import get_cached_prices
+    cache = get_cached_prices()
+    if not cache.get("scanned_at"):
+        return {"message": "No price scan has been run yet. Trigger one with POST /grocery/price-scan.", "items": [], "deals": []}
+    return cache
+
+
+@app.post("/grocery/price-scan")
+async def grocery_price_scan(store: str = Query(default="sainsburys")):
+    """Run a fresh price scan of common proteins and staples. Takes ~2 minutes."""
+    from domains.nutrition.services.price_cache_service import scan_prices
+    try:
+        result = await scan_prices(store)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/grocery/{store}/prices")
+async def grocery_prices(
+    store: str,
+    items: str = Query(..., description="Comma-separated item names to price check"),
+):
+    """Batch price check for multiple items. Returns price, unit_price, and offer status."""
+    from domains.nutrition.services.grocery_service import search_products
+
+    try:
+        item_list = [i.strip() for i in items.split(",") if i.strip()]
+        results = []
+
+        for item_name in item_list:
+            products = await search_products(store, item_name, limit=3)
+            if products:
+                best = products[0]  # Top result
+                on_offer = bool(best.get("promotions"))
+                results.append({
+                    "query": item_name,
+                    "product": best.get("name", ""),
+                    "price": best.get("price"),
+                    "unit_price": best.get("unit_price"),
+                    "unit_measure": best.get("unit_measure"),
+                    "on_offer": on_offer,
+                    "offer_text": best["promotions"][0] if best.get("promotions") else None,
+                    "available": best.get("available", True),
+                })
+            else:
+                results.append({
+                    "query": item_name,
+                    "product": None,
+                    "price": None,
+                    "on_offer": False,
+                    "offer_text": None,
+                    "available": False,
+                })
+
+        on_offer_count = sum(1 for r in results if r["on_offer"])
+        return {
+            "prices": results,
+            "total_checked": len(results),
+            "on_offer": on_offer_count,
+            "store": store,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/grocery/{store}/login-check")
 async def grocery_login_check(store: str):
     """Check if Chris is logged in to the grocery store."""
@@ -8412,6 +8752,24 @@ async def grocery_add_shopping_list(store: str, req: GroceryShoppingListRequest)
     from domains.nutrition.services.grocery_service import add_shopping_list
     try:
         return await add_shopping_list(store, req.items)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class GroceryResolveRequest(BaseModel):
+    item_name: str
+    product_uid: str
+    quantity: int = 1
+
+
+@app.post("/grocery/{store}/trolley/resolve")
+async def grocery_resolve_item(store: str, req: GroceryResolveRequest):
+    """Resolve an ambiguous item by adding the chosen product to the trolley."""
+    from domains.nutrition.services.grocery_service import resolve_item
+    try:
+        return await resolve_item(store, req.product_uid, req.quantity, req.item_name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

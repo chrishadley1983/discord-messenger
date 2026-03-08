@@ -11,7 +11,7 @@ trigger:
   - "that was awful"
 scheduled: true
 conversational: true
-channel: null
+channel: "#food-log"
 ---
 
 # Meal Rating

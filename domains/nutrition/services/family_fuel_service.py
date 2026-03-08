@@ -271,6 +271,32 @@ async def search_recipes(
     return await asyncio.to_thread(_search)
 
 
+async def search_batch_friendly_recipes(limit: int = 10) -> list[dict]:
+    """Search for batch-cook-friendly recipes (freezable or yields multiple meals)."""
+    def _search():
+        conn = _get_conn()
+        try:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("""
+                SELECT id, "recipeName", "cuisineType", "prepTimeMinutes", "cookTimeMinutes",
+                       "servings", "caloriesPerServing", "proteinPerServing",
+                       "freezable", "yieldsMultipleMeals", "mealsYielded",
+                       "familyRating", "timesUsed", "lastUsedDate",
+                       "reheatingInstructions", "leftoverInstructions"
+                FROM recipes
+                WHERE "isArchived" = false
+                  AND ("freezable" = true OR "yieldsMultipleMeals" = true)
+                  AND "userId" = %s
+                ORDER BY "familyRating" DESC NULLS LAST, "timesUsed" DESC
+                LIMIT %s
+            """, (FAMILY_FUEL_USER_ID, limit))
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+    return await asyncio.to_thread(_search)
+
+
 async def update_recipe_usage(recipe_id: str) -> dict:
     """Increment timesUsed and set lastUsedDate to today."""
     def _update():
