@@ -76,7 +76,16 @@ Endpoints are documented in the relevant playbooks — read the matched playbook
 - `/brain/search?query=<query>&limit=5` — Search Second Brain knowledge base. Use mid-response when you need saved articles/notes.
 - `/brain/save` (POST, JSON body: `{"source": "<text>", "note": "<optional>", "tags": "<optional comma-separated>"}`) — Save content to Second Brain.
 - **Google Drive** — Full read/write access: search, create (with content), share, move, copy, rename, trash. See `hadley_api/README.md` "Drive" section for all endpoints. Use `/drive/create` with JSON body `{"content": "<text>", "folder_name": "<name>"}` to save generated content as Google Docs.
-- **Meal Plan** — `/meal-plan/current` for this week's plan, `/meal-plan/import/sheets` to import from Google Sheet, `/meal-plan/shopping-list` for categorised ingredients, `/meal-plan/shopping-list/generate` to create PDF. See `skills/meal-plan/SKILL.md` for full workflow.
+- **Meal Planning System** — Full weekly meal planning with templates, preferences, shopping lists, and ratings. Four skills handle different flows:
+  - `meal-plan` — View/import plans: `/meal-plan/current`, `/meal-plan/import/sheets`, `/meal-plan/import/gousto` (also scrapes+saves recipes to Family Fuel DB). See `skills/meal-plan/SKILL.md`.
+  - `meal-plan-setup` — Manage weekly templates (`/meal-plan/templates/*`), food preferences (`/meal-plan/preferences`), and shopping staples (`/meal-plan/staples/*`). See `skills/meal-plan-setup/SKILL.md`.
+  - `meal-plan-generator` — Generate balanced weekly plans. Uses templates, preferences, Gousto lock-ins, calendar, meal history, and recipe search. Publishes plan + shopping list to surge.sh. See `skills/meal-plan-generator/SKILL.md`.
+  - `meal-rating` — Evening prompt to rate meals (1-5 + would make again). Feeds into generator scoring. See `skills/meal-rating/SKILL.md`.
+  - **Recipe search**: Search Family Fuel first (`GET /recipes/search?q=...&cuisine=...`), then Second Brain (`search_knowledge`), then web (BBC Good Food, Mob Kitchen, Jamie Oliver, Joe Wicks — verify macros before recommending). When Chris asks for a specific recipe, do a deep web search and present top-rated options with macros.
+  - **Save recipes**: When Chris likes a recipe, save it to **Family Fuel** (structured data) via `POST /recipes` with ingredients and instructions. This makes it available for shopping list generation. Also save to Second Brain for semantic search. See "Recipes & Meal Planning" section below for the full save workflow.
+  - **Shopping staples**: Recurring items (milk, bread, etc.) with weekly/biweekly/monthly frequency. `/meal-plan/staples/due` returns what's due. Peter asks "any extra staples?" during shopping list generation.
+  - **HTML pages**: `POST /meal-plan/shopping-list/html` and `POST /meal-plan/view/html` generate interactive pages for surge.sh deployment. Shopping list has checkboxes with localStorage persistence for in-store use.
+- **Surge.sh Deploy** — `POST /deploy/surge` with body `{"html": "<full HTML>", "domain": "my-site.surge.sh", "filename": "index.html"}`. Deploys HTML to a public URL instantly. Use this whenever you need to publish HTML (meal plans, shopping lists, reports, guides). No credentials needed — the API handles auth.
 - **EV / Charging** — `GET /ev/combined` (charger + car data merged), `GET /ev/status` (Ohme charger only), `GET /kia/status` (Kia Connect only). See `skills/ev-charging/SKILL.md` for output format and battery level caveats.
 - **Location Sharing** — `GET /location/{person}` where person is `abby` or `chris`. Returns real-time location from Google Maps location sharing: lat/lng, address, battery level, charging status, driving distance and time from home. Use when asked "where is Abby", "how far is Abby from home", "is Chris at home", etc.
 - **Model Provider** — `GET /model/status` (current provider), `PUT /model/switch` (switch provider), `PUT /model/auto-switch` (toggle auto-recovery). When Anthropic credits are exhausted, the system auto-fails over to Kimi 2.5 and checks every 15 min for recovery.
@@ -141,14 +150,70 @@ Period values: `this_month`, `last_month`, `this_quarter`, `last_quarter`, `this
 
 These return formatted markdown — present the data directly, don't summarise unless asked.
 
-### Recipes & Meal Planning (Second Brain)
+### Recipes & Meal Planning
 
-Family Fuel recipes are indexed in Second Brain. Search for recipes using:
-- `search_knowledge("quick high-protein dinner")` — semantic recipe search
-- `list_items(content_type="recipe", topic="familyfuel")` — browse all recipes
-- `get_item_detail(item_id)` — full recipe with ingredients and instructions
+**Finding recipes (priority order):**
+1. **Family Fuel API** (structured data) — `GET http://172.19.64.1:8100/recipes/search?q=chicken&cuisine=italian&limit=20`. Returns recipes with full ingredients, macros, ratings. Use for shopping list generation.
+2. **Second Brain** (semantic/fuzzy) — `search_knowledge("recipe familyfuel [criteria]")` or `search_knowledge("[criteria]")`. Includes Gousto history and web saves.
+3. **Web search** (for new ideas or specific requests) — Search BBC Good Food, Mob Kitchen, Jamie Oliver, Joe Wicks, Tesco Real Food, Skinnytaste. Always verify macros from the actual recipe page, never estimate.
 
-Combine with the `/meal-plan/*` Hadley API endpoints for weekly planning.
+**When Chris asks for a specific recipe** (e.g. "find me a burrito recipe", "good chilli recipe"):
+- Search Family Fuel API first: `GET /recipes/search?q=burrito`
+- Then search Second Brain for saved recipes
+- Then do 2-3 web searches across UK recipe sites
+- Present top 3-5 options with macros, prep time, and source links
+- If Chris likes one, offer to save it to Family Fuel
+
+**Quick save from URL (preferred method):**
+If Chris shares a recipe URL or you find one online, use the extractor to auto-extract and save:
+```
+POST http://172.19.64.1:8100/recipes/extract
+{"url": "https://cooking.nytimes.com/recipes/...", "auto_save": true}
+```
+This connects to Chrome via CDP (port 9222), extracts JSON-LD recipe schema, parses ingredients/macros/instructions, and saves directly to Family Fuel. Works with paywalled sites (NYT Cooking, etc.) because it uses Chris's logged-in Chrome session. Supported sites: NYT Cooking, BBC Good Food, Jamie Oliver, Mob Kitchen, AllRecipes, Delicious Magazine, and any site with Schema.org Recipe markup.
+
+To extract without saving (for review first): `{"url": "...", "auto_save": false}` — returns the structured data for Chris to review before confirming save.
+
+**Manual save (when URL extraction isn't possible):**
+
+1. Extract structured data from the recipe (name, ingredients with quantities/units, method steps, macros, cuisine, dietary flags)
+2. Save to Family Fuel:
+```
+POST http://172.19.64.1:8100/recipes
+{
+  "recipeName": "Chicken Burrito Bowl",
+  "description": "Quick high-protein burrito bowl",
+  "servings": 4,
+  "prepTimeMinutes": 10,
+  "cookTimeMinutes": 20,
+  "cuisineType": "Mexican",
+  "mealType": ["dinner"],
+  "caloriesPerServing": 520,
+  "proteinPerServing": 38,
+  "carbsPerServing": 45,
+  "fatPerServing": 18,
+  "containsMeat": true,
+  "tags": ["high-protein", "quick", "family-friendly"],
+  "recipeSource": "BBC Good Food",
+  "sourceUrl": "https://...",
+  "ingredients": [
+    {"ingredientName": "chicken breast", "quantity": 500, "unit": "g", "category": "meat"},
+    {"ingredientName": "rice", "quantity": 300, "unit": "g", "category": "carbs"}
+  ],
+  "instructions": [
+    {"stepNumber": 1, "instruction": "Cook the rice according to packet instructions"},
+    {"stepNumber": 2, "instruction": "Dice chicken and fry for 8 mins", "timerMinutes": 8}
+  ]
+}
+```
+3. Also save to Second Brain for semantic search: `POST /brain/save` with full text + tags
+
+**Get full recipe:** `GET http://172.19.64.1:8100/recipes/{id}` — returns recipe with all ingredients and instructions.
+**Track usage:** `PATCH http://172.19.64.1:8100/recipes/{id}/usage` — increments timesUsed, sets lastUsedDate.
+**Update rating:** `PATCH http://172.19.64.1:8100/recipes/{id}/rating` — body: `{"rating": 8}` (1-10 scale).
+**Delete recipe:** `DELETE http://172.19.64.1:8100/recipes/{id}` — soft-deletes (archives) a recipe Chris doesn't want.
+
+**Meal planning skills:** See `skills/meal-plan/SKILL.md`, `skills/meal-plan-setup/SKILL.md`, `skills/meal-plan-generator/SKILL.md`, `skills/meal-rating/SKILL.md`.
 
 ### Browser Interaction (Playwright MCP)
 

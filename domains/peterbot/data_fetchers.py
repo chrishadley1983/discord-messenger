@@ -1428,6 +1428,7 @@ async def _sync_amazon_emails(query: str, limit: int, timeout: int) -> dict[str,
     """Shared logic for syncing Amazon purchase emails to Second Brain."""
     import httpx
     from domains.second_brain import db
+    from domains.second_brain.pipeline import process_capture
     from domains.second_brain.types import ContentType, CaptureType
 
     try:
@@ -1495,21 +1496,18 @@ async def _sync_amazon_emails(query: str, limit: int, timeout: int) -> dict[str,
                         f"Date: {email_date}\n"
                         f"Category: {category}\n"
                     )
-                    summary = (
-                        f"Amazon purchase ({category}): {item['name'][:60]} "
-                        f"- £{item['price_gbp']:.2f} (Qty: {item['quantity']})"
-                    )
-
-                    await db.insert_knowledge_item(
-                        content_type=ContentType.NOTE,
+                    result = await process_capture(
+                        source=source_url,
                         capture_type=CaptureType.SEED,
-                        title=title,
-                        source_url=source_url,
-                        full_text=full_text,
-                        summary=summary,
-                        topics=["amazon", "purchase", category_tag],
+                        content_type_override=ContentType.NOTE,
+                        text=full_text,
+                        title_override=title,
+                        user_tags=["amazon", "purchase", category_tag],
                     )
-                    synced += 1
+                    if result:
+                        synced += 1
+                    else:
+                        logger.warning(f"Pipeline failed for Amazon item: {title}")
                     all_items.append(item)
 
             logger.info(f"Amazon purchases sync: {synced} saved, {skipped} skipped")
@@ -1587,6 +1585,100 @@ async def get_meal_plan_data() -> dict[str, Any]:
         else:
             logger.info("Meal plan fetch: no plan for this week")
     return result
+
+
+async def get_meal_plan_generator_data() -> dict[str, Any]:
+    """Fetch all data needed for intelligent meal plan generation.
+
+    Pulls: default template, preferences, Gousto lock-ins, calendar events,
+    recent meal history, due staples, and candidate recipes from Second Brain.
+    """
+    import asyncio
+    import httpx
+
+    async def _fetch(endpoint):
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(f"{HADLEY_API_URL}{endpoint}", timeout=15)
+                return resp.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+    # Parallel fetch all data sources
+    results = await asyncio.gather(
+        _fetch("/meal-plan/templates/default"),
+        _fetch("/meal-plan/preferences"),
+        _fetch("/meal-plan/current"),
+        _fetch("/meal-plan/history?days=21"),
+        _fetch("/meal-plan/staples/due"),
+        _fetch("/calendar/week"),
+    )
+
+    template_data, prefs_data, current_plan, history_data, staples_data, calendar_data = results
+
+    # Search Second Brain for candidate recipes
+    recipe_candidates = {"error": "not fetched"}
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{HADLEY_API_URL}/brain/search",
+                params={"query": "family dinner recipe high protein", "limit": "20"},
+                timeout=15
+            )
+            recipe_candidates = resp.json()
+    except Exception as e:
+        recipe_candidates = {"error": str(e)}
+
+    data = {
+        "template": template_data.get("template"),
+        "preferences": prefs_data.get("preferences"),
+        "current_plan": current_plan.get("plan"),
+        "recent_history": history_data.get("history", []),
+        "due_staples": staples_data.get("staples", []),
+        "calendar_events": calendar_data.get("events", []),
+        "recipe_candidates": recipe_candidates.get("results", []),
+        "week_start": (datetime.now().date() - timedelta(days=datetime.now().date().weekday())).isoformat(),
+    }
+
+    logger.info(
+        f"Meal plan generator data: template={'yes' if data['template'] else 'no'}, "
+        f"history={len(data['recent_history'])}, candidates={len(data['recipe_candidates'])}, "
+        f"staples_due={len(data['due_staples'])}"
+    )
+    return data
+
+
+async def get_meal_rating_data() -> dict[str, Any]:
+    """Fetch today's meal plan and any unrated history for the rating prompt."""
+    import asyncio
+
+    results = await asyncio.gather(
+        _hadley_request("/meal-plan/current"),
+        _hadley_request("/meal-plan/history?days=1"),
+    )
+
+    current_plan, today_history = results
+
+    # Find today's planned meal
+    today = datetime.now().date().isoformat()
+    todays_meals = []
+    plan = current_plan.get("plan")
+    if plan:
+        for item in plan.get("items", []):
+            if item.get("date") == today:
+                todays_meals.append(item)
+
+    # Check if today's meals have been rated
+    rated_today = {h.get("meal_name", "").lower() for h in today_history.get("history", [])}
+
+    data = {
+        "todays_meals": todays_meals,
+        "already_rated": list(rated_today),
+        "date": today,
+    }
+
+    logger.info(f"Meal rating data: {len(todays_meals)} meals planned, {len(rated_today)} rated")
+    return data
 
 
 async def get_email_summary_data() -> dict[str, Any]:
@@ -2994,6 +3086,8 @@ SKILL_DATA_FETCHERS = {
     "ballot-reminders": get_ballot_reminders_data,
     # Meal plan
     "meal-plan": get_meal_plan_data,
+    "meal-plan-generator": get_meal_plan_generator_data,
+    "meal-rating": get_meal_rating_data,
     # Phase 8a
     "email-summary": get_email_summary_data,
     "schedule-today": get_schedule_today_data,

@@ -259,18 +259,89 @@ Weekly meal plan management with Google Sheets import, Gousto email integration,
   - Auto-discovers meal plan and ingredients tabs
   - Parses DD/MM dates, detects Gousto/homemade source tags
 - `POST /meal-plan/import/csv` - Import from CSV (body: `{csv_data: "Date,Day,Adults,Kids\n...", ingredients_csv: "Category,Item,Qty\n..."}`)
-- `POST /meal-plan/import/gousto` - Search Gmail for Gousto order emails, extract and match recipes
+- `POST /meal-plan/import/gousto` - Search Gmail for Gousto order emails, extract recipes, match to meal plan, and scrape+save to Family Fuel DB. Returns `saved_to_family_fuel` (recipe IDs) and `save_errors`.
 
 **Write:**
 - `PUT /meal-plan/{plan_id}/ingredients` - Replace ingredients (body: `{ingredients: [{category, item, quantity?, for_recipe?}]}`)
 - `POST /meal-plan/shopping-list/generate?plan_id=<id>&title=<title>` - Generate PDF from plan ingredients
 - `DELETE /meal-plan/{plan_id}` - Delete a plan (cascades to items and ingredients)
 
+**Templates:**
+- `GET /meal-plan/templates` - List all weekly templates
+- `GET /meal-plan/templates/default` - Get the default template
+- `GET /meal-plan/templates/{name}` - Get a template by name
+- `PUT /meal-plan/templates/{name}` - Create/update template (body: `{days: {monday: {portions, max_prep_mins, type, notes}, ...}, is_default: bool}`)
+- `DELETE /meal-plan/templates/{name}` - Delete a template
+
+**Preferences:**
+- `GET /meal-plan/preferences?profile=default` - Get food preferences
+- `PUT /meal-plan/preferences?profile=default` - Update preferences (body: `{dietary?, variety_rules?, cuisine_preferences?, disliked_ingredients?, gousto_nights_per_week?, batch_cook_per_week?, budget_per_week_pence?}`)
+
+**Meal History:**
+- `POST /meal-plan/history` - Log a meal (body: `{date, meal_name, recipe_source?, protein_type?, rating?, would_make_again?, notes?}`)
+- `GET /meal-plan/history?days=14` - Get recent meal history
+- `PATCH /meal-plan/history/{meal_id}/rating` - Rate a meal (body: `{rating, would_make_again?, notes?}`)
+
+**Recipes (Family Fuel):**
+- `POST /recipes/extract` — Extract structured recipe data from a URL via Chrome CDP (port 9222)
+  - Body: `{url: "https://cooking.nytimes.com/...", auto_save?: false}`
+  - Uses Chris's logged-in Chrome session — works with paywalled sites (NYT Cooking, etc.)
+  - Extracts Schema.org JSON-LD: name, ingredients with quantities/units, instructions, macros, dietary flags
+  - Set `auto_save: true` to save directly to Family Fuel
+- `GET /recipes/search?q=<name>&cuisine=<type>&meal_type=<type>&tags=<csv>&limit=20` — Search recipes by name, cuisine, meal type, or tags
+- `POST /recipes` — Create a recipe with ingredients + instructions in one call
+  - Body: `{recipeName, description?, servings?, prepTimeMinutes?, cookTimeMinutes?, cuisineType?, mealType?: ["dinner"], caloriesPerServing?, proteinPerServing?, carbsPerServing?, fatPerServing?, isVegetarian?, isDairyFree?, containsMeat?, containsSeafood?, freezable?, tags?: ["quick"], recipeSource?, sourceUrl?, ingredients: [{ingredientName, quantity?, unit?, category?, sortOrder?}], instructions: [{stepNumber, instruction, timerMinutes?}]}`
+- `GET /recipes/{id}` — Get full recipe with ingredients and instructions
+- `PATCH /recipes/{id}/usage` — Increment usage count and set last used date
+- `PATCH /recipes/{id}/rating` — Update family rating (body: `{rating}`, 1-10 scale)
+- `DELETE /recipes/{id}` — Soft-delete (archive) a recipe
+
+**Surge.sh Deploy:**
+- `POST /deploy/surge` — Deploy HTML to a public URL via surge.sh
+  - Body: `{html: "<full HTML>", domain: "my-site.surge.sh", filename?: "index.html"}`
+  - Returns: `{deployed: true, url: "https://my-site.surge.sh", domain: "my-site.surge.sh"}`
+
+**Shopping Staples:**
+- `GET /meal-plan/staples` - List all staples (active_only=true by default)
+- `GET /meal-plan/staples/due` - Get staples due to be added (checks frequency vs last_added_date)
+- `PUT /meal-plan/staples/{name}` - Add/update staple (body: `{category, quantity?, frequency?, notes?}`)
+  - Frequency values: `weekly`, `biweekly`, `monthly`
+- `DELETE /meal-plan/staples/{name}` - Remove a staple
+- `POST /meal-plan/staples/mark-added` - Mark staples as added (body: `{names: ["milk", "bread"]}`)
+
+**Interactive Shopping List:**
+- `POST /meal-plan/shopping-list/html` - Generate interactive HTML shopping list page
+  - Body: `{categories: {"Dairy & Eggs": [{item, quantity?, for_recipe?}]}, staples?: [{name, category, quantity?}], gousto_items?: ["item1"], title?, week_start?}`
+  - Returns raw HTML — deploy to surge.sh for shareable URL
+  - Features: checkbox items with localStorage, grouped by aisle, progress bar, recipe attribution, Gousto exclusion section
+
+**Interactive Meal Plan:**
+- `POST /meal-plan/view/html` - Generate interactive HTML meal plan page (shareable weekly view)
+  - Body: `{plan: {items: [...], week_start: "..."}, title?}`
+  - Returns raw HTML — deploy to surge.sh for shareable URL
+
 ### Shopping List
 - `POST /shopping-list/generate` - Generate printable shopping list PDF (body: `{categories: {"Dairy": ["Milk"]}, title: "Weekly Shop", output_dir: "..."}`)
   - Defaults to `G:\My Drive\AI Work\Shopping Lists` with timestamped filename
   - Optional `output_dir` to override save location
   - Returns `{status, filename, path}`
+
+### Grocery Shopping (Chrome CDP)
+Automates Sainsbury's (and later Ocado) via Chrome DevTools Protocol on port 9222. Requires Chrome running with `--remote-debugging-port=9222` and Chris logged in to the store.
+
+- `GET /grocery/{store}/login-check` — Check if logged in to the store
+- `GET /grocery/{store}/search?q=<query>&limit=10` — Search for products
+- `GET /grocery/{store}/slots?date=<YYYY-MM-DD>&prefer=<saver|standard>` — Get available delivery slots
+  - Returns slots with `booking_key`, `date`, `start`, `end`, `price`, `type` (saver/standard/green)
+  - Sorted by preference if `prefer` specified; saver slots are £1-2, standard £4-6.50
+- `POST /grocery/{store}/slots/book` — Book a delivery slot (2hr hold)
+  - Body: `{booking_key: "<key from slots response>"}`
+- `GET /grocery/{store}/trolley` — View current trolley contents (items, prices, subtotal)
+- `POST /grocery/{store}/trolley/add-list` — Add shopping list items to trolley
+  - Body: `{items: [{name: "chicken breast", quantity?: "500g", category?: "meat"}]}`
+  - Auto-adds high-confidence matches (score >= 0.7), returns ambiguous/not-found items for manual resolution
+
+Supported stores: `sainsburys` (Ocado planned).
 
 ### Nutrition
 - `POST /nutrition/log-meal` - Log meal

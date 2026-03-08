@@ -6366,6 +6366,293 @@ async def meal_plan_by_week(date: str = Query(default=None, description="Any dat
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- Templates, Preferences & History ---
+# (Must be defined BEFORE /meal-plan/{plan_id} to avoid route shadowing)
+
+
+class TemplateUpsert(BaseModel):
+    days: dict
+    is_default: bool = False
+
+
+class PreferencesUpsert(BaseModel):
+    dietary: dict | None = None
+    variety_rules: dict | None = None
+    cuisine_preferences: list[str] | None = None
+    disliked_ingredients: list[str] | None = None
+    gousto_nights_per_week: int | None = None
+    batch_cook_per_week: int | None = None
+    budget_per_week_pence: int | None = None
+
+
+class MealHistoryLog(BaseModel):
+    date: str
+    meal_name: str
+    recipe_source: str | None = None
+    recipe_id: str | None = None
+    protein_type: str | None = None
+    rating: int | None = None
+    would_make_again: bool | None = None
+    notes: str | None = None
+
+
+class MealRatingUpdate(BaseModel):
+    rating: int
+    would_make_again: bool | None = None
+    notes: str | None = None
+
+
+@app.get("/meal-plan/templates")
+async def list_meal_plan_templates():
+    """List all meal plan templates."""
+    from domains.nutrition.services.meal_plan_config_service import list_templates
+    try:
+        templates = await list_templates()
+        return {"templates": templates, "count": len(templates)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/meal-plan/templates/default")
+async def get_default_meal_plan_template():
+    """Get the default template."""
+    from domains.nutrition.services.meal_plan_config_service import get_default_template
+    try:
+        template = await get_default_template()
+        if not template:
+            return {"template": None, "message": "No default template set"}
+        return {"template": template}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/meal-plan/templates/{name}")
+async def get_meal_plan_template(name: str):
+    """Get a template by name."""
+    from domains.nutrition.services.meal_plan_config_service import get_template
+    try:
+        template = await get_template(name)
+        if not template:
+            raise HTTPException(status_code=404, detail=f"Template '{name}' not found")
+        return {"template": template}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/meal-plan/templates/{name}")
+async def upsert_meal_plan_template(name: str, req: TemplateUpsert):
+    """Create or update a meal plan template."""
+    from domains.nutrition.services.meal_plan_config_service import upsert_template
+    try:
+        template = await upsert_template(name, req.days, req.is_default)
+        return {"template": template, "status": "upserted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/meal-plan/templates/{name}")
+async def delete_meal_plan_template(name: str):
+    """Delete a template."""
+    from domains.nutrition.services.meal_plan_config_service import delete_template
+    try:
+        result = await delete_template(name)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/meal-plan/preferences")
+async def get_meal_plan_preferences(profile: str = Query(default="default")):
+    """Get meal plan preferences."""
+    from domains.nutrition.services.meal_plan_config_service import get_preferences
+    try:
+        prefs = await get_preferences(profile)
+        if not prefs:
+            return {"preferences": None, "message": f"No preferences found for profile '{profile}'"}
+        return {"preferences": prefs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/meal-plan/preferences")
+async def upsert_meal_plan_preferences(req: PreferencesUpsert, profile: str = Query(default="default")):
+    """Create or update meal plan preferences."""
+    from domains.nutrition.services.meal_plan_config_service import upsert_preferences
+    try:
+        prefs = await upsert_preferences(
+            profile_name=profile,
+            dietary=req.dietary,
+            variety_rules=req.variety_rules,
+            cuisine_preferences=req.cuisine_preferences,
+            disliked_ingredients=req.disliked_ingredients,
+            gousto_nights_per_week=req.gousto_nights_per_week,
+            batch_cook_per_week=req.batch_cook_per_week,
+            budget_per_week_pence=req.budget_per_week_pence
+        )
+        return {"preferences": prefs, "status": "upserted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/meal-plan/history")
+async def log_meal_to_history(req: MealHistoryLog):
+    """Log a meal to history for tracking and learning."""
+    from domains.nutrition.services.meal_plan_config_service import log_meal_history
+    try:
+        entry = await log_meal_history(
+            date=req.date,
+            meal_name=req.meal_name,
+            recipe_source=req.recipe_source,
+            recipe_id=req.recipe_id,
+            protein_type=req.protein_type,
+            rating=req.rating,
+            would_make_again=req.would_make_again,
+            notes=req.notes
+        )
+        return {"entry": entry, "status": "logged"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/meal-plan/history")
+async def get_meal_history(days: int = Query(default=14)):
+    """Get recent meal history."""
+    from domains.nutrition.services.meal_plan_config_service import get_recent_meal_history
+    try:
+        history = await get_recent_meal_history(days)
+        return {"history": history, "count": len(history), "days": days}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/meal-plan/history/{meal_id}/rating")
+async def rate_meal(meal_id: str, req: MealRatingUpdate):
+    """Update rating for a meal history entry."""
+    from domains.nutrition.services.meal_plan_config_service import update_meal_rating
+    try:
+        entry = await update_meal_rating(
+            meal_id=meal_id,
+            rating=req.rating,
+            would_make_again=req.would_make_again,
+            notes=req.notes
+        )
+        return {"entry": entry, "status": "updated"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Shopping Staples ---
+
+
+class StapleUpsert(BaseModel):
+    category: str
+    quantity: str | None = None
+    frequency: str = "weekly"
+    notes: str | None = None
+
+
+class StapleBulkItem(BaseModel):
+    name: str
+    category: str
+    quantity: str | None = None
+    frequency: str = "weekly"
+    notes: str | None = None
+
+
+class StaplesBulkCreate(BaseModel):
+    staples: list[StapleBulkItem]
+
+
+class StaplesMarkAdded(BaseModel):
+    names: list[str]
+
+
+@app.post("/meal-plan/staples")
+async def bulk_create_staples(req: StaplesBulkCreate):
+    """Create or update multiple staples at once."""
+    from domains.nutrition.services.meal_plan_config_service import upsert_staple
+    results = []
+    errors = []
+    for item in req.staples:
+        try:
+            staple = await upsert_staple(
+                name=item.name,
+                category=item.category,
+                quantity=item.quantity,
+                frequency=item.frequency,
+                notes=item.notes
+            )
+            results.append(staple)
+        except Exception as e:
+            errors.append({"name": item.name, "error": str(e)})
+    return {"staples": results, "count": len(results), "errors": errors}
+
+
+@app.get("/meal-plan/staples")
+async def list_shopping_staples(active_only: bool = Query(default=True)):
+    """List all shopping staples."""
+    from domains.nutrition.services.meal_plan_config_service import list_staples
+    try:
+        staples = await list_staples(active_only)
+        return {"staples": staples, "count": len(staples)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/meal-plan/staples/due")
+async def get_due_shopping_staples():
+    """Get staples that are due to be added to the shopping list."""
+    from domains.nutrition.services.meal_plan_config_service import get_due_staples
+    try:
+        due = await get_due_staples()
+        return {"staples": due, "count": len(due)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/meal-plan/staples/{name}")
+async def upsert_shopping_staple(name: str, req: StapleUpsert):
+    """Create or update a shopping staple."""
+    from domains.nutrition.services.meal_plan_config_service import upsert_staple
+    try:
+        staple = await upsert_staple(
+            name=name,
+            category=req.category,
+            quantity=req.quantity,
+            frequency=req.frequency,
+            notes=req.notes
+        )
+        return {"staple": staple, "status": "upserted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/meal-plan/staples/{name}")
+async def delete_shopping_staple(name: str):
+    """Delete a shopping staple."""
+    from domains.nutrition.services.meal_plan_config_service import delete_staple
+    try:
+        result = await delete_staple(name)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/meal-plan/staples/mark-added")
+async def mark_staples_as_added(req: StaplesMarkAdded):
+    """Mark staples as added to today's shopping list."""
+    from domains.nutrition.services.meal_plan_config_service import mark_staples_added
+    try:
+        result = await mark_staples_added(req.names)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Plan by ID (must be AFTER /templates, /preferences, /history, /staples to avoid route shadowing) ---
+
 @app.get("/meal-plan/{plan_id}")
 async def meal_plan_by_id(plan_id: str):
     """Get a meal plan by its ID."""
@@ -6733,15 +7020,29 @@ async def meal_plan_import_csv(req: MealPlanCSVImport):
 
 @app.post("/meal-plan/import/gousto")
 async def meal_plan_import_gousto():
-    """Search Gmail for recent Gousto order confirmation emails and extract recipe names.
+    """Search Gmail for recent Gousto order confirmation emails, extract recipe names,
+    scrape recipe pages, and save them to Family Fuel.
 
     Matches extracted recipes against the current meal plan items tagged as 'gousto'.
+    Also scrapes recipe URLs from email HTML and saves structured recipes to Family Fuel DB.
     """
     from .google_auth import get_gmail_service
     from domains.nutrition.services.meal_plan_service import get_current_meal_plan
+    from domains.nutrition.services.gousto_importer import scrape_and_save_gousto_recipe
     import base64
     import re
     from html import unescape
+
+    # URL patterns for extracting recipe links from Gousto emails
+    TRACKING_URL_RE = re.compile(
+        r"https?://clicks\.gousto\.co\.uk/f/a/[A-Za-z0-9_~-]+/[A-Za-z0-9_~/-]+"
+    )
+    # Must have at least 2 path segments after /cookbook/ to be a specific recipe
+    # e.g. /cookbook/recipes/slow-cooker-beef or /cookbook/chicken-recipes/xyz
+    # Excludes /cookbook/recipes (the generic listing page)
+    RECIPE_URL_RE = re.compile(
+        r"https?://(?:www\.)?gousto\.co\.uk/cookbook/[\w-]+/[\w-]+"
+    )
 
     try:
         service = get_gmail_service()
@@ -6764,8 +7065,8 @@ async def meal_plan_import_gousto():
                 "fetched_at": datetime.now(UK_TZ).isoformat()
             }
 
-        # Extract recipe names from order confirmation emails only
-        all_recipes = []
+        # Extract recipe names AND URLs from order confirmation emails
+        all_recipes = []  # list of {"name": str, "url": str | None}
         for msg in messages:
             detail = service.users().messages().get(
                 userId='me',
@@ -6779,8 +7080,9 @@ async def meal_plan_import_gousto():
             if 'summary' not in subject and 'your order' not in subject and 'your box' not in subject:
                 continue
 
-            # Extract plain text body
+            # Extract both plain text and raw HTML from the email
             body_text = ""
+            body_html = ""
             payload = detail.get('payload', {})
 
             def extract_text(parts):
@@ -6795,91 +7097,155 @@ async def meal_plan_import_gousto():
                             text += extract_text(part['parts'])
                 return text
 
+            def extract_raw_html(parts):
+                html = ""
+                if isinstance(parts, list):
+                    for part in parts:
+                        if part.get('mimeType') == 'text/html':
+                            data = part.get('body', {}).get('data', '')
+                            if data:
+                                html += base64.urlsafe_b64decode(data).decode('utf-8', errors='replace')
+                        elif part.get('parts'):
+                            html += extract_raw_html(part['parts'])
+                return html
+
             if payload.get('mimeType') == 'text/plain':
                 data = payload.get('body', {}).get('data', '')
                 if data:
                     body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='replace')
             elif payload.get('parts'):
                 body_text = extract_text(payload['parts'])
+                body_html = extract_raw_html(payload['parts'])
 
-            if not body_text:
-                # Try HTML fallback
-                def extract_html(parts):
-                    text = ""
-                    if isinstance(parts, list):
-                        for part in parts:
-                            if part.get('mimeType') == 'text/html':
-                                data = part.get('body', {}).get('data', '')
-                                if data:
-                                    html = base64.urlsafe_b64decode(data).decode('utf-8', errors='replace')
-                                    # Strip HTML tags
-                                    text += re.sub(r'<[^>]+>', ' ', unescape(html))
-                            elif part.get('parts'):
-                                text += extract_html(part['parts'])
-                    return text
+            if not body_text and not body_html:
+                # Try HTML-only fallback
+                if payload.get('mimeType') == 'text/html':
+                    data = payload.get('body', {}).get('data', '')
+                    if data:
+                        body_html = base64.urlsafe_b64decode(data).decode('utf-8', errors='replace')
 
-                body_text = extract_html(payload.get('parts', []))
+            if not body_text and body_html:
+                # Strip HTML tags for text parsing
+                body_text = re.sub(r'<[^>]+>', ' ', unescape(body_html))
 
             if not body_text:
                 continue
 
-            # Parse Gousto recipe names from the email
-            # Gousto order summary emails list recipes in a structured block:
-            #   Recipe Name
-            #   Eat-by-date:
-            #   DD Mon - DD Mon
-            #   Cooking time: XX mins
-            #   See recipe
-            # We find lines immediately before "Cooking time:" — those are recipe names.
+            # Extract recipe URLs from HTML body (tracking URLs + direct cookbook URLs)
+            recipe_urls = []
+            search_body = body_html or body_text
+            direct_urls = RECIPE_URL_RE.findall(search_body)
+            if direct_urls:
+                recipe_urls = list(dict.fromkeys(direct_urls))
+            else:
+                # Extract tracking URLs, filter to ones near recipe content
+                tracking_urls = list(dict.fromkeys(TRACKING_URL_RE.findall(search_body)))
+                for url in tracking_urls:
+                    pos = search_body.find(url)
+                    if pos == -1:
+                        continue
+                    context = search_body[max(0, pos - 200):pos + len(url) + 300]
+                    if re.search(r"(cooking time|eat-by-date|see recipe)", context, re.I):
+                        recipe_urls.append(url)
+                # Fallback: all tracking URLs minus social/tracking links
+                if not recipe_urls:
+                    for url in tracking_urls:
+                        pos = search_body.find(url)
+                        if pos == -1:
+                            continue
+                        context = search_body[max(0, pos - 100):pos + len(url) + 100].lower()
+                        if any(kw in context for kw in ["instagram", "tik tok", "facebook", "track box", "track my"]):
+                            continue
+                        recipe_urls.append(url)
+
+            # Parse Gousto recipe names from the email text
+            # Map names to URLs by position
+            recipe_names_found = []
             lines = [l.strip() for l in body_text.split('\n')]
             for i, line in enumerate(lines):
                 if line.lower().startswith('cooking time:'):
-                    # Walk backwards to find the recipe name (skip eat-by-date lines, URLs)
                     for j in range(i - 1, max(i - 8, -1), -1):
                         candidate = lines[j].strip()
                         if not candidate:
                             continue
-                        # Skip date lines, "See recipe", "Eat-by-date:", URLs etc
                         if re.match(r'^\d{1,2}\s+\w+\s*-?\s*$', candidate):
-                            continue  # partial date like "11 Feb" or "10 Feb -"
+                            continue
                         if re.match(r'^\d{1,2}\s+\w+\s*-\s*\d{1,2}\s+\w+', candidate):
-                            continue  # full date range like "10 Feb - 11 Feb"
+                            continue
                         if candidate.lower() in ('eat-by-date:', 'see recipe', 'start drooling'):
                             continue
                         if candidate.startswith('(') or candidate.startswith('http'):
-                            continue  # URL lines
-                        # This should be the recipe name
-                        if len(candidate) > 5 and candidate not in all_recipes:
-                            all_recipes.append(candidate)
+                            continue
+                        if len(candidate) > 5:
+                            recipe_names_found.append(candidate)
                         break
+
+            # Pair names with URLs (they appear in the same order in the email)
+            for idx, name in enumerate(recipe_names_found):
+                if name not in [r["name"] for r in all_recipes]:
+                    url = recipe_urls[idx] if idx < len(recipe_urls) else None
+                    all_recipes.append({"name": name, "url": url})
+
+        recipe_names = [r["name"] for r in all_recipes]
 
         # Match against current meal plan
         plan = await get_current_meal_plan()
         matched = []
-        unmatched = list(all_recipes)
+        unmatched = list(recipe_names)
 
         if plan and plan.get('items'):
             gousto_items = [i for i in plan['items'] if i.get('source_tag') == 'gousto']
             for recipe in all_recipes:
                 for item in gousto_items:
                     meal_name = (item.get('adults_meal') or '').lower()
-                    if recipe.lower() in meal_name or meal_name in recipe.lower():
+                    if recipe["name"].lower() in meal_name or meal_name in recipe["name"].lower():
                         matched.append({
-                            "recipe": recipe,
+                            "recipe": recipe["name"],
                             "matched_meal": item.get('adults_meal'),
-                            "date": item.get('date')
+                            "date": item.get('date'),
+                            "url": recipe.get("url"),
                         })
-                        if recipe in unmatched:
-                            unmatched.remove(recipe)
+                        if recipe["name"] in unmatched:
+                            unmatched.remove(recipe["name"])
                         break
 
+        # Scrape and save recipes to Family Fuel DB
+        saved_recipes = []
+        save_errors = []
+        for recipe in all_recipes:
+            url = recipe.get("url")
+            if not url:
+                continue
+            try:
+                result = await scrape_and_save_gousto_recipe(url, recipe["name"])
+                if result:
+                    saved_recipes.append({
+                        "name": recipe["name"],
+                        "recipe_id": result.get("id"),
+                        "status": "saved",
+                    })
+                else:
+                    save_errors.append({
+                        "name": recipe["name"],
+                        "url": url,
+                        "error": "Scrape returned None (404 or extraction failure)",
+                    })
+            except Exception as e:
+                save_errors.append({
+                    "name": recipe["name"],
+                    "url": url,
+                    "error": str(e),
+                })
+
         return {
-            "status": "found" if all_recipes else "no_recipes",
+            "status": "found" if recipe_names else "no_recipes",
             "emails_checked": len(messages),
-            "recipes_found": all_recipes,
+            "recipes_found": recipe_names,
             "matched": matched,
             "unmatched": unmatched,
             "plan_id": plan["id"] if plan else None,
+            "saved_to_family_fuel": saved_recipes,
+            "save_errors": save_errors,
             "fetched_at": datetime.now(UK_TZ).isoformat()
         }
 
@@ -6988,6 +7354,288 @@ async def meal_plan_shopping_list_generate(
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {e}")
 
 
+class MealPlanViewHTMLRequest(BaseModel):
+    plan: dict
+    # plan.items: [{date, meal_slot, adults_meal, kids_meal, source_tag?, recipe_id?,
+    #               cook_time_mins?, servings?, notes?}]
+    # plan.week_start: "2026-03-09"
+    title: str | None = None
+    recipe_links: dict | None = None
+    # Optional: {meal_name: recipe_card_url} or {recipe_id: recipe_card_url}
+    # If not provided, will auto-lookup from Family Fuel for items with recipe_id
+    auto_generate_cards: bool = False
+    # If true, generate missing recipe cards and deploy to surge
+    notes: dict | None = None
+    # Optional: {date: "note text"} — pre-populated notes per day (Peter can set these)
+
+
+@app.post("/meal-plan/view/html")
+async def generate_meal_plan_view_html(req: MealPlanViewHTMLRequest):
+    """Generate an interactive HTML meal plan view for sharing via surge.sh.
+
+    Supports clickable recipe cards: pass recipe_links or set auto_generate_cards=true.
+    Items with recipe_id will auto-link to hadley-recipes.surge.sh/{recipe_id}.html.
+    """
+    from datetime import datetime as dt
+
+    generated_at = dt.now(UK_TZ).strftime("%d %b %Y, %H:%M")
+    week_start = req.plan.get("week_start", "")
+    week_label = ""
+    if week_start:
+        try:
+            ws = dt.fromisoformat(week_start)
+            week_label = f"w/c {ws.strftime('%-d %b %Y')}"
+        except Exception:
+            week_label = week_start
+
+    title = req.title or f"Meal Plan — {week_label}"
+
+    # Build recipe links map: meal_name -> card_url
+    recipe_links = dict(req.recipe_links or {})
+
+    # Auto-lookup recipe cards for items with recipe_id
+    items = req.plan.get("items", [])
+    for item in items:
+        recipe_id = item.get("recipe_id")
+        meal_name = item.get("adults_meal", "")
+        if recipe_id and meal_name and meal_name not in recipe_links:
+            card_url = f"https://hadley-recipes.surge.sh/{recipe_id}.html"
+            recipe_links[meal_name] = card_url
+
+    # Auto-generate missing cards if requested
+    if req.auto_generate_cards:
+        from domains.nutrition.services.family_fuel_service import get_recipe
+        from domains.nutrition.services.recipe_card_generator import generate_recipe_card_html
+        import subprocess
+
+        cards_dir = Path(__file__).resolve().parent.parent / "data" / "recipe-cards"
+        cards_dir.mkdir(parents=True, exist_ok=True)
+        new_cards = 0
+
+        for item in items:
+            recipe_id = item.get("recipe_id")
+            if not recipe_id:
+                continue
+            card_path = cards_dir / f"{recipe_id}.html"
+            if card_path.exists():
+                continue
+            try:
+                recipe = await get_recipe(recipe_id)
+                if recipe:
+                    html = generate_recipe_card_html(recipe)
+                    card_path.write_text(html, encoding="utf-8")
+                    new_cards += 1
+            except Exception:
+                pass
+
+        if new_cards > 0:
+            def _deploy():
+                surge_bin = os.path.join(os.environ.get("APPDATA", ""), "npm", "surge.cmd")
+                if not os.path.exists(surge_bin):
+                    surge_bin = "surge"
+                return subprocess.run(
+                    [surge_bin, str(cards_dir), "hadley-recipes.surge.sh"],
+                    capture_output=True, text=True, timeout=60,
+                )
+            await asyncio.to_thread(_deploy)
+
+    # Group items by date
+    days_data = {}
+    for item in items:
+        date = item.get("date", "")
+        if date not in days_data:
+            days_data[date] = []
+        days_data[date].append(item)
+
+    import json
+    days_json = json.dumps(days_data)
+    links_json = json.dumps(recipe_links)
+    notes_json = json.dumps(req.notes or {})
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8f9fa; color: #1a1a2e; }}
+  .header {{ background: #1a1a2e; color: white; padding: 24px 16px; text-align: center; }}
+  .header h1 {{ font-size: 1.4rem; font-weight: 600; }}
+  .header .meta {{ font-size: 0.8rem; opacity: 0.7; margin-top: 6px; }}
+  .week {{ max-width: 600px; margin: 16px auto; padding: 0 12px; }}
+  .day {{ background: white; border-radius: 12px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }}
+  .day-header {{ padding: 12px 16px; font-weight: 600; font-size: 1rem; display: flex; justify-content: space-between; align-items: center; }}
+  .day-header .date-label {{ font-size: 0.8rem; color: #888; font-weight: 400; }}
+  .day.today .day-header {{ background: #eef2ff; }}
+  .day.out .day-header {{ background: #f0fdf4; }}
+  .meal {{ padding: 10px 16px; border-top: 1px solid #f0f0f0; }}
+  .meal:first-of-type {{ border-top: none; }}
+  .meal-label {{ font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; color: #888; margin-bottom: 2px; }}
+  .meal-name a {{ color: inherit; text-decoration: none; }}
+  .meal-name a:hover {{ color: #4f46e5; }}
+  .meal-name .recipe-icon {{ font-size: 0.75rem; color: #4f46e5; margin-left: 4px; opacity: 0.6; }}
+  .meal-name {{ font-size: 0.95rem; }}
+  .meal-meta {{ display: flex; gap: 10px; margin-top: 4px; }}
+  .meal-meta-item {{ font-size: 0.75rem; color: #666; display: flex; align-items: center; gap: 3px; }}
+  .meal-meta-item .icon {{ font-size: 0.8rem; }}
+  .source-tag {{ display: inline-block; font-size: 0.65rem; background: #e8e8f0; color: #555; padding: 2px 8px; border-radius: 10px; margin-left: 8px; vertical-align: middle; }}
+  .source-tag.gousto {{ background: #dbeafe; color: #1d4ed8; }}
+  .source-tag.familyfuel {{ background: #fef3c7; color: #92400e; }}
+  .out-label {{ padding: 12px 16px; color: #888; font-style: italic; font-size: 0.9rem; }}
+  .notes-section {{ padding: 8px 16px 12px; border-top: 1px solid #f0f0f0; }}
+  .notes-toggle {{ font-size: 0.75rem; color: #4f46e5; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; gap: 4px; }}
+  .notes-toggle:hover {{ color: #3730a3; }}
+  .notes-area {{ margin-top: 6px; display: none; }}
+  .notes-area.open {{ display: block; }}
+  .notes-area textarea {{ width: 100%; min-height: 50px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; font-family: inherit; font-size: 0.85rem; color: #333; resize: vertical; outline: none; }}
+  .notes-area textarea:focus {{ border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.1); }}
+  .notes-area textarea::placeholder {{ color: #bbb; }}
+  .notes-badge {{ display: inline-block; width: 6px; height: 6px; background: #4f46e5; border-radius: 50%; }}
+  .footer {{ text-align: center; padding: 20px; font-size: 0.75rem; color: #999; }}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>{title}</h1>
+  <div class="meta">{week_label} &middot; Updated {generated_at}</div>
+</div>
+
+<div class="week" id="weekContainer"></div>
+<div class="footer">Generated by Peter</div>
+
+<script>
+const DAYS_DATA = {days_json};
+const RECIPE_LINKS = {links_json};
+const INITIAL_NOTES = {notes_json};
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const today = new Date().toISOString().split('T')[0];
+const STORAGE_KEY = 'meal-plan-notes';
+
+// Merge: localStorage notes override initial notes (user edits persist)
+function getNotes() {{
+  const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{{}}');
+  // Merge initial notes as defaults, stored notes take priority
+  const merged = {{...INITIAL_NOTES, ...stored}};
+  return merged;
+}}
+function saveNote(date, text) {{
+  const notes = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{{}}');
+  if (text.trim()) {{
+    notes[date] = text;
+  }} else {{
+    delete notes[date];
+  }}
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
+  // Update badge visibility
+  const badge = document.getElementById('badge-' + date);
+  if (badge) badge.style.display = text.trim() ? 'inline-block' : 'none';
+}}
+
+function linkify(name) {{
+  let url = RECIPE_LINKS[name];
+  if (!url) {{
+    const clean = name.replace(/\\s*\\(.*?\\)\\s*/g, '').replace(/[^\\w\\s&-]/g, '').trim();
+    url = RECIPE_LINKS[clean];
+  }}
+  if (url) {{
+    return '<a href="' + url + '" target="_blank">' + name + '<span class="recipe-icon">&#x1F4D6;</span></a>';
+  }}
+  return name;
+}}
+
+const dates = Object.keys(DAYS_DATA).sort();
+const container = document.getElementById('weekContainer');
+const allNotes = getNotes();
+
+for (const date of dates) {{
+  const d = new Date(date + 'T12:00:00');
+  const dayName = DAY_NAMES[d.getDay()];
+  const dateLabel = d.getDate() + ' ' + MONTHS[d.getMonth()];
+  const items = DAYS_DATA[date];
+  const isToday = date === today;
+
+  const allOut = items.every(i => {{
+    const m = (i.adults_meal || '').toLowerCase();
+    return m.includes('out') || m === '' || i.source_tag === 'out';
+  }});
+
+  const dayDiv = document.createElement('div');
+  dayDiv.className = 'day' + (isToday ? ' today' : '') + (allOut ? ' out' : '');
+
+  let headerHTML = '<div class="day-header"><span>' + dayName + (isToday ? ' \\u2728' : '') +
+    '</span><span class="date-label">' + dateLabel + '</span></div>';
+
+  let mealsHTML = '';
+  if (allOut) {{
+    mealsHTML = '<div class="out-label">Eating out</div>';
+  }} else {{
+    for (const item of items) {{
+      const adults = item.adults_meal || '';
+      const kids = item.kids_meal || '';
+      const source = item.source_tag || '';
+      const sourceTag = source ? '<span class="source-tag ' + source + '">' + source + '</span>' : '';
+
+      // Build meta line (cook time + servings)
+      let metaHTML = '';
+      const metaParts = [];
+      if (item.cook_time_mins) {{
+        metaParts.push('<span class="meal-meta-item"><span class="icon">&#9201;</span>' + item.cook_time_mins + ' min</span>');
+      }}
+      if (item.servings) {{
+        metaParts.push('<span class="meal-meta-item"><span class="icon">&#127869;</span>' + item.servings + ' servings</span>');
+      }}
+      if (metaParts.length) {{
+        metaHTML = '<div class="meal-meta">' + metaParts.join('') + '</div>';
+      }}
+
+      if (adults && kids && adults !== kids) {{
+        mealsHTML += '<div class="meal"><div class="meal-label">Adults</div><div class="meal-name">' + linkify(adults) + sourceTag + '</div>' + metaHTML + '</div>';
+        mealsHTML += '<div class="meal"><div class="meal-label">Kids</div><div class="meal-name">' + kids + '</div></div>';
+      }} else if (adults) {{
+        mealsHTML += '<div class="meal"><div class="meal-name">' + linkify(adults) + sourceTag + '</div>' + metaHTML + '</div>';
+      }} else if (kids) {{
+        mealsHTML += '<div class="meal"><div class="meal-label">Kids</div><div class="meal-name">' + kids + '</div></div>';
+      }}
+    }}
+  }}
+
+  // Notes section
+  const noteText = allNotes[date] || '';
+  const hasNote = noteText.trim().length > 0;
+  const notesHTML = '<div class="notes-section">' +
+    '<div class="notes-toggle" onclick="toggleNotes(\\'' + date + '\\')">' +
+    '<span id="badge-' + date + '" class="notes-badge" style="display:' + (hasNote ? 'inline-block' : 'none') + '"></span>' +
+    '<span id="toggle-label-' + date + '">' + (hasNote ? 'Notes' : 'Add note') + '</span>' +
+    '</div>' +
+    '<div class="notes-area' + (hasNote ? ' open' : '') + '" id="notes-' + date + '">' +
+    '<textarea placeholder="e.g. Get chicken out of freezer at lunch" oninput="saveNote(\\'' + date + '\\', this.value)">' +
+    (noteText.replace(/</g, '&lt;').replace(/>/g, '&gt;')) +
+    '</textarea></div></div>';
+
+  dayDiv.innerHTML = headerHTML + mealsHTML + notesHTML;
+  container.appendChild(dayDiv);
+}}
+
+function toggleNotes(date) {{
+  const area = document.getElementById('notes-' + date);
+  area.classList.toggle('open');
+  const label = document.getElementById('toggle-label-' + date);
+  if (area.classList.contains('open')) {{
+    label.textContent = 'Notes';
+    area.querySelector('textarea').focus();
+  }}
+}}
+</script>
+</body>
+</html>"""
+
+    return Response(content=html, media_type="text/html")
+
+
 @app.post("/meal-plan/export-pdf")
 async def meal_plan_export_pdf(
     plan_id: str = Query(default=None, description="Plan ID (defaults to current week)"),
@@ -7043,6 +7691,223 @@ async def meal_plan_export_pdf(
         raise HTTPException(status_code=500, detail=f"Meal plan PDF generation failed: {e}")
 
 
+class ShoppingListHTMLRequest(BaseModel):
+    categories: dict[str, list[dict]]
+    # Each category maps to list of {item, quantity?, for_recipe?}
+    staples: list[dict] | None = None
+    # Optional staples to include: [{name, category, quantity?}]
+    gousto_items: list[str] | None = None
+    # Items arriving in Gousto box (shown but excluded from main list)
+    title: str = "Weekly Shop"
+    week_start: str | None = None
+
+
+@app.post("/meal-plan/shopping-list/html")
+async def generate_shopping_list_html(req: ShoppingListHTMLRequest):
+    """Generate an interactive HTML shopping list page.
+
+    Returns the HTML content. Peter deploys it to surge.sh.
+    """
+    from datetime import datetime as dt
+
+    generated_at = dt.now(UK_TZ).strftime("%d %b %Y, %H:%M")
+    week_label = ""
+    if req.week_start:
+        try:
+            ws = dt.fromisoformat(req.week_start)
+            week_label = f"w/c {ws.strftime('%-d %b')}"
+        except Exception:
+            week_label = req.week_start
+
+    # Merge staples into categories
+    all_categories = dict(req.categories)
+    if req.staples:
+        for staple in req.staples:
+            cat = staple.get("category", "Other")
+            item_dict = {
+                "item": staple["name"],
+                "quantity": staple.get("quantity"),
+                "for_recipe": "Staple",
+            }
+            all_categories.setdefault(cat, []).append(item_dict)
+
+    # Count total items
+    total_items = sum(len(items) for items in all_categories.values())
+
+    # Build items JSON for the page
+    items_json = []
+    for category, items in sorted(all_categories.items()):
+        for item in items:
+            items_json.append({
+                "category": category,
+                "name": item.get("item", item.get("name", "")),
+                "quantity": item.get("quantity", ""),
+                "recipe": item.get("for_recipe", ""),
+            })
+
+    import json
+    items_data = json.dumps(items_json)
+    gousto_data = json.dumps(req.gousto_items or [])
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{req.title} — {week_label}</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8f9fa; color: #1a1a2e; padding-bottom: 80px; }}
+  .header {{ background: #1a1a2e; color: white; padding: 20px 16px; position: sticky; top: 0; z-index: 10; }}
+  .header h1 {{ font-size: 1.25rem; font-weight: 600; }}
+  .header .meta {{ font-size: 0.75rem; opacity: 0.7; margin-top: 4px; }}
+  .progress-bar {{ background: #2d2d4e; border-radius: 8px; height: 8px; margin-top: 12px; overflow: hidden; }}
+  .progress-fill {{ background: #4ade80; height: 100%; transition: width 0.3s ease; border-radius: 8px; }}
+  .progress-text {{ font-size: 0.8rem; margin-top: 6px; display: flex; justify-content: space-between; }}
+  .done-banner {{ background: #4ade80; color: #1a1a2e; text-align: center; padding: 8px; font-weight: 600; display: none; }}
+  .category {{ margin: 12px 16px; background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }}
+  .category-header {{ background: #e8e8f0; padding: 10px 16px; font-weight: 600; font-size: 0.9rem; display: flex; justify-content: space-between; align-items: center; }}
+  .category-count {{ font-size: 0.75rem; color: #666; font-weight: 400; }}
+  .item {{ display: flex; align-items: flex-start; padding: 12px 16px; border-bottom: 1px solid #f0f0f0; gap: 12px; transition: background 0.2s; cursor: pointer; -webkit-tap-highlight-color: transparent; }}
+  .item:last-child {{ border-bottom: none; }}
+  .item.picked {{ background: #f0fdf4; }}
+  .item input[type="checkbox"] {{ width: 22px; height: 22px; margin-top: 2px; accent-color: #4ade80; flex-shrink: 0; cursor: pointer; }}
+  .item-details {{ flex: 1; min-width: 0; }}
+  .item-name {{ font-size: 0.95rem; transition: all 0.2s; }}
+  .item.picked .item-name {{ text-decoration: line-through; color: #999; }}
+  .item-qty {{ font-size: 0.8rem; color: #666; margin-top: 2px; }}
+  .item-recipe {{ display: inline-block; font-size: 0.7rem; background: #e8e8f0; color: #555; padding: 2px 8px; border-radius: 10px; margin-top: 4px; }}
+  .item-recipe.staple {{ background: #dbeafe; color: #1d4ed8; }}
+  .gousto-section {{ margin: 12px 16px; }}
+  .gousto-section summary {{ font-weight: 600; font-size: 0.9rem; cursor: pointer; padding: 10px 0; color: #666; }}
+  .gousto-section ul {{ list-style: none; padding: 0 0 8px 0; }}
+  .gousto-section li {{ font-size: 0.85rem; color: #888; padding: 4px 0; padding-left: 20px; position: relative; }}
+  .gousto-section li::before {{ content: "\\1F4E6"; position: absolute; left: 0; }}
+  .sticky-bar {{ position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 2px solid #e8e8f0; padding: 12px 16px; z-index: 10; box-shadow: 0 -2px 8px rgba(0,0,0,0.08); }}
+  .sticky-bar .bar-inner {{ max-width: 600px; margin: 0 auto; display: flex; align-items: center; gap: 12px; }}
+  .sticky-progress {{ flex: 1; background: #e8e8f0; border-radius: 8px; height: 8px; overflow: hidden; }}
+  .sticky-fill {{ background: #4ade80; height: 100%; transition: width 0.3s ease; border-radius: 8px; }}
+  .sticky-text {{ font-size: 0.85rem; font-weight: 600; white-space: nowrap; }}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>{req.title}</h1>
+  <div class="meta">{week_label} &middot; Generated {generated_at}</div>
+  <div class="progress-bar"><div class="progress-fill" id="headerFill"></div></div>
+  <div class="progress-text"><span id="headerCount">0/{total_items} items</span><span id="headerPct">0%</span></div>
+</div>
+<div class="done-banner" id="doneBanner">All done! &#127881;</div>
+
+<div id="listContainer"></div>
+
+<div class="gousto-section" id="goustoSection" style="display:none">
+  <details>
+    <summary>Gousto box contents (arriving separately)</summary>
+    <ul id="goustoList"></ul>
+  </details>
+</div>
+
+<div class="sticky-bar">
+  <div class="bar-inner">
+    <div class="sticky-progress"><div class="sticky-fill" id="stickyFill"></div></div>
+    <span class="sticky-text" id="stickyText">0/{total_items}</span>
+  </div>
+</div>
+
+<script>
+const ITEMS = {items_data};
+const GOUSTO = {gousto_data};
+const STORAGE_KEY = 'shopping-list-{req.week_start or "current"}';
+
+let state = {{}};
+try {{ const s = localStorage.getItem(STORAGE_KEY); if (s) state = JSON.parse(s); }} catch(e) {{}}
+
+// Clean old keys
+for (let i = localStorage.length - 1; i >= 0; i--) {{
+  const k = localStorage.key(i);
+  if (k && k.startsWith('shopping-list-') && k !== STORAGE_KEY) localStorage.removeItem(k);
+}}
+
+function save() {{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }}
+
+function updateProgress() {{
+  const total = ITEMS.length;
+  const picked = Object.values(state).filter(v => v).length;
+  const pct = total > 0 ? Math.round((picked / total) * 100) : 0;
+  document.getElementById('headerFill').style.width = pct + '%';
+  document.getElementById('headerCount').textContent = picked + '/' + total + ' items';
+  document.getElementById('headerPct').textContent = pct + '%';
+  document.getElementById('stickyFill').style.width = pct + '%';
+  document.getElementById('stickyText').textContent = picked + '/' + total;
+  document.getElementById('doneBanner').style.display = (picked === total && total > 0) ? 'block' : 'none';
+}}
+
+function toggleItem(idx) {{
+  state[idx] = !state[idx];
+  const el = document.getElementById('item-' + idx);
+  el.classList.toggle('picked', !!state[idx]);
+  el.querySelector('input').checked = !!state[idx];
+  // Update category count
+  const cat = el.closest('.category');
+  const items = cat.querySelectorAll('.item');
+  const catPicked = Array.from(items).filter(i => i.classList.contains('picked')).length;
+  cat.querySelector('.category-count').textContent = catPicked + '/' + items.length;
+  save();
+  updateProgress();
+}}
+
+function render() {{
+  const container = document.getElementById('listContainer');
+  // Group by category
+  const groups = {{}};
+  ITEMS.forEach((item, idx) => {{
+    if (!groups[item.category]) groups[item.category] = [];
+    groups[item.category].push({{ ...item, idx }});
+  }});
+
+  const sortedCats = Object.keys(groups).sort();
+  let html = '';
+  for (const cat of sortedCats) {{
+    const items = groups[cat];
+    const catPicked = items.filter(i => !!state[i.idx]).length;
+    html += '<div class="category"><div class="category-header">' + cat +
+      '<span class="category-count">' + catPicked + '/' + items.length + '</span></div>';
+    for (const item of items) {{
+      const picked = !!state[item.idx];
+      const recipeTag = item.recipe ? (
+        '<span class="item-recipe' + (item.recipe === 'Staple' ? ' staple' : '') + '">' + item.recipe + '</span>'
+      ) : '';
+      html += '<div class="item' + (picked ? ' picked' : '') + '" id="item-' + item.idx + '" onclick="toggleItem(' + item.idx + ')">' +
+        '<input type="checkbox"' + (picked ? ' checked' : '') + ' onclick="event.stopPropagation(); toggleItem(' + item.idx + ')">' +
+        '<div class="item-details">' +
+        '<div class="item-name">' + item.name + '</div>' +
+        (item.quantity ? '<div class="item-qty">' + item.quantity + '</div>' : '') +
+        recipeTag +
+        '</div></div>';
+    }}
+    html += '</div>';
+  }}
+  container.innerHTML = html;
+
+  // Gousto section
+  if (GOUSTO.length > 0) {{
+    document.getElementById('goustoSection').style.display = 'block';
+    document.getElementById('goustoList').innerHTML = GOUSTO.map(g => '<li>' + g + '</li>').join('');
+  }}
+
+  updateProgress();
+}}
+
+render();
+</script>
+</body>
+</html>"""
+
+    return Response(content=html, media_type="text/html")
+
+
 @app.put("/meal-plan/{plan_id}/ingredients")
 async def meal_plan_update_ingredients(plan_id: str, req: MealPlanIngredientsUpdate):
     """Replace all ingredients for a meal plan.
@@ -7059,6 +7924,496 @@ async def meal_plan_update_ingredients(plan_id: str, req: MealPlanIngredientsUpd
             "ingredients_count": len(result),
             "fetched_at": datetime.now(UK_TZ).isoformat()
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Recipes (Family Fuel)
+# ============================================================
+
+
+class RecipeIngredientCreate(BaseModel):
+    ingredientName: str
+    quantity: float | None = None
+    unit: str | None = None
+    category: str | None = None
+    notes: str | None = None
+    sortOrder: int | None = None
+
+
+class RecipeInstructionCreate(BaseModel):
+    stepNumber: int
+    instruction: str
+    timerMinutes: int | None = None
+
+
+class RecipeCreate(BaseModel):
+    recipeName: str
+    description: str | None = None
+    servings: int | None = None
+    prepTimeMinutes: int | None = None
+    cookTimeMinutes: int | None = None
+    totalTimeMinutes: int | None = None
+    cuisineType: str | None = None
+    mealType: list[str] | None = None
+    difficultyLevel: str | None = None
+    caloriesPerServing: int | None = None
+    proteinPerServing: int | None = None
+    carbsPerServing: int | None = None
+    fatPerServing: int | None = None
+    fiberPerServing: int | None = None
+    sugarPerServing: int | None = None
+    isVegetarian: bool = False
+    isVegan: bool = False
+    isDairyFree: bool = False
+    isGlutenFree: bool = False
+    containsMeat: bool = False
+    containsSeafood: bool = False
+    containsNuts: bool = False
+    freezable: bool = False
+    reheatingInstructions: str | None = None
+    leftoverInstructions: str | None = None
+    yieldsMultipleMeals: bool = False
+    mealsYielded: int | None = None
+    tags: list[str] | None = None
+    notes: str | None = None
+    recipeSource: str | None = None
+    sourceUrl: str | None = None
+    ingredients: list[RecipeIngredientCreate] = []
+    instructions: list[RecipeInstructionCreate] = []
+
+
+class RecipeExtractRequest(BaseModel):
+    url: str
+    auto_save: bool = False
+
+
+@app.post("/recipes/extract")
+async def extract_recipe_endpoint(req: RecipeExtractRequest):
+    """Extract structured recipe data from a URL via Chrome CDP.
+
+    Connects to Chrome on port 9222 (must have --remote-debugging-port=9222).
+    Works with paywalled sites like NYT Cooking if logged in.
+    Set auto_save=true to save directly to Family Fuel.
+    """
+    from domains.nutrition.services.recipe_extractor import extract_recipe
+
+    try:
+        recipe_data = await extract_recipe(req.url)
+
+        if req.auto_save:
+            from domains.nutrition.services.family_fuel_service import create_recipe
+            ingredients = recipe_data.pop("ingredients", [])
+            instructions = recipe_data.pop("instructions", [])
+            saved = await create_recipe(recipe_data, ingredients, instructions)
+            return {"recipe": saved, "status": "saved", "source_url": req.url}
+
+        return {"recipe": recipe_data, "status": "extracted", "source_url": req.url}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- /recipes/search must be BEFORE /recipes/{recipe_id} to avoid route shadowing ---
+
+@app.get("/recipes/search")
+async def search_recipes_endpoint(
+    q: str = Query(default=None, description="Search by recipe name"),
+    cuisine: str = Query(default=None, description="Filter by cuisine type"),
+    meal_type: str = Query(default=None, description="Filter by meal type"),
+    tags: str = Query(default=None, description="Comma-separated tags to filter by"),
+    limit: int = Query(default=20, ge=1, le=100, description="Max results"),
+):
+    """Search Family Fuel recipes with optional filters."""
+    from domains.nutrition.services.family_fuel_service import search_recipes
+
+    try:
+        tag_list = [t.strip() for t in tags.split(",")] if tags else None
+        results = await search_recipes(
+            query=q, cuisine=cuisine, meal_type=meal_type, tags=tag_list, limit=limit
+        )
+        return {"recipes": results, "count": len(results)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/recipes")
+async def create_recipe_endpoint(req: RecipeCreate):
+    """Create a recipe with ingredients and instructions in one call."""
+    from domains.nutrition.services.family_fuel_service import create_recipe
+
+    try:
+        recipe_data = req.model_dump(exclude={"ingredients", "instructions"})
+        ingredients = [ing.model_dump() for ing in req.ingredients]
+        instructions = [inst.model_dump() for inst in req.instructions]
+
+        result = await create_recipe(recipe_data, ingredients, instructions)
+        return {"recipe": result, "status": "created"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recipes/{recipe_id}")
+async def get_recipe_endpoint(recipe_id: str):
+    """Get a full recipe with ingredients and instructions."""
+    from domains.nutrition.services.family_fuel_service import get_recipe
+
+    try:
+        recipe = await get_recipe(recipe_id)
+        if not recipe:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        return {"recipe": recipe}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/recipes/{recipe_id}/usage")
+async def update_recipe_usage_endpoint(recipe_id: str):
+    """Increment usage count and set last used date."""
+    from domains.nutrition.services.family_fuel_service import update_recipe_usage
+
+    try:
+        result = await update_recipe_usage(recipe_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RecipeRatingUpdate(BaseModel):
+    rating: int
+
+
+@app.patch("/recipes/{recipe_id}/rating")
+async def update_recipe_rating_endpoint(recipe_id: str, req: RecipeRatingUpdate):
+    """Update the family rating for a recipe (1-10 scale)."""
+    from domains.nutrition.services.family_fuel_service import update_recipe_rating
+
+    try:
+        result = await update_recipe_rating(recipe_id, req.rating)
+        if not result:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/recipes/{recipe_id}")
+async def delete_recipe_endpoint(recipe_id: str):
+    """Delete (archive) a recipe from Family Fuel."""
+    from domains.nutrition.services.family_fuel_service import delete_recipe
+
+    try:
+        result = await delete_recipe(recipe_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        return {"deleted": True, **result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Persistent directory for recipe card HTML files
+RECIPE_CARDS_DIR = Path(__file__).resolve().parent.parent / "data" / "recipe-cards"
+RECIPE_CARDS_DOMAIN = "hadley-recipes.surge.sh"
+
+
+@app.post("/recipes/{recipe_id}/card")
+async def generate_recipe_card(
+    recipe_id: str,
+    back_url: str = Query(default=None, description="URL to link back to (e.g., meal plan page)"),
+):
+    """Generate a recipe card HTML page, save to recipe-cards dir, and deploy to surge.
+
+    Returns the public URL. Idempotent — returns cached URL if card already exists.
+    """
+    import subprocess
+    from domains.nutrition.services.family_fuel_service import get_recipe
+    from domains.nutrition.services.recipe_card_generator import generate_recipe_card_html
+
+    try:
+        # Check if card already exists
+        card_path = RECIPE_CARDS_DIR / f"{recipe_id}.html"
+        if card_path.exists():
+            return {
+                "url": f"https://{RECIPE_CARDS_DOMAIN}/{recipe_id}.html",
+                "recipe_id": recipe_id,
+                "cached": True,
+            }
+
+        # Get full recipe from Family Fuel
+        recipe = await get_recipe(recipe_id)
+        if not recipe:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+
+        # Generate HTML
+        html = generate_recipe_card_html(recipe, back_url=back_url)
+
+        # Save to persistent directory
+        RECIPE_CARDS_DIR.mkdir(parents=True, exist_ok=True)
+        card_path.write_text(html, encoding="utf-8")
+
+        # Deploy entire recipe-cards directory to surge
+        def _deploy():
+            surge_bin = os.path.join(
+                os.environ.get("APPDATA", ""), "npm", "surge.cmd"
+            )
+            if not os.path.exists(surge_bin):
+                surge_bin = "surge"
+            return subprocess.run(
+                [surge_bin, str(RECIPE_CARDS_DIR), RECIPE_CARDS_DOMAIN],
+                capture_output=True, text=True, timeout=60,
+            )
+
+        result = await asyncio.to_thread(_deploy)
+        if result.returncode != 0:
+            return {
+                "url": f"https://{RECIPE_CARDS_DOMAIN}/{recipe_id}.html",
+                "recipe_id": recipe_id,
+                "deployed": False,
+                "error": result.stderr.strip() or result.stdout.strip(),
+            }
+
+        return {
+            "url": f"https://{RECIPE_CARDS_DOMAIN}/{recipe_id}.html",
+            "recipe_id": recipe_id,
+            "recipe_name": recipe.get("recipeName"),
+            "deployed": True,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/recipes/cards/batch")
+async def generate_recipe_cards_batch(req: Request):
+    """Generate recipe cards for multiple recipes in one deploy.
+
+    Body: {recipe_ids: ["id1", "id2", ...], back_url?: "..."}
+    Generates all missing cards, then deploys once.
+    """
+    import subprocess
+    from domains.nutrition.services.family_fuel_service import get_recipe
+    from domains.nutrition.services.recipe_card_generator import generate_recipe_card_html
+
+    body = await req.json()
+    recipe_ids = body.get("recipe_ids", [])
+    back_url = body.get("back_url")
+
+    if not recipe_ids:
+        return {"cards": [], "deployed": False}
+
+    RECIPE_CARDS_DIR.mkdir(parents=True, exist_ok=True)
+    cards = []
+    new_cards = 0
+
+    for rid in recipe_ids:
+        card_path = RECIPE_CARDS_DIR / f"{rid}.html"
+        url = f"https://{RECIPE_CARDS_DOMAIN}/{rid}.html"
+
+        if card_path.exists():
+            cards.append({"recipe_id": rid, "url": url, "cached": True})
+            continue
+
+        try:
+            recipe = await get_recipe(rid)
+            if not recipe:
+                cards.append({"recipe_id": rid, "url": None, "error": "not_found"})
+                continue
+            html = generate_recipe_card_html(recipe, back_url=back_url)
+            card_path.write_text(html, encoding="utf-8")
+            cards.append({"recipe_id": rid, "url": url, "recipe_name": recipe.get("recipeName"), "cached": False})
+            new_cards += 1
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            cards.append({"recipe_id": rid, "url": None, "error": str(e), "traceback": tb})
+
+    # Deploy if we generated any new cards
+    deployed = False
+    if new_cards > 0:
+        def _deploy():
+            surge_bin = os.path.join(
+                os.environ.get("APPDATA", ""), "npm", "surge.cmd"
+            )
+            if not os.path.exists(surge_bin):
+                surge_bin = "surge"
+            return subprocess.run(
+                [surge_bin, str(RECIPE_CARDS_DIR), RECIPE_CARDS_DOMAIN],
+                capture_output=True, text=True, timeout=60,
+            )
+        result = await asyncio.to_thread(_deploy)
+        deployed = result.returncode == 0
+
+    return {"cards": cards, "deployed": deployed, "new_cards": new_cards}
+
+
+# ============================================================
+# Surge.sh Deployment
+# ============================================================
+
+
+class SurgeDeployRequest(BaseModel):
+    html: str
+    domain: str
+    filename: str = "index.html"
+
+
+@app.post("/deploy/surge")
+async def deploy_to_surge(req: SurgeDeployRequest):
+    """Deploy HTML content to surge.sh.
+
+    Writes the HTML to a temp directory and deploys via the surge CLI.
+    Surge is already authenticated on this machine.
+    """
+    import subprocess
+    import tempfile
+
+    def _deploy():
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = os.path.join(tmpdir, req.filename)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(req.html)
+
+            # Ensure domain ends with .surge.sh
+            domain = req.domain if req.domain.endswith(".surge.sh") else f"{req.domain}.surge.sh"
+
+            surge_bin = os.path.join(
+                os.environ.get("APPDATA", ""), "npm", "surge.cmd"
+            )
+            if not os.path.exists(surge_bin):
+                surge_bin = "surge"  # fallback to PATH
+
+            result = subprocess.run(
+                [surge_bin, tmpdir, domain],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode == 0:
+                return {
+                    "deployed": True,
+                    "url": f"https://{domain}",
+                    "domain": domain,
+                }
+            else:
+                return {
+                    "deployed": False,
+                    "error": result.stderr.strip() or result.stdout.strip(),
+                    "returncode": result.returncode,
+                }
+
+    try:
+        return await asyncio.to_thread(_deploy)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Grocery Shopping (Sainsbury's / Ocado via Chrome CDP)
+# ============================================================
+
+
+@app.get("/grocery/{store}/login-check")
+async def grocery_login_check(store: str):
+    """Check if Chris is logged in to the grocery store."""
+    from domains.nutrition.services.grocery_service import check_login
+    try:
+        return await check_login(store)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/grocery/{store}/search")
+async def grocery_search(
+    store: str,
+    q: str = Query(..., description="Search query"),
+    limit: int = Query(default=10, ge=1, le=30),
+):
+    """Search for products at the specified store."""
+    from domains.nutrition.services.grocery_service import search_products
+    try:
+        products = await search_products(store, q, limit)
+        return {"products": products, "count": len(products), "query": q, "store": store}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/grocery/{store}/slots")
+async def grocery_slots(
+    store: str,
+    date: str = Query(default=None, description="Date filter (YYYY-MM-DD)"),
+    prefer: str = Query(default=None, description="Slot type preference: saver, standard"),
+):
+    """Get available delivery slots."""
+    from domains.nutrition.services.grocery_service import get_slots
+    try:
+        return await get_slots(store, date, prefer)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class GrocerySlotBookRequest(BaseModel):
+    booking_key: str
+
+
+@app.post("/grocery/{store}/slots/book")
+async def grocery_book_slot(store: str, req: GrocerySlotBookRequest):
+    """Book a delivery slot using the booking_key from GET /grocery/{store}/slots."""
+    from domains.nutrition.services.grocery_service import book_slot
+    try:
+        return await book_slot(store, req.booking_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/grocery/{store}/trolley")
+async def grocery_get_trolley(store: str):
+    """Get the current trolley contents."""
+    from domains.nutrition.services.grocery_service import get_trolley
+    try:
+        return await get_trolley(store)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class GroceryShoppingListRequest(BaseModel):
+    items: list[dict]
+
+
+@app.post("/grocery/{store}/trolley/add-list")
+async def grocery_add_shopping_list(store: str, req: GroceryShoppingListRequest):
+    """Add a shopping list to the store's trolley.
+
+    Each item: {name: str, quantity?: str, unit?: str, category?: str}
+    Searches, matches, and auto-adds high-confidence matches.
+    Returns matched, ambiguous, and not_found lists.
+    """
+    from domains.nutrition.services.grocery_service import add_shopping_list
+    try:
+        return await add_shopping_list(store, req.items)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

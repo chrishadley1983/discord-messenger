@@ -32,7 +32,7 @@ Base URL: `http://172.19.64.1:8100`
 **Import:**
 - `POST /meal-plan/import/sheets?spreadsheet_id=<id>` — Import from Google Sheet (default sheet ID hardcoded)
 - `POST /meal-plan/import/csv` — Import from CSV (body: `{csv_data: "...", ingredients_csv: "..."}`)
-- `POST /meal-plan/import/gousto` — Search Gmail for Gousto emails, extract and match recipes
+- `POST /meal-plan/import/gousto` — Search Gmail for Gousto emails, extract recipes, match to plan, and auto-save to Family Fuel DB (returns `saved_to_family_fuel` with recipe IDs)
 
 **Shopping List:**
 - `GET /meal-plan/shopping-list` — Get ingredients as categorised shopping list
@@ -70,6 +70,7 @@ Base URL: `http://172.19.64.1:8100`
 1. Call `POST /meal-plan/import/gousto`
 2. Report which recipes were found in emails
 3. Show matched vs unmatched recipes against the current plan
+4. Report how many recipes were saved to Family Fuel (`saved_to_family_fuel`) and any errors (`save_errors`)
 
 ## Output Format
 
@@ -96,6 +97,13 @@ Tonight's dinner:
 - Adults: Chicken stir-fry
 - Kids: Fish fingers & chips
 ```
+
+## Related Skills
+
+- **meal-plan-setup** — Manage weekly templates, food preferences, and meal ratings. Triggers: "set up meal template", "food preferences", "rate dinner", etc.
+- Templates define the "shape" of the week (portions, prep time, type per day)
+- Preferences define dietary rules, cuisine preferences, disliked ingredients
+- Meal history tracks ratings and "would make again" for learning
 
 ## Rules
 
