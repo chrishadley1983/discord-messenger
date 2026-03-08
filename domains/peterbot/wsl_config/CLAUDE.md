@@ -76,14 +76,19 @@ Endpoints are documented in the relevant playbooks — read the matched playbook
 - `/brain/search?query=<query>&limit=5` — Search Second Brain knowledge base. Use mid-response when you need saved articles/notes.
 - `/brain/save` (POST, JSON body: `{"source": "<text>", "note": "<optional>", "tags": "<optional comma-separated>"}`) — Save content to Second Brain.
 - **Google Drive** — Full read/write access: search, create (with content), share, move, copy, rename, trash. See `hadley_api/README.md` "Drive" section for all endpoints. Use `/drive/create` with JSON body `{"content": "<text>", "folder_name": "<name>"}` to save generated content as Google Docs.
-- **Meal Planning System** — Full weekly meal planning with templates, preferences, shopping lists, and ratings. Four skills handle different flows:
+- **Meal Planning System** — Full weekly meal planning with templates, preferences, shopping lists, ratings, grocery automation, and intelligent scheduling. Skills:
   - `meal-plan` — View/import plans: `/meal-plan/current`, `/meal-plan/import/sheets`, `/meal-plan/import/gousto` (also scrapes+saves recipes to Family Fuel DB). See `skills/meal-plan/SKILL.md`.
   - `meal-plan-setup` — Manage weekly templates (`/meal-plan/templates/*`), food preferences (`/meal-plan/preferences`), and shopping staples (`/meal-plan/staples/*`). See `skills/meal-plan-setup/SKILL.md`.
-  - `meal-plan-generator` — Generate balanced weekly plans. Uses templates, preferences, Gousto lock-ins, calendar, meal history, and recipe search. Publishes plan + shopping list to surge.sh. See `skills/meal-plan-generator/SKILL.md`.
-  - `meal-rating` — Evening prompt to rate meals (1-5 + would make again). Feeds into generator scoring. See `skills/meal-rating/SKILL.md`.
+  - `meal-plan-generator` — Generate balanced weekly plans. Uses templates, preferences, Gousto lock-ins, calendar context (auto-detects busy evenings, eating out, guests via `/calendar/meal-context`), meal history, batch cook logic, price-aware scoring, and recipe search. Publishes plan + shopping list to surge.sh. Can add shopping list directly to Sainsbury's trolley. See `skills/meal-plan-generator/SKILL.md`.
+  - `meal-rating` — Evening prompt (20:30) to rate meals (1-5 + would make again). Feeds into generator scoring. See `skills/meal-rating/SKILL.md`.
+  - `grocery-shop` — Add shopping list to Sainsbury's trolley, resolve ambiguous items, book delivery slot. Triggers: "do the shopping", "sainsburys order". See `skills/grocery-shop/SKILL.md`.
+  - `price-scanner` — Weekly Sainsbury's price scan (Mon 06:00). Caches prices for common proteins/staples, reports deals. Generator uses this to prefer on-offer ingredients. See `skills/price-scanner/SKILL.md`.
+  - `recipe-discovery` — Weekly recipe recommendations (Sun 10:00). Analyses top-rated recipes for patterns, searches for new recipes Chris will like. See `skills/recipe-discovery/SKILL.md`.
+  - `cooking-reminder` — Proactive prep reminders. Evening (20:45): "marinate chicken tonight for tomorrow". Morning (07:30): "take mince out of freezer". Auto-detects from recipe instructions. See `skills/cooking-reminder/SKILL.md`.
   - **Recipe search**: Search Family Fuel first (`GET /recipes/search?q=...&cuisine=...`), then Second Brain (`search_knowledge`), then web (BBC Good Food, Mob Kitchen, Jamie Oliver, Joe Wicks — verify macros before recommending). When Chris asks for a specific recipe, do a deep web search and present top-rated options with macros.
   - **Save recipes**: When Chris likes a recipe, save it to **Family Fuel** (structured data) via `POST /recipes` with ingredients and instructions. This makes it available for shopping list generation. Also save to Second Brain for semantic search. See "Recipes & Meal Planning" section below for the full save workflow.
   - **Shopping staples**: Recurring items (milk, bread, etc.) with weekly/biweekly/monthly frequency. `/meal-plan/staples/due` returns what's due. Peter asks "any extra staples?" during shopping list generation.
+  - **Grocery automation**: Sainsbury's trolley management via Chrome CDP. `POST /grocery/sainsburys/trolley/add-list` (batch add), `POST /grocery/sainsburys/trolley/resolve` (resolve ambiguous items), `GET /grocery/sainsburys/slots` (delivery slots), `POST /meal-plan/shopping-list/to-trolley` (one-click meal plan → trolley with dedup). See `skills/grocery-shop/SKILL.md`.
   - **HTML pages**: `POST /meal-plan/shopping-list/html` and `POST /meal-plan/view/html` generate interactive pages for surge.sh deployment. Shopping list has checkboxes with localStorage persistence for in-store use.
 - **Surge.sh Deploy** — `POST /deploy/surge` with body `{"html": "<full HTML>", "domain": "my-site.surge.sh", "filename": "index.html"}`. Deploys HTML to a public URL instantly. Use this whenever you need to publish HTML (meal plans, shopping lists, reports, guides). No credentials needed — the API handles auth.
 - **EV / Charging** — `GET /ev/combined` (charger + car data merged), `GET /ev/status` (Ohme charger only), `GET /kia/status` (Kia Connect only). See `skills/ev-charging/SKILL.md` for output format and battery level caveats.
@@ -213,7 +218,7 @@ POST http://172.19.64.1:8100/recipes
 **Update rating:** `PATCH http://172.19.64.1:8100/recipes/{id}/rating` — body: `{"rating": 8}` (1-10 scale).
 **Delete recipe:** `DELETE http://172.19.64.1:8100/recipes/{id}` — soft-deletes (archives) a recipe Chris doesn't want.
 
-**Meal planning skills:** See `skills/meal-plan/SKILL.md`, `skills/meal-plan-setup/SKILL.md`, `skills/meal-plan-generator/SKILL.md`, `skills/meal-rating/SKILL.md`.
+**Meal planning skills:** See `skills/meal-plan/SKILL.md`, `skills/meal-plan-setup/SKILL.md`, `skills/meal-plan-generator/SKILL.md`, `skills/meal-rating/SKILL.md`, `skills/grocery-shop/SKILL.md`, `skills/price-scanner/SKILL.md`, `skills/recipe-discovery/SKILL.md`, `skills/cooking-reminder/SKILL.md`.
 
 ### Browser Interaction (Playwright MCP)
 
