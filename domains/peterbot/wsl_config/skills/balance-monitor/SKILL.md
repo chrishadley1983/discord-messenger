@@ -21,8 +21,8 @@ Hourly check of API credit balances (7am-9pm UK). Alert if any balance drops bel
 ```json
 {
   "claude": {
-    "balance": 45.23,  // or null if unavailable
-    "current_month_cost": 12.50,  // fallback if balance unavailable
+    "balance": 45.23,
+    "current_month_cost": 12.50,
     "error": "string if failed"
   },
   "moonshot": {
@@ -31,48 +31,63 @@ Hourly check of API credit balances (7am-9pm UK). Alert if any balance drops bel
     "cash": 7.50
   },
   "grok": {
-    "balance": null,  // xAI has no billing API
-    "note": "Check console.x.ai manually",
-    "configured": true
+    "balance": 5.09,
+    "today_cost": 0.12
+  },
+  "max": {
+    "five_hour": {"utilization": 3},
+    "seven_day": {"utilization": 43}
+  },
+  "gcp": {
+    "configured": true,
+    "cost_so_far_usd": 4.52,
+    "projected_monthly_usd": 18.50,
+    "projected_monthly_gbp": 14.62,
+    "days_elapsed": 7.3,
+    "requests_so_far": 2450,
+    "top_services": [
+      {"name": "Directions", "requests": 1200, "cost": 2.10},
+      {"name": "Places Text Search", "requests": 85, "cost": 1.72}
+    ]
   },
   "threshold": 5.00,
-  "timestamp": "2026-01-31 09:00"
+  "timestamp": "2026-03-09 07:03"
 }
 ```
 
 ## Output Format
 
 ```
-💰 **API Balance Check** - 09:00
+💰 **API Balance Check** — 07:03
 
-💳 **Claude:** $45.23
-🌙 **Kimi:** $12.50
-🤖 **Grok:** Check console.x.ai
+💳 Claude: $8.70
+🌙 Kimi: $9.75
+🤖 Grok: $5.09
+☁️ GCP: $4.52 MTD (proj ~$19/mo)
+   Directions 1200, Places Text Search 85
+
+Max (Claude Code): 3% 5h | 43% 7d
 
 All balances healthy ✓
 ```
 
-If below threshold:
+If GCP projected spend is high (>£20/mo):
 ```
-💰 **API Balance Check** - 09:00
-
-⚠️ **Claude:** $3.50 (below $5 threshold!)
-🌙 **Kimi:** $12.50
-🤖 **Grok:** Check console.x.ai
-
-🚨 Claude credits running low - top up soon
+⚠️ GCP: $12.30 MTD (proj ~$38/mo)
+   Places Text Search 450, Directions 2100
+...
+⚠️ GCP projected $38/mo — review API usage!
 ```
 
-If Claude balance unavailable but monthly cost is:
+If GCP not configured:
 ```
-💳 **Claude:** $12.50 spent this month (balance unavailable)
+☁️ GCP: not configured (see setup instructions)
 ```
 
 ## Rules
 
-- Show Claude, Moonshot (Kimi), and Grok balances
-- Use ⚠️ emoji for balances below threshold
-- Grok has no billing API - show manual check reminder
-- Add alert message at bottom if any balance is low
-- If balance unavailable, show error or monthly cost fallback
-- Keep it brief - this runs hourly
+- Show Claude, Kimi, Grok balances + GCP month-to-date spend
+- GCP shows cost so far + projected monthly total + top API callers
+- Use ⚠️ for balances below $5 threshold OR GCP projected >$20/mo
+- If GCP not configured, show setup reminder (not an error)
+- Keep it brief — this runs hourly

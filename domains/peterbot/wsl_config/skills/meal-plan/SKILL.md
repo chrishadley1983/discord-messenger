@@ -29,7 +29,8 @@ Base URL: `http://172.19.64.1:8100`
 - `GET /meal-plan/current` — Get current week's plan (items + ingredients)
 - `GET /meal-plan/week?date=YYYY-MM-DD` — Get plan for week containing date
 
-**Import:**
+**Create/Import:**
+- `POST /meal-plan` — Save a plan with items (body: `{week_start, source, items: [{date, meal_slot, adults_meal, ...}]}`)
 - `POST /meal-plan/import/sheets?spreadsheet_id=<id>` — Import from Google Sheet (default sheet ID hardcoded)
 - `POST /meal-plan/import/csv` — Import from CSV (body: `{csv_data: "...", ingredients_csv: "..."}`)
 - `POST /meal-plan/import/gousto` — Search Gmail for Gousto emails, extract recipes, match to plan, and auto-save to Family Fuel DB (returns `saved_to_family_fuel` with recipe IDs)

@@ -123,3 +123,28 @@
 - 2026-03-06: What did the buffalo say to his son when he left for school? Bison.
 - 2026-03-06: I bought some shoes from a drug dealer. I don't know what he laced them with, but I've been tripping all day.
 - 2026-03-06: "It always seems impossible until it's done." — Nelson Mandela
+
+- 2026-03-07: What do you call a dinosaur that takes care of its teeth? A Flossiraptor.
+- 2026-03-07: I told my wife I was going to make a bike out of spaghetti. She didn't believe me until I rode pasta.
+- 2026-03-07: Why do chicken coops only have two doors? Because if they had four, they'd be chicken sedans.
+- 2026-03-07: "I have not failed. I've just found 10,000 ways that won't work." — Thomas Edison
+
+- 2026-03-08: What do you call a magician who lost his magic? Ian.
+- 2026-03-08: I used to be a personal trainer, but then I gave everyone their free trial.
+- 2026-03-08: Why did the golfer wear two pairs of socks? In case he got a hole in one... wait, that's his golf game talking!
+- 2026-03-08: "Don't watch the clock; do what it does. Keep going." — Sam Levenson
+
+- 2026-03-09: What do you call a fish that practises medicine? A sturgeon.
+- 2026-03-09: I used to be a tap dancer until I fell in the sink.
+- 2026-03-09: Why did the cookie go to the hospital? Because it felt crummy.
+- 2026-03-09: "The only limit to our realization of tomorrow will be our doubts of today." — Franklin D. Roosevelt
+
+- 2026-03-10: What do you call a duck that steals? A robber ducky.
+- 2026-03-10: I'm reading a horror story in braille. Something bad is about to happen — I can feel it.
+- 2026-03-10: Why did the invisible man turn down the job offer? He couldn't see himself doing it.
+- 2026-03-10: "The mind is everything. What you think you become." — Buddha
+
+- 2026-03-11: What do you call a sheep with no legs? A cloud.
+- 2026-03-11: I used to be a shoe salesman until they gave me the boot.
+- 2026-03-11: Why did the gym close down? It just didn't work out.
+- 2026-03-11: "Hardships often prepare ordinary people for an extraordinary destiny." — C.S. Lewis

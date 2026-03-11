@@ -45,18 +45,6 @@
     "description": "Proactive alerts when ticket ballots open for England Cricket, England Football, Oval Invincibles",
     "channel": "#peterbot+WhatsApp:chris"
   },
-  "cricket-scores": {
-    "triggers": [
-      "cricket scores",
-      "cricket results",
-      "how did England do",
-      "county cricket"
-    ],
-    "conversational": true,
-    "scheduled": true,
-    "description": "Daily morning cricket score roundup from yesterday",
-    "channel": "#peterbot"
-  },
   "cooking-reminder": {
     "triggers": [
       "cooking reminders",
@@ -69,6 +57,18 @@
     "scheduled": true,
     "description": "Proactive cooking prep reminders for marinating, defrosting, and advance prep",
     "channel": "#food-log"
+  },
+  "cricket-scores": {
+    "triggers": [
+      "cricket scores",
+      "cricket results",
+      "how did England do",
+      "county cricket"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily morning cricket score roundup from yesterday",
+    "channel": "#peterbot"
   },
   "daily-instagram-prep": {
     "triggers": [],
@@ -685,6 +685,17 @@
     "description": "Daily nutrition wrap-up at 9pm",
     "channel": null
   },
+  "paper-builder": {
+    "triggers": [
+      "build papers",
+      "generate papers",
+      "make practice papers"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Generate missing 11+ Mate practice papers for this week's tutor topic",
+    "channel": "#peterbot"
+  },
   "parser-improve": {
     "triggers": [],
     "conversational": false,
@@ -696,11 +707,24 @@
     "triggers": [
       "PL results",
       "premier league results",
-      "football results yesterday"
+      "football results yesterday",
+      "champions league results",
+      "dover results"
     ],
     "conversational": true,
     "scheduled": true,
-    "description": "Morning Premier League results summary from yesterday",
+    "description": "Morning football results \u2014 Premier League, Champions League, Dover Athletic",
+    "channel": "#peterbot"
+  },
+  "practice-allocate": {
+    "triggers": [
+      "allocate practice",
+      "generate practice week",
+      "11+ mate allocate"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Weekly 11+ Mate practice paper allocation for Emmie and Max",
     "channel": "#peterbot"
   },
   "price-scanner": {
@@ -849,6 +873,22 @@
     "description": "Generate a printable shopping list PDF with categories and checkboxes",
     "channel": null
   },
+  "spelling-test-generator": {
+    "triggers": [
+      "max spellings",
+      "max's spellings this week",
+      "here are max's spellings",
+      "spelling test",
+      "generate spelling test",
+      "update spelling test",
+      "max's words this week",
+      "spelling photo"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Process Max's spelling photo, add to DB, and generate the spelling test page",
+    "channel": "#peterbot"
+  },
   "spurs-live": {
     "triggers": [],
     "conversational": false,
@@ -867,6 +907,17 @@
     "description": "Live Spurs match score updates during games",
     "channel": null
   },
+  "spurs-matchday": {
+    "triggers": [
+      "are spurs playing today",
+      "spurs today",
+      "is there a spurs game"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Morning alert when Spurs are playing today",
+    "channel": "#peterbot+WhatsApp:chris"
+  },
   "subscription-monitor": {
     "triggers": [
       "subscription check",
@@ -877,6 +928,19 @@
     "scheduled": true,
     "description": "Weekly subscription health check - detect new subs, price changes, missed payments, upcoming renewals",
     "channel": "#alerts+WhatsApp:chris"
+  },
+  "system-health": {
+    "triggers": [
+      "system health",
+      "job status",
+      "what failed",
+      "ops report",
+      "job failures"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily operations report covering all scheduled jobs across Discord-Messenger and Hadley Bricks",
+    "channel": "#alerts"
   },
   "weekly-health": {
     "triggers": [

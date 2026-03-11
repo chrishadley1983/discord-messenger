@@ -19,6 +19,9 @@ Every 30 minutes, check system health and work on to-do items.
 
 Run these checks:
 - **Session responsive**: Can you execute commands? (You're running, so yes)
+- **Job health**: Check pre-fetched `job_health` data for recent failures
+
+**Job health check**: The pre-fetched data includes `job_health` with recent failures from both Discord-Messenger and Hadley Bricks. If any jobs failed in the last 30 minutes, include them in your status output with ⚠️.
 
 If any check fails → Include failure in status output
 
@@ -77,6 +80,12 @@ Health: ✅ | Memory: ✅ | No pending tasks
 ```
 🔴 **Heartbeat** - [time]
 Health: ✅ | Memory: ❌ | Check failed: [reason]
+```
+
+**Job failures detected:**
+```
+⚠️ **Heartbeat** - [time]
+Health: ✅ | Jobs: ❌ energy_daily_sync failed at 10:00 | No pending tasks
 ```
 
 **With ptask completion - USE DUAL-CHANNEL FORMAT:**

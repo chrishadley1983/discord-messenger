@@ -130,7 +130,20 @@ If Chris says "swap Monday for something with beef" or "change Friday to that Ja
 ### Step 4: Save, Publish & Generate Shopping List
 
 Once Chris approves:
-1. Save the plan via existing meal plan service (`PUT /meal-plan/{plan_id}/ingredients` etc.)
+1. **Save to database (MANDATORY)**: Call `POST /meal-plan` with the full plan. This is what powers reminders, "what's for dinner?", and meal ratings. Without this, Peter won't know the plan exists.
+   ```json
+   POST http://172.19.64.1:8100/meal-plan
+   {
+     "week_start": "2026-03-08",
+     "source": "generated",
+     "notes": "Batch cook burritos Monday for Mon-Wed lunches",
+     "items": [
+       {"date": "2026-03-08", "meal_slot": "dinner", "adults_meal": "Korean Fried Chicken Bao Buns", "source_tag": "gousto", "cook_time_mins": 35, "servings": 2},
+       {"date": "2026-03-09", "meal_slot": "lunch", "adults_meal": "Easy Burritos", "source_tag": "family_fuel", "cook_time_mins": 40, "servings": 6},
+       {"date": "2026-03-09", "meal_slot": "dinner", "adults_meal": "Sausage & Squash Gnocchi", "source_tag": "gousto", "cook_time_mins": 25, "servings": 2}
+     ]
+   }
+   ```
 2. Log all meals to `POST /meal-plan/history` (without ratings — those come later)
 3. **Publish meal plan page**: call `POST /meal-plan/view/html` with the plan data. Include `cook_time_mins` and `servings` on each item, and `notes` dict for per-day notes (e.g. `{"2026-03-10": "Get chicken out of freezer at lunch"}`). Set `auto_generate_cards: true` to generate recipe cards. Deploy via `POST /deploy/surge` with `{"html": "<the HTML>", "domain": "hadley-meals.surge.sh"}`, share link. To update notes later, re-generate and re-deploy the page.
 
@@ -201,6 +214,7 @@ When a Family Fuel recipe is used in a plan, call `PATCH /recipes/{id}/usage` to
 
 ## Hadley API Endpoints
 
+- `POST /meal-plan` — Save generated plan with items (MUST call this — powers reminders, ratings, "what's for dinner?")
 - `GET /meal-plan/templates/default` — Default template
 - `GET /meal-plan/preferences` — Food preferences
 - `GET /meal-plan/current` — Current plan (for Gousto lock-ins)
