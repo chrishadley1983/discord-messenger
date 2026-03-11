@@ -138,8 +138,9 @@ class PeterbotScheduler:
         self._job_queue: list[JobConfig] = []
         self._job_lock = asyncio.Lock()
 
-        # Trigger file for API-initiated reloads
+        # Trigger files for API-initiated actions
         self._reload_trigger_path = Path(__file__).parent.parent.parent / "data" / "schedule_reload.trigger"
+        self._skill_run_trigger_path = Path(__file__).parent.parent.parent / "data" / "skill_run.trigger"
 
         # News article history log for deduplication
         self._news_history_path = Path(__file__).parent.parent.parent / "data" / "news_history.jsonl"
@@ -267,7 +268,8 @@ class PeterbotScheduler:
         logger.info("Schedule reload watcher started (checks every 10s)")
 
     async def _check_reload_trigger(self):
-        """Check for trigger file from Hadley API and reload if found."""
+        """Check for trigger files from Hadley API and process if found."""
+        # Check for schedule reload
         if self._reload_trigger_path.exists():
             try:
                 reason = self._reload_trigger_path.read_text(encoding="utf-8").strip()
@@ -277,6 +279,43 @@ class PeterbotScheduler:
                 logger.info(f"Schedule reloaded: {job_count} jobs registered")
             except Exception as e:
                 logger.error(f"Failed to process reload trigger: {e}")
+
+        # Check for skill run trigger
+        if self._skill_run_trigger_path.exists():
+            try:
+                content = self._skill_run_trigger_path.read_text(encoding="utf-8").strip()
+                self._skill_run_trigger_path.unlink()
+                # Format: skill_name|channel_name (e.g. "tutor-email-parser|#peterbot")
+                parts = content.split("|", 1)
+                skill_name = parts[0].strip()
+                channel = parts[1].strip() if len(parts) > 1 else "#peterbot"
+                logger.info(f"Skill run triggered via API: {skill_name} -> {channel}")
+
+                # Build a job config and execute
+                import re as _re
+                whatsapp = False
+                whatsapp_target = ""
+                wa_match = _re.search(r'\+[Ww]hats[Aa]pp(?::(\w+))?', channel)
+                if wa_match:
+                    whatsapp = True
+                    whatsapp_target = (wa_match.group(1) or "").lower()
+                    channel = channel[:wa_match.start()] + channel[wa_match.end():]
+                    channel = channel.strip()
+
+                job = JobConfig(
+                    name=f"Manual: {skill_name}",
+                    skill=skill_name,
+                    schedule="manual",
+                    channel=channel,
+                    enabled=True,
+                    job_type="manual",
+                    whatsapp=whatsapp,
+                    whatsapp_target=whatsapp_target,
+                    exempt_quiet_hours=True,  # Manual runs always bypass quiet hours
+                )
+                await self._execute_job_internal(job)
+            except Exception as e:
+                logger.error(f"Failed to process skill run trigger: {e}")
 
     def _parse_schedule_md(self, content: str) -> list[JobConfig]:
         """Parse SCHEDULE.md content into job configs.

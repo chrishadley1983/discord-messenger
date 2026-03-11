@@ -12,6 +12,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Parser Improvement | parser-improve | 02:00 UK | #peter-heartbeat!quiet | yes |
 | Morning Laughs | morning-laughs | 06:30 UK | #peterbot | yes |
 | Morning Quality Report | morning-quality-report | 06:45 UK | #peter-heartbeat | yes |
+| System Health | system-health | 06:50 UK | #alerts | yes |
 | Morning Briefing | morning-briefing | 07:00 UK | #ai-briefings | yes |
 | Morning News | news | 07:02 UK | #news | yes |
 | Kids Daily Briefing | kids-daily | 07:25 UK | #peterbot+WhatsApp:group | yes |
@@ -49,17 +50,22 @@ Run `!reload-schedule` after editing to apply changes.
 | Recipe Discovery | recipe-discovery | Sunday 10:00 UK | #food-log | yes |
 | Property Valuation | property-valuation | 1st 10:15 UK | #peterbot | yes |
 | Saturday Sport Preview | saturday-sport-preview | Sat 08:00 UK | #peterbot+WhatsApp:chris | yes |
+| Spurs Match Day | spurs-matchday | 08:00 UK | #peterbot+WhatsApp:chris | yes |
 | Cricket Scores | cricket-scores | 08:30 UK | #peterbot+WhatsApp:chris | yes |
 | Ballot Reminders | ballot-reminders | 09:00 UK | #peterbot+WhatsApp:chris | yes |
-| PL Results | pl-results | 05:00 UK | #peterbot+WhatsApp:chris | yes |
+| PL Results | pl-results | 06:05 UK | #peterbot+WhatsApp:chris | yes |
 | Amazon Purchases Sync | amazon-purchases | 09:30 UK | #peterbot | yes |
 | Security Monitor | security-monitor | 06:00,10:00,14:00,18:00,22:00 UK | #alerts | yes |
+| Tutor Email Parser | tutor-email-parser | Tue 19:00 UK | #peterbot | yes |
+| Paper Builder | paper-builder | Tue 19:30 UK | #peterbot | yes |
+| Practice Allocate | practice-allocate | Tue 21:00 UK | #peterbot | yes |
+| Spelling Test Reminder | spelling-test-generator | Fri 19:00 UK | #peterbot+WhatsApp:chris | yes |
 
 ## Interval Jobs
 
 | Job | Skill | Interval | Channel | Enabled |
 |-----|-------|----------|---------|---------|
-| Spurs Live | spurs-live | 10m | #peterbot+WhatsApp:chris | yes |
+| Spurs Live | spurs-live | 10m | #peterbot+WhatsApp:chris!quiet | yes |
 
 ## Quiet Hours
 

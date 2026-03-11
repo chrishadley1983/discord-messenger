@@ -69,8 +69,8 @@ class ReviewReport:
     affected_fixtures: list = field(default_factory=list)
     example_failure: Optional[dict] = None
 
-    # Leakage audit results
-    leakage_audit: Optional[LeakageAuditResult] = None
+    # Leakage audit results (forward reference)
+    leakage_audit: Optional["LeakageAuditResult"] = None
 
     def to_dict(self) -> dict:
         result = {

@@ -48,6 +48,9 @@ Chris can add items here for Peter to work on in the background.
 
 ### Done
 
+- [x] [PROACTIVE] Create "usual breakfast" nutrition preset — Already exists! Verified 2026-03-09. Favourite found with full macros: 410 cal, 16.3g P, 42.5g C, 16.5g F.
+- [x] [FIX] whatsapp-health job failing — Fixed 2026-03-06. Renamed skill from `whatsapp-health` to `whatsapp-keepalive` to match folder name. Updated SCHEDULE.md accordingly.
+
 _Japan guides cleared 2026-03-03 — emailed guides were tangential to website work._
 
 _Archived 28 items from Jan 31 – Feb 6 (2026-02-22 cleanup). See git history for details._

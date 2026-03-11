@@ -38,6 +38,25 @@ from hadley_api.vault_routes import router as vault_router
 app.include_router(vault_router)
 from hadley_api.whatsapp_webhook import router as whatsapp_router
 app.include_router(whatsapp_router)
+from hadley_api.voice_routes import router as voice_router
+app.include_router(voice_router)
+from hadley_api.spelling_routes import router as spelling_router
+app.include_router(spelling_router)
+
+
+@app.get("/gcp/usage")
+async def gcp_usage(hours: int = 24):
+    """Get GCP API usage and estimated cost from Cloud Monitoring."""
+    from domains.api_usage.services.gcp_monitoring import get_gcp_api_usage
+    return await get_gcp_api_usage(hours=hours)
+
+
+@app.get("/gcp/monthly")
+async def gcp_monthly():
+    """Get GCP month-to-date spend estimate with projection."""
+    from domains.api_usage.services.gcp_monitoring import get_gcp_monthly_estimate
+    return await get_gcp_monthly_estimate()
+
 
 UK_TZ = ZoneInfo("Europe/London")
 
@@ -6250,6 +6269,30 @@ async def reload_schedule():
     return {"status": "reload_triggered", "message": "Schedule reload will apply within 10 seconds"}
 
 
+SKILL_RUN_TRIGGER = Path(__file__).parent.parent / "data" / "skill_run.trigger"
+
+
+@app.post("/schedule/run/{skill_name}")
+async def run_skill(skill_name: str, channel: str = "#peterbot"):
+    """Manually trigger a skill to run via the scheduler.
+
+    Args:
+        skill_name: The skill to run (e.g., tutor-email-parser)
+        channel: Target channel (default #peterbot). Supports +WhatsApp:chris etc.
+    """
+    SKILL_RUN_TRIGGER.parent.mkdir(parents=True, exist_ok=True)
+    SKILL_RUN_TRIGGER.write_text(
+        f"{skill_name}|{channel}",
+        encoding="utf-8"
+    )
+    return {
+        "status": "triggered",
+        "skill": skill_name,
+        "channel": channel,
+        "message": f"Skill '{skill_name}' will run within 10 seconds",
+    }
+
+
 # ============================================================
 # Reminders CRUD
 # ============================================================
@@ -6837,6 +6880,83 @@ async def mark_staples_as_added(req: StaplesMarkAdded):
 
 
 # --- Plan by ID (must be AFTER /templates, /preferences, /history, /staples to avoid route shadowing) ---
+
+@app.post("/meal-plan")
+async def meal_plan_create(request: Request):
+    """Create or update a meal plan with items in one call.
+
+    Body: {
+        week_start: "YYYY-MM-DD" (Monday of the plan week),
+        source: "generated" | "manual" | etc,
+        notes: "optional notes",
+        items: [
+            {
+                date: "YYYY-MM-DD",
+                meal_slot: "dinner" | "lunch" | "breakfast",
+                adults_meal: "Chicken Stir-fry",
+                kids_meal: "Fish Fingers",  # optional
+                source_tag: "gousto" | "family_fuel" | "leftovers" | "homemade",
+                recipe_url: "https://...",  # optional
+                cook_time_mins: 30,  # optional
+                servings: 4,  # optional
+                notes: "Take mince out of freezer"  # optional
+            }
+        ]
+    }
+    """
+    from domains.nutrition.services.meal_plan_service import (
+        upsert_meal_plan, upsert_meal_plan_items
+    )
+
+    MEAL_SLOT_MAP = {"breakfast": 0, "lunch": 1, "dinner": 2, "snack": 3}
+
+    try:
+        body = await request.json()
+        week_start = body.get("week_start")
+        if not week_start:
+            raise HTTPException(status_code=400, detail="week_start is required")
+
+        plan = await upsert_meal_plan(
+            week_start=week_start,
+            source=body.get("source", "generated"),
+            notes=body.get("notes"),
+        )
+
+        items = body.get("items", [])
+        saved_items = []
+        if items:
+            # Map string meal_slot to integer and keep only valid DB columns
+            valid_cols = {"date", "meal_slot", "adults_meal", "kids_meal",
+                          "source_tag", "recipe_url", "cook_time_mins",
+                          "servings", "notes"}
+            core_cols = {"date", "meal_slot", "adults_meal", "kids_meal",
+                         "source_tag", "recipe_url"}
+            cleaned = []
+            for item in items:
+                row = {k: v for k, v in item.items() if k in valid_cols and v is not None}
+                # Convert string meal_slot to integer
+                if isinstance(row.get("meal_slot"), str):
+                    row["meal_slot"] = MEAL_SLOT_MAP.get(row["meal_slot"].lower(), 2)
+                cleaned.append(row)
+            try:
+                saved_items = await upsert_meal_plan_items(plan["id"], cleaned)
+            except Exception as item_err:
+                # Fallback: strip extended columns if PostgREST cache is stale
+                logger.warning(f"Item upsert failed ({item_err}), retrying with core cols only")
+                core_cleaned = [{k: v for k, v in row.items() if k in core_cols} for row in cleaned]
+                saved_items = await upsert_meal_plan_items(plan["id"], core_cleaned)
+
+        return {
+            "plan": plan,
+            "items_saved": len(saved_items),
+            "message": f"Meal plan saved for week of {week_start}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating meal plan: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/meal-plan/{plan_id}")
 async def meal_plan_by_id(plan_id: str):
@@ -8989,6 +9109,122 @@ async def toggle_auto_switch(req: AutoSwitchRequest):
     _write_model_config(state)
 
     return {"status": "ok", "auto_switch_enabled": req.enabled}
+
+
+# ============================================================
+# System Health — unified job monitoring across DM + HB
+# ============================================================
+
+@app.get("/jobs/health")
+async def jobs_health(hours: int = 24):
+    """Unified job health summary across Discord-Messenger and Hadley Bricks.
+
+    Returns per-system breakdown: job counts, failures, success rates.
+    Peter and the dashboard use this as the single source of truth.
+    """
+    import httpx
+    from peter_dashboard.api.jobs import get_db
+
+    result = {"dm": {}, "hb": {}, "generated_at": datetime.now(UK_TZ).isoformat()}
+
+    # --- Discord-Messenger jobs (from local SQLite job_history.db) ---
+    try:
+        cutoff = (datetime.now(UK_TZ) - timedelta(hours=hours)).isoformat()
+        with get_db() as conn:
+            # Total executions in window
+            rows = conn.execute(
+                "SELECT status, COUNT(*) as cnt FROM job_executions "
+                "WHERE started_at >= ? GROUP BY status", (cutoff,)
+            ).fetchall()
+            status_counts = {r[0]: r[1] for r in rows}
+            total = sum(status_counts.values())
+            success = status_counts.get("success", 0)
+            errors = status_counts.get("error", 0)
+
+            # Failed jobs detail
+            failures = conn.execute(
+                "SELECT job_id, started_at, error_message FROM job_executions "
+                "WHERE started_at >= ? AND status = 'error' "
+                "ORDER BY started_at DESC LIMIT 20", (cutoff,)
+            ).fetchall()
+
+            # Per-job success rates
+            per_job = conn.execute(
+                "SELECT job_id, "
+                "  COUNT(*) as total, "
+                "  SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) as ok "
+                "FROM job_executions WHERE started_at >= ? "
+                "GROUP BY job_id ORDER BY job_id", (cutoff,)
+            ).fetchall()
+
+        result["dm"] = {
+            "total": total,
+            "success": success,
+            "errors": errors,
+            "success_rate": round(success / total * 100, 1) if total > 0 else 100.0,
+            "failures": [
+                {"job": f[0], "at": f[1], "error": (f[2] or "")[:200]}
+                for f in failures
+            ],
+            "per_job": [
+                {"job": j[0], "total": j[1], "success": j[2],
+                 "rate": round(j[2] / j[1] * 100, 1) if j[1] > 0 else 0}
+                for j in per_job
+            ],
+        }
+    except Exception as e:
+        result["dm"] = {"error": str(e)}
+
+    # --- Hadley Bricks jobs (from HB API via proxy) ---
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{HB_BASE_URL}/api/service/jobs/history",
+                params={"limit": 200},
+                headers={"x-api-key": HB_API_KEY},
+            )
+            if resp.status_code == 200:
+                hb_data = resp.json().get("data", [])
+                hb_total = len(hb_data)
+                hb_success = sum(1 for j in hb_data if j.get("status") == "completed")
+                hb_errors = sum(1 for j in hb_data if j.get("status") in ("failed", "timeout"))
+                hb_failures = [
+                    {
+                        "job": j.get("job_name", "unknown"),
+                        "at": j.get("started_at", ""),
+                        "error": (j.get("error_message") or "")[:200],
+                        "status": j.get("status"),
+                    }
+                    for j in hb_data
+                    if j.get("status") in ("failed", "timeout")
+                ]
+                # Per-job aggregation
+                from collections import defaultdict
+                hb_by_job = defaultdict(lambda: {"total": 0, "success": 0})
+                for j in hb_data:
+                    name = j.get("job_name", "unknown")
+                    hb_by_job[name]["total"] += 1
+                    if j.get("status") == "completed":
+                        hb_by_job[name]["success"] += 1
+
+                result["hb"] = {
+                    "total": hb_total,
+                    "success": hb_success,
+                    "errors": hb_errors,
+                    "success_rate": round(hb_success / hb_total * 100, 1) if hb_total > 0 else 100.0,
+                    "failures": hb_failures[:20],
+                    "per_job": [
+                        {"job": k, "total": v["total"], "success": v["success"],
+                         "rate": round(v["success"] / v["total"] * 100, 1) if v["total"] > 0 else 0}
+                        for k, v in sorted(hb_by_job.items())
+                    ],
+                }
+            else:
+                result["hb"] = {"error": f"HB API returned {resp.status_code}"}
+    except Exception as e:
+        result["hb"] = {"error": str(e)}
+
+    return result
 
 
 if __name__ == "__main__":

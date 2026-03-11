@@ -254,6 +254,9 @@ Weekly meal plan management with Google Sheets import, Gousto email integration,
 - `GET /meal-plan/{plan_id}` - Get plan by ID
 - `GET /meal-plan/shopping-list?plan_id=<id>` - Get ingredients as shopping list categories (defaults to current week)
 
+**Create:**
+- `POST /meal-plan` - Create/update a meal plan with items (body: `{week_start, source, notes?, items: [{date, meal_slot ("dinner"/"lunch"/"breakfast"), adults_meal, kids_meal?, source_tag, recipe_url?, cook_time_mins?, servings?, notes?}]}`). Maps string meal_slot to integer automatically. Powers reminders, "what's for dinner?", and meal ratings.
+
 **Import:**
 - `POST /meal-plan/import/sheets?spreadsheet_id=<id>` - Import from Google Sheet (default: Chris's meal plan sheet)
   - Auto-discovers meal plan and ingredients tabs
@@ -386,9 +389,27 @@ Catch-all proxy: `/hb/{path}` → `localhost:3000/api/{path}` (injects API key a
 
 **Note:** Any HB API route with `validateAuth()` works via this proxy. Routes using session-only auth will return Unauthorized.
 
+### Voice
+STT (speech-to-text), TTS (text-to-speech), and full conversational voice pipeline. All processing runs locally (faster-whisper + Kokoro ONNX).
+
+- `POST /voice/listen` — Transcribe audio to text. Send audio as request body with Content-Type header (wav, ogg, webm, mp3). Returns `{text, format_detected}`
+- `POST /voice/speak` — Synthesise text to audio. Body: `{text, voice?: "bm_george", speed?: 1.0}`. Returns audio/wav
+- `POST /voice/converse` — Full round-trip: audio in → STT → Peter → TTS → audio out. Returns `{text, reply, audio_url}`. Query params: `sender_name`, `sender_number`, `voice`
+- `GET /voice/audio/{filename}` — Serve generated audio files (auto-cleaned after 5 min)
+- `GET /voice/voices` — List available TTS voices. Returns `{default, british_male, all}`
+
+**Voices:** British male voices available: `bm_daniel`, `bm_fable`, `bm_george`, `bm_lewis`. Default: `bm_daniel`.
+
 ### WhatsApp
-- `POST /whatsapp/send?to=<number>&message=<text>` - Send message
+- `POST /whatsapp/send?to=<number>&message=<text>` - Send text message
+- `POST /whatsapp/send-voice?to=<number>&message=<text>` - Send voice note (TTS) + text message
 - `GET /whatsapp/status` - Connection status
+- Voice notes: incoming WhatsApp voice notes are auto-transcribed and routed to Peter. Replies include both text and a voice note.
+
+### GCP Monitoring
+- `GET /gcp/usage?hours=24` - API request counts and estimated cost from Cloud Monitoring (last N hours)
+- `GET /gcp/monthly` - Month-to-date spend estimate with full-month projection and top services breakdown
+- Requires service account key at `data/gcp-service-account.json` and `GCP_PROJECT_ID` in .env
 
 ### Browser Automation
 For sites that block normal HTTP requests (bot protection, Cloudflare, etc.).
@@ -456,6 +477,10 @@ Uses the same `.env` as the main Discord bot:
 - `GET /model/status` - Get current model provider status (claude/kimi, reason, timestamps)
 - `PUT /model/switch` - Switch provider: `{"provider": "claude"|"kimi", "reason": "manual"}`
 - `PUT /model/auto-switch` - Toggle auto-recovery: `{"enabled": true|false}`
+
+### System Health (Job Monitoring)
+
+- `GET /jobs/health?hours=24` - Unified job health across DM + HB. Returns per-system stats: total, success, errors, success_rate, failures[], per_job[]. DM data from SQLite job_history.db, HB data from Supabase job_execution_history via HB API proxy.
 
 ## Notes
 

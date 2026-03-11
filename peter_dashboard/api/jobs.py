@@ -10,19 +10,26 @@ Provides endpoints for tracking and monitoring scheduled job execution:
 Uses SQLite for lightweight persistent storage of job execution history.
 """
 
+import os
 import re
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+import httpx
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 # UK timezone for timestamps
 UK_TZ = ZoneInfo("Europe/London")
+
+# Alerts webhook for job failure notifications (non-blocking, fire-and-forget)
+_ALERTS_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_ALERTS", "")
 
 # Database path - sibling to this file
 DB_PATH = Path(__file__).parent.parent / "job_history.db"
@@ -417,6 +424,24 @@ def record_job_complete(
             (job_id, completed_at, "ERROR" if error else "INFO", log_message)
         )
         conn.commit()
+
+    # Fire-and-forget failure alert to Discord #alerts
+    if not success and _ALERTS_WEBHOOK:
+        _send_failure_alert(job_id, error, completed_at)
+
+
+def _send_failure_alert(job_id: str, error: Optional[str], timestamp: str) -> None:
+    """Post job failure to Discord #alerts webhook in a background thread."""
+    def _post():
+        try:
+            time_short = timestamp[11:16] if len(timestamp) > 16 else timestamp
+            msg = f"🚨 **Job Failed**: `{job_id}` at {time_short}\n"
+            if error:
+                msg += f"```\n{error[:300]}\n```"
+            httpx.post(_ALERTS_WEBHOOK, json={"content": msg}, timeout=10)
+        except Exception:
+            pass  # Best effort — don't crash the recorder
+    threading.Thread(target=_post, daemon=True).start()
 
 
 def log_job_event(job_id: str, level: str, message: str) -> None:

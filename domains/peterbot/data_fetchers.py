@@ -358,13 +358,15 @@ async def get_balance_data() -> dict[str, Any]:
         Dict with Claude, Moonshot, and Grok balances
     """
     from jobs.balance_monitor import _get_claude_data, _get_moonshot_data, _get_grok_data, _get_max_usage
+    from domains.api_usage.services.gcp_monitoring import get_gcp_cost_summary
 
     try:
-        claude_data, moonshot_data, grok_data, max_data = await asyncio.gather(
+        claude_data, moonshot_data, grok_data, max_data, gcp_data = await asyncio.gather(
             _get_claude_data(),
             _get_moonshot_data(),
             _get_grok_data(),
             _get_max_usage(),
+            get_gcp_cost_summary(),
             return_exceptions=True
         )
 
@@ -373,6 +375,7 @@ async def get_balance_data() -> dict[str, Any]:
             "moonshot": moonshot_data if not isinstance(moonshot_data, Exception) else {"error": str(moonshot_data)},
             "grok": grok_data if not isinstance(grok_data, Exception) else {"error": str(grok_data)},
             "max": max_data if not isinstance(max_data, Exception) else {"error": str(max_data)},
+            "gcp": gcp_data if not isinstance(gcp_data, Exception) else {"error": str(gcp_data)},
             "threshold": 5.00,
             "timestamp": datetime.now(UK_TZ).strftime("%Y-%m-%d %H:%M")
         }
@@ -797,9 +800,10 @@ async def get_football_scores_data() -> dict[str, Any]:
 
 
 async def get_pl_results_data() -> dict[str, Any]:
-    """Fetch yesterday's finished Premier League matches for morning roundup.
+    """Fetch yesterday's finished PL and Champions League matches for morning roundup.
 
-    Returns NO_REPLY trigger if no finished matches yesterday.
+    Returns NO_REPLY trigger if no finished matches yesterday across any competition.
+    Also signals the skill to web search for Dover Athletic results.
     """
     import httpx
     from config import FOOTBALL_DATA_API_KEY
@@ -808,62 +812,87 @@ async def get_pl_results_data() -> dict[str, Any]:
 
     try:
         if not FOOTBALL_DATA_API_KEY:
-            return {"error": "Football Data API key not configured", "matches": []}
+            return {"error": "Football Data API key not configured", "pl_matches": [], "cl_matches": []}
 
-        url = "https://api.football-data.org/v4/competitions/PL/matches"
-        params = {"dateFrom": yesterday, "dateTo": yesterday, "status": "FINISHED"}
         headers = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
+        params = {"dateFrom": yesterday, "dateTo": yesterday, "status": "FINISHED"}
 
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+            # Fetch PL and CL in parallel
+            pl_url = "https://api.football-data.org/v4/competitions/PL/matches"
+            cl_url = "https://api.football-data.org/v4/competitions/CL/matches"
 
-        matches = data.get("matches", [])
-        if not matches:
+            pl_resp, cl_resp = await asyncio.gather(
+                client.get(pl_url, headers=headers, params=params, timeout=10),
+                client.get(cl_url, headers=headers, params=params, timeout=10),
+                return_exceptions=True,
+            )
+
+        def parse_matches(resp):
+            if isinstance(resp, Exception):
+                logger.warning(f"Match fetch failed: {resp}")
+                return []
+            resp.raise_for_status()
+            data = resp.json()
+            matches = data.get("matches", [])
+            formatted = []
+            for m in matches:
+                scorers = []
+                for g in m.get("goals", []):
+                    scorers.append({
+                        "player": g.get("scorer", {}).get("name", "Unknown"),
+                        "minute": g.get("minute"),
+                        "team": g.get("team", {}).get("shortName", ""),
+                        "type": g.get("type", "REGULAR"),
+                    })
+                formatted.append({
+                    "home": m["homeTeam"]["shortName"],
+                    "away": m["awayTeam"]["shortName"],
+                    "home_score": m["score"]["fullTime"]["home"],
+                    "away_score": m["score"]["fullTime"]["away"],
+                    "ht_home": m["score"].get("halfTime", {}).get("home"),
+                    "ht_away": m["score"].get("halfTime", {}).get("away"),
+                    "status": "FINISHED",
+                    "kickoff": m["utcDate"],
+                    "scorers": scorers,
+                    "venue": m.get("venue", ""),
+                    "referee": m.get("referees", [{}])[0].get("name", "") if m.get("referees") else "",
+                    "home_id": m["homeTeam"]["id"],
+                    "away_id": m["awayTeam"]["id"],
+                })
+            formatted.sort(key=lambda x: x["kickoff"])
+            return formatted
+
+        pl_matches = parse_matches(pl_resp)
+        cl_matches = parse_matches(cl_resp)
+
+        if not pl_matches and not cl_matches:
             return {"no_matches": True}
 
-        formatted = []
+        # Find Spurs match in either competition
         spurs_match = None
-        for m in matches:
-            scorers = []
-            for g in m.get("goals", []):
-                scorers.append({
-                    "player": g.get("scorer", {}).get("name", "Unknown"),
-                    "minute": g.get("minute"),
-                    "team": g.get("team", {}).get("shortName", ""),
-                    "type": g.get("type", "REGULAR"),
-                })
-            entry = {
-                "home": m["homeTeam"]["shortName"],
-                "away": m["awayTeam"]["shortName"],
-                "home_score": m["score"]["fullTime"]["home"],
-                "away_score": m["score"]["fullTime"]["away"],
-                "ht_home": m["score"].get("halfTime", {}).get("home"),
-                "ht_away": m["score"].get("halfTime", {}).get("away"),
-                "status": "FINISHED",
-                "kickoff": m["utcDate"],
-                "scorers": scorers,
-                "venue": m.get("venue", ""),
-                "referee": m.get("referees", [{}])[0].get("name", "") if m.get("referees") else "",
-            }
-            formatted.append(entry)
-            if m["homeTeam"]["id"] == 73 or m["awayTeam"]["id"] == 73:
-                spurs_match = entry
+        for m in pl_matches + cl_matches:
+            if m.get("home_id") == 73 or m.get("away_id") == 73:
+                spurs_match = m
+                break
 
-        formatted.sort(key=lambda x: x["kickoff"])
-
-        logger.info(f"PL results fetch: {len(formatted)} finished matches")
-        return {"matches": formatted, "spurs_match": spurs_match, "date": yesterday}
+        logger.info(f"Football results fetch: {len(pl_matches)} PL, {len(cl_matches)} CL")
+        return {
+            "pl_matches": pl_matches,
+            "cl_matches": cl_matches,
+            "spurs_match": spurs_match,
+            "date": yesterday,
+        }
 
     except Exception as e:
-        logger.error(f"PL results fetch error: {e}")
-        return {"error": str(e), "matches": []}
+        logger.error(f"Football results fetch error: {e}")
+        return {"error": str(e), "pl_matches": [], "cl_matches": []}
 
 
 async def get_spurs_live_data() -> dict[str, Any]:
     """Fetch live Spurs match data for 10-minute update cycle.
 
+    Checks both Premier League and Champions League.
     Short-circuits with spurs_playing=false on non-match days (~100ms).
     Only returns full data during match window (kickoff-15min to FT+15min).
     """
@@ -877,18 +906,28 @@ async def get_spurs_live_data() -> dict[str, Any]:
         if not FOOTBALL_DATA_API_KEY:
             return {"spurs_playing": False, "error": "No API key"}
 
-        url = "https://api.football-data.org/v4/competitions/PL/matches"
-        params = {"dateFrom": today, "dateTo": today}
         headers = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
+        params = {"dateFrom": today, "dateTo": today}
 
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+            pl_url = "https://api.football-data.org/v4/competitions/PL/matches"
+            cl_url = "https://api.football-data.org/v4/competitions/CL/matches"
 
-        matches = data.get("matches", [])
+            pl_resp, cl_resp = await asyncio.gather(
+                client.get(pl_url, headers=headers, params=params, timeout=10),
+                client.get(cl_url, headers=headers, params=params, timeout=10),
+                return_exceptions=True,
+            )
+
+        all_matches = []
+        for resp in [pl_resp, cl_resp]:
+            if isinstance(resp, Exception):
+                continue
+            resp.raise_for_status()
+            all_matches.extend(resp.json().get("matches", []))
+
         spurs_match = None
-        for m in matches:
+        for m in all_matches:
             if m["homeTeam"]["id"] == 73 or m["awayTeam"]["id"] == 73:
                 spurs_match = m
                 break
@@ -942,6 +981,74 @@ async def get_spurs_live_data() -> dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Spurs live fetch error: {e}")
+        return {"spurs_playing": False, "error": str(e)}
+
+
+async def get_spurs_matchday_data() -> dict[str, Any]:
+    """Fetch today's Spurs fixture for morning match-day reminder.
+
+    Checks both Premier League and Champions League.
+    Returns spurs_playing=false if no match today (NO_REPLY).
+    """
+    import httpx
+    from config import FOOTBALL_DATA_API_KEY
+
+    today = datetime.now(UK_TZ).date().isoformat()
+
+    try:
+        if not FOOTBALL_DATA_API_KEY:
+            return {"spurs_playing": False, "error": "No API key"}
+
+        headers = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
+        params = {"dateFrom": today, "dateTo": today}
+
+        async with httpx.AsyncClient() as client:
+            pl_url = "https://api.football-data.org/v4/competitions/PL/matches"
+            cl_url = "https://api.football-data.org/v4/competitions/CL/matches"
+
+            pl_resp, cl_resp = await asyncio.gather(
+                client.get(pl_url, headers=headers, params=params, timeout=10),
+                client.get(cl_url, headers=headers, params=params, timeout=10),
+                return_exceptions=True,
+            )
+
+        spurs_match = None
+        for resp in [pl_resp, cl_resp]:
+            if isinstance(resp, Exception):
+                continue
+            resp.raise_for_status()
+            for m in resp.json().get("matches", []):
+                if m["homeTeam"]["id"] == 73 or m["awayTeam"]["id"] == 73:
+                    spurs_match = m
+                    break
+            if spurs_match:
+                break
+
+        if not spurs_match:
+            return {"spurs_playing": False}
+
+        kickoff_str = spurs_match["utcDate"]
+        kickoff = datetime.fromisoformat(kickoff_str.replace("Z", "+00:00")).astimezone(UK_TZ)
+        home = spurs_match["homeTeam"]["shortName"]
+        away = spurs_match["awayTeam"]["shortName"]
+        is_home = spurs_match["homeTeam"]["id"] == 73
+        venue = spurs_match.get("venue", "")
+        competition = spurs_match.get("competition", {}).get("name", "Premier League")
+
+        return {
+            "spurs_playing": True,
+            "home": home,
+            "away": away,
+            "is_home": is_home,
+            "kickoff": kickoff_str,
+            "kickoff_uk": kickoff.strftime("%H:%M"),
+            "venue": venue,
+            "competition": competition,
+            "date": today,
+        }
+
+    except Exception as e:
+        logger.error(f"Spurs matchday fetch error: {e}")
         return {"spurs_playing": False, "error": str(e)}
 
 
@@ -2433,10 +2540,10 @@ async def get_self_reflect_data() -> dict[str, Any]:
 
 
 async def get_heartbeat_data() -> dict[str, Any]:
-    """Fetch queued Peter Queue tasks for heartbeat processing.
+    """Fetch queued Peter Queue tasks and recent job health for heartbeat processing.
 
     Fetches both 'queued' and 'heartbeat_scheduled' tasks, sorts by priority,
-    and returns them for the heartbeat skill to pick up.
+    and includes recent job failures for proactive monitoring.
     """
     PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "someday": 4}
 
@@ -2451,13 +2558,36 @@ async def get_heartbeat_data() -> dict[str, Any]:
 
     if not tasks:
         logger.info("Heartbeat: no queued ptasks found")
-        return {"ptasks": [], "count": 0}
 
     # Sort by priority
     tasks.sort(key=lambda t: PRIORITY_ORDER.get(t.get("priority", "medium"), 2))
 
+    # Fetch recent job failures (last 1 hour for heartbeat context)
+    job_health = {"recent_failures": [], "error": None}
+    try:
+        health_data = await _hadley_request("/jobs/health?hours=1")
+        if "error" not in health_data:
+            failures = []
+            for system in ["dm", "hb"]:
+                sys_data = health_data.get(system, {})
+                for f in sys_data.get("failures", []):
+                    failures.append({
+                        "system": "DM" if system == "dm" else "HB",
+                        "job": f.get("job", "unknown"),
+                        "at": f.get("at", ""),
+                        "error": f.get("error", "")[:100],
+                    })
+            job_health["recent_failures"] = failures
+            if failures:
+                logger.info(f"Heartbeat: {len(failures)} job failure(s) in last hour")
+        else:
+            job_health["error"] = health_data.get("error", "unknown")
+    except Exception as e:
+        logger.warning(f"Heartbeat: failed to fetch job health: {e}")
+        job_health["error"] = str(e)
+
     logger.info(f"Heartbeat: {len(tasks)} ptask(s) ready for processing")
-    return {"ptasks": tasks, "count": len(tasks)}
+    return {"ptasks": tasks, "count": len(tasks), "job_health": job_health}
 
 
 async def get_instagram_prep_data() -> dict[str, Any]:
@@ -3129,6 +3259,255 @@ def _sub_monthly_cost(amount: float, frequency: str) -> float:
     return amount * multipliers.get(frequency, 12) / 12
 
 
+async def get_tutor_email_data() -> dict[str, Any]:
+    """Fetch the most recent tutor email for 11+ Mate tutor integration.
+
+    Searches Gmail for emails from the tutor (last 7 days),
+    fetches the full body, and returns it for Peter to parse.
+    """
+    import httpx
+
+    # Catherine at 5by5 Tutoring
+    queries = [
+        'from:catherine@5by5tutoring.co.uk newer_than:7d',
+    ]
+
+    try:
+        found_emails: list[dict] = []
+
+        async with httpx.AsyncClient() as client:
+            for query in queries:
+                try:
+                    response = await client.get(
+                        f"{HADLEY_API_URL}/gmail/search",
+                        params={"q": query, "limit": 5, "account": "personal"},
+                        timeout=15,
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        messages = data.get("emails", data.get("messages", []))
+                        for msg in messages:
+                            found_emails.append({
+                                "id": msg.get("id", ""),
+                                "subject": msg.get("subject", ""),
+                                "from": msg.get("from", ""),
+                                "date": msg.get("date", ""),
+                                "snippet": msg.get("snippet", ""),
+                            })
+                except Exception as e:
+                    logger.warning(f"Tutor email search error: {e}")
+
+            if not found_emails:
+                return {"no_tutor_email": True, "message": "No tutor emails found in the last 7 days"}
+
+            # Deduplicate by ID
+            seen_ids: set[str] = set()
+            unique_emails: list[dict] = []
+            for em in found_emails:
+                if em["id"] not in seen_ids:
+                    seen_ids.add(em["id"])
+                    unique_emails.append(em)
+
+            # Fetch full body for the most recent email
+            most_recent = unique_emails[0]
+            try:
+                body_resp = await client.get(
+                    f"{HADLEY_API_URL}/gmail/get",
+                    params={"id": most_recent["id"], "account": "personal"},
+                    timeout=15,
+                )
+                if body_resp.status_code == 200:
+                    body_data = body_resp.json()
+                    most_recent["body"] = body_data.get("body", body_data.get("text", ""))
+                    most_recent["html_body"] = body_data.get("html_body", "")
+            except Exception as e:
+                logger.warning(f"Tutor email body fetch error: {e}")
+                most_recent["body"] = most_recent.get("snippet", "")
+
+            # Construct Gmail web link
+            most_recent["gmail_link"] = f"https://mail.google.com/mail/u/0/#inbox/{most_recent['id']}"
+
+            logger.info(f"Tutor email parser: found {len(unique_emails)} emails, fetched body for most recent")
+            return {
+                "email": most_recent,
+                "all_emails": unique_emails,
+                "count": len(unique_emails),
+            }
+
+    except Exception as e:
+        logger.error(f"Tutor email fetch error: {e}")
+        return {"error": str(e), "no_tutor_email": True}
+
+
+async def get_paper_builder_data() -> dict[str, Any]:
+    """Check this week's tutor topic and count existing papers per level.
+
+    Returns the topic and paper gaps so the skill knows what to generate.
+    """
+    import httpx
+    from pathlib import Path as WinPath
+
+    anon_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1vZGpvaWt5dWhxem91eHZpZXVhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYxNDE3MjksImV4cCI6MjA4MTcxNzcyOX0.EWGr0LOwFKFw3krrzZQZP_Gcew13s1Z9H3LxB0-JmPA"
+    service_key = "psk_11plusmate_tutor_2026"
+    emmie_id = "a5677d2f-9614-4504-94a2-4dae933af2c1"
+    frontend_dir = WinPath(r"C:\Users\Chris Hadley\claude-projects\emmie-practice\frontend")
+
+    try:
+        # Get this week's tutor topic
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://modjoikyuhqzouxvieua.supabase.co/functions/v1/practice-schedule-manage",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {anon_key}",
+                },
+                json={
+                    "action": "get-tutor-topics",
+                    "service_key": service_key,
+                    "family_code": "HADLEY",
+                    "student_id": emmie_id,
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        topics = data.get("tutor_topics", [])
+        if not topics:
+            return {"no_topic": True, "message": "No tutor topics logged yet"}
+
+        this_week = topics[0]  # Most recent
+        topic_slug = this_week["topic"]
+        subject = this_week.get("subject", "unknown")
+
+        # Count existing papers per level for this topic
+        levels = ["year4", "year5", "pretest", "actual-test"]
+        paper_counts = {}
+        for level in levels:
+            # Count files matching {level}-{topic}*.html
+            pattern = f"{level}-{topic_slug}*.html"
+            existing = list(frontend_dir.glob(pattern))
+            paper_counts[level] = len(existing)
+
+        # Also count JSON data files
+        data_dir = frontend_dir / "data"
+        json_counts = {}
+        for level in levels:
+            pattern = f"{level}-{topic_slug}*.json"
+            existing = list(data_dir.glob(pattern)) if data_dir.exists() else []
+            json_counts[level] = len(existing)
+
+        # Calculate gaps (need 3 per level)
+        target = 3
+        gaps = {}
+        total_needed = 0
+        for level in levels:
+            have = paper_counts[level]
+            need = max(0, target - have)
+            gaps[level] = {"have": have, "need": need, "json_have": json_counts[level]}
+            total_needed += need
+
+        logger.info(f"Paper builder: topic={topic_slug}, gaps={gaps}, total_needed={total_needed}")
+        return {
+            "topic": topic_slug,
+            "subject": subject,
+            "topic_title": this_week.get("notes", "").split("|")[0].strip()[:100] if this_week.get("notes") else topic_slug,
+            "paper_counts": paper_counts,
+            "json_counts": json_counts,
+            "gaps": gaps,
+            "total_needed": total_needed,
+            "frontend_dir": str(frontend_dir),
+            "all_topics": [{"topic": t["topic"], "subject": t.get("subject"), "week_start": t["week_start"]} for t in topics[:4]],
+        }
+
+    except Exception as e:
+        logger.error(f"Paper builder fetch error: {e}")
+        return {"error": str(e)}
+
+
+async def get_practice_allocate_data() -> dict[str, Any]:
+    """Allocate 11+ Mate practice papers for the week for both students.
+
+    Calls the allocate-practice Edge Function for each student for each day
+    of the coming week (Wed-Tue cycle, starting tomorrow).
+    """
+    import httpx
+
+    base_url = "https://modjoikyuhqzouxvieua.supabase.co/functions/v1/allocate-practice"
+    service_key = "psk_11plusmate_tutor_2026"
+    family_code = "HADLEY"
+    anon_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1vZGpvaWt5dWhxem91eHZpZXVhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYxNDE3MjksImV4cCI6MjA4MTcxNzcyOX0.EWGr0LOwFKFw3krrzZQZP_Gcew13s1Z9H3LxB0-JmPA"
+
+    students = [
+        {"id": "a5677d2f-9614-4504-94a2-4dae933af2c1", "name": "Emmie"},
+        {"id": "2d204872-bfaa-4577-bd16-c07863b52cd1", "name": "Max"},
+    ]
+
+    now = datetime.now(UK_TZ)
+    results = {}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            for student in students:
+                student_results = []
+                # Allocate for the next 7 days (tomorrow through 7 days out)
+                for day_offset in range(1, 8):
+                    target_date = (now + timedelta(days=day_offset)).strftime("%Y-%m-%d")
+                    params = {
+                        "service_key": service_key,
+                        "family_code": family_code,
+                        "student_id": student["id"],
+                        "date_override": target_date,
+                    }
+                    resp = await client.get(
+                        base_url,
+                        params=params,
+                        headers={"Authorization": f"Bearer {anon_key}"},
+                        timeout=15,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        student_results.append({
+                            "date": target_date,
+                            "day_name": data.get("day_name", ""),
+                            "allocations": data.get("allocations", []),
+                        })
+                    else:
+                        student_results.append({
+                            "date": target_date,
+                            "error": f"HTTP {resp.status_code}: {resp.text[:100]}",
+                        })
+
+                results[student["name"]] = student_results
+
+        logger.info(f"Practice allocation: allocated for {len(students)} students, 7 days each")
+        return {"students": results, "week_start": (now + timedelta(days=1)).strftime("%Y-%m-%d")}
+
+    except Exception as e:
+        logger.error(f"Practice allocation fetch error: {e}")
+        return {"error": str(e), "students": {}}
+
+
+async def get_system_health_data() -> dict[str, Any]:
+    """Fetch unified job health data from Hadley API.
+
+    Returns combined DM + HB job execution stats for last 24 hours.
+    """
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get("http://localhost:8100/jobs/health")
+            if resp.status_code == 200:
+                return {"system_health": resp.json()}
+            else:
+                logger.warning(f"System health fetch returned {resp.status_code}")
+                return {"error": f"API returned {resp.status_code}"}
+    except Exception as e:
+        logger.error(f"System health fetch error: {e}")
+        return {"error": str(e)}
+
+
 # Map skill names to their data fetchers
 # Skills not in this dict use web search (news, etc.)
 SKILL_DATA_FETCHERS = {
@@ -3146,6 +3525,7 @@ SKILL_DATA_FETCHERS = {
     "football-scores": get_football_scores_data,
     "pl-results": get_pl_results_data,
     "spurs-live": get_spurs_live_data,
+    "spurs-matchday": get_spurs_matchday_data,
     "cricket-scores": get_cricket_scores_data,
     "saturday-sport-preview": get_saturday_sport_preview_data,
     "ballot-reminders": get_ballot_reminders_data,
@@ -3206,4 +3586,10 @@ SKILL_DATA_FETCHERS = {
     "amazon-purchases": get_amazon_purchases_data,
     # Cooking reminders
     "cooking-reminder": get_cooking_reminder_data,
+    # 11+ Mate
+    "tutor-email-parser": get_tutor_email_data,
+    "paper-builder": get_paper_builder_data,
+    "practice-allocate": get_practice_allocate_data,
+    # System health monitoring
+    "system-health": get_system_health_data,
 }

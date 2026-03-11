@@ -99,6 +99,76 @@ USE_PETERBOT_SCHEDULER = True  # Phase 7b complete - skills created
 peterbot_scheduler = None  # Initialized in on_ready
 _ready_initialized = False  # Guard against multiple on_ready calls
 
+def _tracked_job(job_id: str, func):
+    """Wrap a legacy async job function with execution tracking and failure alerting.
+
+    Records start/complete in job_history.db (same as skill-based jobs)
+    and posts to #alerts webhook on failure.
+    """
+    from functools import wraps
+
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        from peter_dashboard.api.jobs import record_job_start, record_job_complete
+        execution_id = None
+        try:
+            execution_id = record_job_start(job_id)
+        except Exception as e:
+            logger.warning(f"Failed to record job start for {job_id}: {e}")
+
+        success = False
+        result = None
+        output_str = ""
+        error_str = ""
+        try:
+            result = await func(*args, **kwargs)
+            # Legacy jobs return dicts like {"Octopus Sync": (True, "output")}
+            if isinstance(result, dict):
+                all_ok = all(v[0] for v in result.values() if isinstance(v, tuple))
+                success = all_ok
+                parts = []
+                for name, val in result.items():
+                    if isinstance(val, tuple):
+                        ok, out = val
+                        parts.append(f"{name}: {'OK' if ok else 'FAILED'}")
+                        if not ok:
+                            error_str += f"{name}: {out[-200:]}\n"
+                    else:
+                        parts.append(f"{name}: {val}")
+                output_str = "; ".join(parts)
+            elif isinstance(result, list):
+                # List of result objects (e.g. incremental_seed adapters)
+                # Check for items_failed attribute on any result
+                failed_count = sum(
+                    getattr(r, 'items_failed', 0) for r in result
+                    if hasattr(r, 'items_failed')
+                )
+                success = True  # Partial failures don't fail the job
+                output_str = f"{len(result)} adapters, {failed_count} items failed"
+                if failed_count > 0:
+                    output_str += " (partial)"
+            else:
+                success = True
+                output_str = str(result)[:500] if result else "completed"
+        except Exception as e:
+            success = False
+            error_str = str(e)[:500]
+            logger.error(f"Tracked job {job_id} exception: {e}")
+
+        try:
+            record_job_complete(
+                job_id, success=success,
+                output=output_str[:500] if output_str else None,
+                error=error_str[:500] if error_str else None,
+                execution_id=execution_id,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record job complete for {job_id}: {e}")
+
+        return result
+
+    return wrapper
+
 
 @bot.event
 async def on_ready():
@@ -162,29 +232,49 @@ async def on_ready():
     scheduler.start()
     logger.info(f"Scheduler started with {len(scheduler.get_jobs())} jobs")
 
+    # Legacy jobs — wrap with execution tracking before registration
+    # This records start/complete in job_history.db and alerts #alerts on failure
+    import jobs.incremental_seed as _seed_mod
+    import jobs.school_sync as _school_mod
+    import jobs.energy_sync as _energy_mod
+    import jobs.whatsapp_sync as _wa_mod
+
+    _seed_mod.incremental_seed_import = _tracked_job(
+        "incremental_seed", _seed_mod.incremental_seed_import)
+    _school_mod.school_daily_sync = _tracked_job(
+        "school_daily_sync", _school_mod.school_daily_sync)
+    _school_mod.school_weekly_sync = _tracked_job(
+        "school_weekly_sync", _school_mod.school_weekly_sync)
+    _energy_mod.energy_daily_sync = _tracked_job(
+        "energy_daily_sync", _energy_mod.energy_daily_sync)
+    _energy_mod.energy_weekly_digest = _tracked_job(
+        "energy_weekly_digest", _energy_mod.energy_weekly_digest)
+    _energy_mod.energy_monthly_billing = _tracked_job(
+        "energy_monthly_billing", _energy_mod.energy_monthly_billing)
+    _wa_mod.whatsapp_web_scrape = _tracked_job(
+        "whatsapp_web_scrape", _wa_mod.whatsapp_web_scrape)
+    _wa_mod.whatsapp_export_scan = _tracked_job(
+        "whatsapp_export_scan", _wa_mod.whatsapp_export_scan)
+
     # Incremental seed import — daily at 1am UK, loads calendar/email/GitHub/Garmin
-    from jobs.incremental_seed import register_incremental_seed
-    register_incremental_seed(scheduler, bot=bot)
+    _seed_mod.register_incremental_seed(scheduler, bot=bot)
     logger.info("Incremental seed job registered (daily at 1:00 AM UK)")
 
     # School integration — daily emails at 7am, weekly scrape+sync Saturday 6am
-    from jobs.school_sync import register_school_sync
-    register_school_sync(scheduler, bot=bot)
+    _school_mod.register_school_sync(scheduler, bot=bot)
     logger.info("School sync jobs registered (daily 7:00 AM + weekly Saturday 6:00 AM UK)")
 
     # Energy — daily consumption sync at 10am, weekly digest Sunday 9am, monthly billing 1st 10:30am
-    from jobs.energy_sync import register_energy_sync
-    register_energy_sync(scheduler, bot=bot)
+    _energy_mod.register_energy_sync(scheduler, bot=bot)
     logger.info("Energy sync jobs registered (daily 10:00 AM + weekly Sunday 9:00 AM + monthly 1st 10:30 AM UK)")
 
     # WhatsApp — daily export scan at 10am, weekly reminder Sunday 9am
-    from jobs.whatsapp_sync import register_whatsapp_sync
-    register_whatsapp_sync(scheduler, bot=bot)
+    _wa_mod.register_whatsapp_sync(scheduler, bot=bot)
     logger.info("WhatsApp sync jobs registered (daily 10:00 AM + weekly Sunday 9:00 AM UK)")
 
     # WhatsApp incoming messages — internal HTTP server for HadleyAPI to forward to
     from aiohttp import web as aio_web
-    from integrations.whatsapp import send_text
+    from integrations.whatsapp import send_text, send_audio
 
     WHATSAPP_VIRTUAL_CHANNEL_ID = 9999999999
 
@@ -196,14 +286,17 @@ async def on_ready():
             sender_number = data.get("sender_number", "")
             reply_to = data.get("reply_to", sender_number)
             is_group = data.get("is_group", False)
+            is_voice = data.get("is_voice", False)
+            skip_whatsapp_reply = data.get("skip_whatsapp_reply", False)
             text = data.get("text", "")
 
             if not text.strip() or not sender_number:
                 return aio_web.json_response({"status": "ignored"})
 
             source = "group" if is_group else "DM"
-            logger.info(f"WhatsApp ({source}) → Peter: [{sender_name}] {text[:100]}")
-            tagged_message = f"[WhatsApp {source} from {sender_name}] {text}"
+            voice_tag = " voice" if is_voice else ""
+            logger.info(f"WhatsApp ({source}{voice_tag}) → Peter: [{sender_name}] {text[:100]}")
+            tagged_message = f"[WhatsApp {source}{voice_tag} from {sender_name}] {text}"
 
             response = await handle_peterbot(
                 message=tagged_message,
@@ -211,11 +304,31 @@ async def on_ready():
                 channel_id=WHATSAPP_VIRTUAL_CHANNEL_ID,
             )
 
-            if response and response.strip() and response.strip() != "NO_REPLY":
-                await send_text(reply_to, response)
-                logger.info(f"Peter → WhatsApp [{sender_name}, {source}]: {response[:100]}")
+            reply_text = response.strip() if response else ""
+            if not reply_text or reply_text == "NO_REPLY":
+                return aio_web.json_response({"status": "ok", "replied": False, "reply": ""})
 
-            return aio_web.json_response({"status": "ok", "replied": bool(response)})
+            # For /voice/converse requests, return the reply text without sending on WhatsApp
+            if skip_whatsapp_reply:
+                return aio_web.json_response({"status": "ok", "replied": True, "reply": reply_text})
+
+            # Always send text reply
+            await send_text(reply_to, reply_text)
+            logger.info(f"Peter → WhatsApp [{sender_name}, {source}]: {reply_text[:100]}")
+
+            # If the incoming message was a voice note, also reply with audio
+            if is_voice:
+                try:
+                    import base64 as b64
+                    from hadley_api.voice_engine import synthesise
+                    wav_bytes = await synthesise(reply_text)
+                    audio_b64 = b64.b64encode(wav_bytes).decode()
+                    await send_audio(reply_to, audio_b64)
+                    logger.info(f"Peter → WhatsApp voice [{sender_name}]: {len(wav_bytes)} bytes")
+                except Exception as e:
+                    logger.error(f"Voice reply failed (text still sent): {e}")
+
+            return aio_web.json_response({"status": "ok", "replied": True, "reply": reply_text})
         except Exception as e:
             logger.error(f"WhatsApp → Peter routing failed: {e}")
             return aio_web.json_response({"error": str(e)}, status=500)
@@ -1061,17 +1174,52 @@ def _kill_orphaned_bots():
             pass  # Corrupt lock file
 
     # --- Phase 2: Stop DiscordBot NSSM service if running (it spawns a hidden bot.py) ---
+    # Skip when WE are the service to avoid self-kill deadlock.
+    # NSSM chain: nssm.exe → python.exe (PythonManager) → python.exe (bot.py)
+    # So we walk up the ancestor chain (up to 5 levels) looking for nssm.exe.
+    is_nssm = False
     try:
-        svc_result = subprocess.run(
-            ["sc", "queryex", "DiscordBot"],
-            capture_output=True, text=True, timeout=10
-        )
-        if "RUNNING" in svc_result.stdout:
-            subprocess.run(["sc", "stop", "DiscordBot"], capture_output=True, timeout=10)
-            killed += 1
-            logger.warning("Stopped DiscordBot NSSM service (was running a duplicate bot)")
-    except Exception as e:
-        logger.debug(f"Service check skipped: {e}")
+        current_pid = os.getppid()
+        for _ in range(5):
+            wmic_out = subprocess.run(
+                ["wmic", "process", "where", f"processid={current_pid}",
+                 "get", "name,parentprocessid", "/format:csv"],
+                capture_output=True, text=True, timeout=5
+            )
+            if "nssm" in wmic_out.stdout.lower():
+                is_nssm = True
+                break
+            # Extract parent PID from CSV output to continue walking up
+            for line in wmic_out.stdout.strip().split("\n"):
+                line = line.strip()
+                if line and not line.startswith("Node"):
+                    parts = line.split(",")
+                    # CSV format: Node,Name,ParentProcessId
+                    if len(parts) >= 3 and parts[-1].strip().isdigit():
+                        next_pid = int(parts[-1].strip())
+                        if next_pid == current_pid or next_pid == 0:
+                            break  # Reached root or loop
+                        current_pid = next_pid
+                        break
+            else:
+                break  # No valid parent found
+    except Exception:
+        pass
+
+    if not is_nssm:
+        try:
+            svc_result = subprocess.run(
+                ["sc", "queryex", "DiscordBot"],
+                capture_output=True, text=True, timeout=10
+            )
+            if "RUNNING" in svc_result.stdout:
+                subprocess.run(["sc", "stop", "DiscordBot"], capture_output=True, timeout=10)
+                killed += 1
+                logger.warning("Stopped DiscordBot NSSM service (was running a duplicate bot)")
+        except Exception as e:
+            logger.debug(f"Service check skipped: {e}")
+    else:
+        logger.debug("Skipping Phase 2 — running as NSSM service")
 
     # --- Phase 3: wmic scan for any remaining python+bot.py processes ---
     try:
