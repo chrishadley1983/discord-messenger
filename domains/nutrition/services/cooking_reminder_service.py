@@ -87,11 +87,10 @@ async def get_reminders_for_date(target_date: str) -> list[dict]:
         if not plan:
             return []
 
-        # Find meals for the target date
+        # Find meals for the target date (skip leftovers but keep everything else)
         target_meals = [
             item for item in plan.get("items", [])
             if item.get("date") == target_date
-            and item.get("source_tag") != "gousto"  # Gousto comes with everything
             and item.get("source_tag") != "leftovers"  # Leftovers don't need prep
         ]
 
@@ -103,6 +102,41 @@ async def get_reminders_for_date(target_date: str) -> list[dict]:
         for meal in target_meals:
             meal_name = meal.get("adults_meal", "")
             if not meal_name:
+                continue
+
+            is_gousto = meal.get("source_tag") == "gousto"
+
+            # Check meal plan item notes for explicit prep instructions
+            item_notes = meal.get("notes", "") or ""
+            if item_notes:
+                # Item notes are explicit prep instructions from plan generation
+                for timing, patterns in PREP_PATTERNS.items():
+                    for pattern, action_prefix in patterns:
+                        if re.search(pattern, item_notes, re.IGNORECASE):
+                            reminders.append({
+                                "timing": timing,
+                                "action": item_notes,
+                                "recipe": meal_name,
+                                "step": 0,
+                                "matched_text": item_notes[:100],
+                            })
+                            break
+                    else:
+                        continue
+                    break
+                else:
+                    # Notes exist but don't match patterns — still include
+                    # as a morning reminder (e.g. "Put pork in slow cooker before 8am")
+                    reminders.append({
+                        "timing": "morning",
+                        "action": item_notes,
+                        "recipe": meal_name,
+                        "step": 0,
+                        "matched_text": item_notes[:100],
+                    })
+
+            # Skip recipe instruction analysis for Gousto (ingredients come prepped)
+            if is_gousto:
                 continue
 
             # Try to find the recipe in Family Fuel

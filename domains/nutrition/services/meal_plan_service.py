@@ -1,6 +1,13 @@
 """Meal plan service for weekly meal planning via PostgREST."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
+
+UK_TZ = ZoneInfo("Europe/London")
 
 import httpx
 
@@ -115,7 +122,7 @@ async def get_current_meal_plan() -> dict | None:
     Falls back to finding any plan with items for today
     (handles plans that span week boundaries).
     """
-    today = datetime.now().date()
+    today = datetime.now(UK_TZ).date()
     monday = today - timedelta(days=today.weekday())
 
     # Try exact week_start match first
