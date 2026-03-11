@@ -12,7 +12,9 @@ Evolution API sends webhooks for:
 - CONNECTION_UPDATE: connection state changes
 """
 import asyncio
+import base64
 import logging
+import os
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -93,6 +95,137 @@ ALLOWED_SENDERS_BY_NUMBER = {
 # DiscordBot internal server for WhatsApp message routing
 DISCORDBOT_WHATSAPP_URL = "http://127.0.0.1:8101/whatsapp/message"
 
+# Evolution API config (for media download)
+EVOLUTION_URL = os.getenv("EVOLUTION_API_URL", "http://localhost:8085")
+EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "peter-whatsapp-2026-hadley")
+EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "peter-whatsapp")
+
+
+async def _download_audio(message_id: str) -> bytes | None:
+    """Download audio from an Evolution API message via getBase64FromMediaMessage."""
+    url = f"{EVOLUTION_URL}/chat/getBase64FromMediaMessage/{EVOLUTION_INSTANCE}"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                url,
+                headers={
+                    "apikey": EVOLUTION_API_KEY,
+                    "Content-Type": "application/json",
+                },
+                json={"message": {"key": {"id": message_id}}, "convertToMp4": False},
+                timeout=30,
+            )
+            if resp.status_code not in (200, 201):
+                logger.error(f"Audio download failed ({resp.status_code}): {resp.text[:200]}")
+                return None
+            data = resp.json()
+            b64 = data.get("base64", "")
+            if not b64:
+                logger.error("Audio download: empty base64")
+                return None
+            return base64.b64decode(b64)
+    except Exception as e:
+        logger.error(f"Audio download error: {e}")
+        return None
+
+
+@router.post("/send")
+async def whatsapp_send(to: str, message: str):
+    """Send a WhatsApp text message via Evolution API.
+
+    Args:
+        to: Phone number (international format without +) or contact name (chris, abby)
+              or group JID (xxx@g.us)
+        message: Message text (Discord markdown auto-converted to WhatsApp format)
+    """
+    from integrations.whatsapp import send_text, CONTACTS
+
+    # Resolve contact name to number
+    number = CONTACTS.get(to.lower(), to)
+
+    try:
+        result = await send_text(number, message)
+        if "error" in result:
+            return JSONResponse(
+                {"error": result["error"], "status": result.get("status", 500)},
+                status_code=result.get("status", 500),
+            )
+        return JSONResponse({"status": "sent", "to": number})
+    except Exception as e:
+        logger.error(f"WhatsApp send API error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.get("/status")
+async def whatsapp_status():
+    """Check WhatsApp connection status via Evolution API."""
+    from integrations.whatsapp import check_connection
+
+    try:
+        result = await check_connection()
+        if "error" in result:
+            return JSONResponse({"connected": False, "error": result["error"]})
+        state = result.get("instance", {}).get("state", "unknown")
+        return JSONResponse({"connected": state == "open", "state": state})
+    except Exception as e:
+        logger.error(f"WhatsApp status check error: {e}")
+        return JSONResponse({"connected": False, "error": str(e)})
+
+
+@router.post("/send-voice")
+async def whatsapp_send_voice(to: str, message: str):
+    """Send a WhatsApp voice note generated from text via TTS.
+
+    Also sends the text as a regular message alongside the voice note.
+
+    Args:
+        to: Phone number, contact name (chris, abby), or group JID
+        message: Text to convert to speech and send as voice note
+    """
+    from integrations.whatsapp import send_text, send_audio, CONTACTS
+
+    number = CONTACTS.get(to.lower(), to)
+
+    # Send text message first
+    try:
+        text_result = await send_text(number, message)
+        if "error" in text_result:
+            return JSONResponse(
+                {"error": f"Text send failed: {text_result['error']}"},
+                status_code=text_result.get("status", 500),
+            )
+    except Exception as e:
+        logger.error(f"WhatsApp send-voice text error: {e}")
+        return JSONResponse({"error": f"Text send failed: {e}"}, status_code=500)
+
+    # Generate voice note via TTS
+    try:
+        from hadley_api.voice_engine import synthesise
+        wav_bytes = await synthesise(message)
+        audio_b64 = base64.b64encode(wav_bytes).decode()
+    except Exception as e:
+        logger.error(f"WhatsApp send-voice TTS error: {e}")
+        return JSONResponse(
+            {"status": "partial", "text_sent": True, "voice_error": str(e)},
+            status_code=207,
+        )
+
+    # Send voice note
+    try:
+        audio_result = await send_audio(number, audio_b64)
+        if "error" in audio_result:
+            return JSONResponse(
+                {"status": "partial", "text_sent": True, "voice_error": audio_result["error"]},
+                status_code=207,
+            )
+        return JSONResponse({"status": "sent", "to": number, "text_sent": True, "voice_sent": True})
+    except Exception as e:
+        logger.error(f"WhatsApp send-voice audio error: {e}")
+        return JSONResponse(
+            {"status": "partial", "text_sent": True, "voice_error": str(e)},
+            status_code=207,
+        )
+
 
 @router.post("/webhook")
 @router.post("/webhook/{event_type:path}")
@@ -154,6 +287,21 @@ async def _handle_message(body: dict):
         reply_to = remote_jid if is_group else sender_number
 
         message_content = msg.get("message", {})
+
+        # Check for voice note / audio message
+        audio_msg = message_content.get("audioMessage")
+        if audio_msg:
+            logger.info(f"WhatsApp voice note from {sender_name} ({audio_msg.get('seconds', '?')}s)")
+            await _handle_voice_note(
+                message_id=message_id,
+                message_content=message_content,
+                sender_name=sender_name,
+                sender_number=sender_number,
+                reply_to=reply_to,
+                is_group=is_group,
+            )
+            return
+
         text = (
             message_content.get("conversation")
             or message_content.get("extendedTextMessage", {}).get("text")
@@ -175,12 +323,59 @@ async def _handle_message(body: dict):
         )
 
 
+async def _handle_voice_note(
+    message_id: str,
+    message_content: dict,
+    sender_name: str,
+    sender_number: str,
+    reply_to: str,
+    is_group: bool,
+):
+    """Handle an incoming voice note — transcribe and queue as text."""
+    # Try base64 from payload first (if webhookBase64 is enabled)
+    b64_data = message_content.get("base64")
+    if b64_data:
+        audio_bytes = base64.b64decode(b64_data)
+    else:
+        # Download via Evolution API
+        audio_bytes = await _download_audio(message_id)
+
+    if not audio_bytes:
+        logger.error(f"Could not get audio for voice note {message_id}")
+        return
+
+    # Transcribe using voice engine
+    try:
+        from hadley_api.voice_engine import transcribe
+        text = await transcribe(audio_bytes, source_format="ogg")
+    except Exception as e:
+        logger.error(f"Voice note transcription failed: {e}")
+        return
+
+    if not text.strip():
+        logger.info("Voice note transcribed to empty text, ignoring")
+        return
+
+    logger.info(f"WhatsApp voice from {sender_name}: {text[:100]}")
+
+    # Queue transcribed text with [Voice] tag — goes through normal debounce
+    await _enqueue_message(
+        sender_name=sender_name,
+        sender_number=sender_number,
+        reply_to=reply_to,
+        is_group=is_group,
+        text=text.strip(),
+        is_voice=True,
+    )
+
+
 async def _enqueue_message(
     sender_name: str,
     sender_number: str,
     reply_to: str,
     is_group: bool,
     text: str,
+    is_voice: bool = False,
 ):
     """Add a message to the sender's debounce queue and reset the timer."""
     queue = _sender_queues.get(sender_number)
@@ -199,7 +394,7 @@ async def _enqueue_message(
         logger.warning(f"WhatsApp queue full for {sender_name}, dropping oldest")
         queue.messages.pop(0)
 
-    queue.messages.append({"text": text})
+    queue.messages.append({"text": text, "is_voice": is_voice})
     queue.last_activity = time.monotonic()
 
     # Cancel existing timer and start a new one (debounce reset)
@@ -219,6 +414,7 @@ async def _debounce_flush(sender_number: str):
 
     # Collect all queued texts into a single payload
     texts = [m["text"] for m in queue.messages]
+    has_voice = any(m.get("is_voice") for m in queue.messages)
     combined_text = "\n".join(texts)
     msg_count = len(texts)
 
@@ -228,7 +424,7 @@ async def _debounce_flush(sender_number: str):
 
     logger.info(
         f"WhatsApp debounce flush for {queue.sender_name}: "
-        f"{msg_count} message(s) batched"
+        f"{msg_count} message(s) batched{' (voice)' if has_voice else ''}"
     )
 
     try:
@@ -241,6 +437,7 @@ async def _debounce_flush(sender_number: str):
                     "reply_to": queue.reply_to,
                     "is_group": queue.is_group,
                     "text": combined_text,
+                    "is_voice": has_voice,
                 },
                 timeout=600,
             )

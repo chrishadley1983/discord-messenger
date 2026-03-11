@@ -162,6 +162,47 @@ async def send_to_group(group_key: str, text: str) -> dict:
     return await asyncio.to_thread(_send)
 
 
+def send_audio_sync(number: str, audio_base64: str) -> dict:
+    """Send an audio message (voice note) synchronously.
+
+    Args:
+        number: Phone number (any format) or group JID (xxx@g.us)
+        audio_base64: Base64-encoded audio data
+
+    Returns:
+        API response dict or error dict
+    """
+    if "@" not in number:
+        number = _format_number(number)
+
+    try:
+        resp = requests.post(
+            f"{EVOLUTION_URL}/message/sendWhatsAppAudio/{EVOLUTION_INSTANCE}",
+            headers=HEADERS,
+            json={
+                "number": number,
+                "audio": audio_base64,
+            },
+            timeout=30,
+        )
+
+        if resp.ok:
+            logger.info(f"WhatsApp audio sent to {number}")
+            return resp.json()
+        else:
+            logger.error(f"WhatsApp audio send failed ({resp.status_code}): {resp.text[:200]}")
+            return {"error": resp.text, "status": resp.status_code}
+
+    except requests.RequestException as e:
+        logger.error(f"WhatsApp audio send error: {e}")
+        return {"error": str(e)}
+
+
+async def send_audio(number: str, audio_base64: str) -> dict:
+    """Send an audio message (voice note) asynchronously."""
+    return await asyncio.to_thread(send_audio_sync, number, audio_base64)
+
+
 async def send_to_chris(text: str) -> dict:
     """Send a message to Chris only."""
     return await send_text(CONTACTS["chris"], text)
