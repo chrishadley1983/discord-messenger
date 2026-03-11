@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hadley Hub</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    min-height: 100vh;
+  }
+
+  .hero {
+    text-align: center;
+    padding: 48px 20px 32px;
+  }
+
+  .hero h1 {
+    font-size: 2.4em;
+    font-weight: 800;
+    background: linear-gradient(135deg, #38bdf8, #818cf8, #c084fc);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 8px;
+  }
+
+  .hero p {
+    color: #94a3b8;
+    font-size: 1.05em;
+  }
+
+  .grid {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 20px 60px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+  }
+
+  .card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 16px;
+    padding: 24px;
+    transition: all 0.2s;
+    text-decoration: none;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .card:hover {
+    border-color: #6366f1;
+    transform: translateY(-3px);
+    box-shadow: 0 8px 30px rgba(99, 102, 241, 0.15);
+  }
+
+  .card-icon {
+    font-size: 2em;
+    width: 52px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    flex-shrink: 0;
+  }
+
+  .card h2 {
+    font-size: 1.15em;
+    font-weight: 700;
+    color: #f1f5f9;
+  }
+
+  .card p {
+    font-size: 0.9em;
+    color: #94a3b8;
+    line-height: 1.5;
+    flex: 1;
+  }
+
+  .card-domain {
+    font-size: 0.78em;
+    color: #64748b;
+    font-family: monospace;
+    padding-top: 4px;
+    border-top: 1px solid #334155;
+  }
+
+  .badge {
+    display: inline-block;
+    font-size: 0.7em;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 6px;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+
+  .badge-active { background: #065f46; color: #6ee7b7; }
+  .badge-kids { background: #581c87; color: #d8b4fe; }
+  .badge-travel { background: #7c2d12; color: #fdba74; }
+  .badge-bricks { background: #713f12; color: #fde047; }
+
+  .section-label {
+    max-width: 900px;
+    margin: 24px auto 12px;
+    padding: 0 20px;
+    font-size: 0.8em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #64748b;
+  }
+
+  .footer {
+    text-align: center;
+    padding: 32px 20px;
+    color: #475569;
+    font-size: 0.85em;
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>Hadley Hub</h1>
+  <p>All the Hadley family sites in one place</p>
+</div>
+
+<div class="section-label">Family & Kids</div>
+<div class="grid">
+
+  <a class="card" href="https://hadley-spelling-test.surge.sh" target="_blank">
+    <div class="card-icon" style="background:#faf5ff;">&#x1F4DD;</div>
+    <h2>Spelling Test <span class="badge badge-kids">Kids</span></h2>
+    <p>Weekly spelling practice for Max and Emmie. Audio playback, revision mix mode, and progress tracking.</p>
+    <div class="card-domain">hadley-spelling-test.surge.sh</div>
+  </a>
+
+  <a class="card" href="https://hadley-meals.surge.sh" target="_blank">
+    <div class="card-icon" style="background:#f0fdf4;">&#x1F371;</div>
+    <h2>Meal Plan <span class="badge badge-active">Active</span></h2>
+    <p>This week's family meal plan with cook times, servings, and links to recipe cards.</p>
+    <div class="card-domain">hadley-meals.surge.sh</div>
+  </a>
+
+  <a class="card" href="https://hadley-recipes.surge.sh" target="_blank">
+    <div class="card-icon" style="background:#fef9c3;">&#x1F373;</div>
+    <h2>Recipe Cards <span class="badge badge-active">Active</span></h2>
+    <p>Kitchen-friendly recipe pages with ingredients, step-by-step instructions, macros, and family ratings.</p>
+    <div class="card-domain">hadley-recipes.surge.sh</div>
+  </a>
+
+  <a class="card" href="https://hadley-shop.surge.sh" target="_blank">
+    <div class="card-icon" style="background:#ecfeff;">&#x1F6D2;</div>
+    <h2>Shopping List</h2>
+    <p>Weekly shopping list generated from the meal plan. Categorised with progress tracking.</p>
+    <div class="card-domain">hadley-shop.surge.sh</div>
+  </a>
+
+</div>
+
+<div class="section-label">Hadley Bricks</div>
+<div class="grid">
+
+  <a class="card" href="https://hadley-bricks-inventory-management.vercel.app/pick/ebay" target="_blank">
+    <div class="card-icon" style="background:#fefce8;">&#x1F4E6;</div>
+    <h2>eBay Pick List <span class="badge badge-bricks">Bricks</span></h2>
+    <p>Picking list for pending eBay orders. Grouped by location with order details and item photos.</p>
+    <div class="card-domain">vercel &middot; /pick/ebay</div>
+  </a>
+
+  <a class="card" href="https://hadley-bricks-inventory-management.vercel.app/pick/amazon" target="_blank">
+    <div class="card-icon" style="background:#fff7ed;">&#x1F4E6;</div>
+    <h2>Amazon Pick List <span class="badge badge-bricks">Bricks</span></h2>
+    <p>Picking list for pending Amazon orders. Grouped by location with dispatch deadlines.</p>
+    <div class="card-domain">vercel &middot; /pick/amazon</div>
+  </a>
+
+</div>
+
+<div class="section-label">Travel</div>
+<div class="grid">
+
+  <a class="card" href="https://hadley-japan-2026.surge.sh" target="_blank">
+    <div class="card-icon" style="background:#fff1f2;">&#x1F1EF;&#x1F1F5;</div>
+    <h2>Japan 2026 <span class="badge badge-travel">Travel</span></h2>
+    <p>Interactive guides for the Japan trip — activities, food, and itinerary across multiple sections.</p>
+    <div class="card-domain">hadley-japan-2026.surge.sh</div>
+  </a>
+
+</div>
+
+<div class="footer">
+  Hadley Hub &mdash; auto-managed by Peter
+</div>
+
+</body>
+</html>

@@ -95,6 +95,9 @@ instagram/
 # Voice assistant (separate project)
 peter-voice/
 
+# Voice models (large binary files)
+models/voice/
+
 # One-off scripts not part of core bot
 scripts/backfill_exit_dates.*
 scripts/categorise_groceries.py
@@ -107,3 +110,4 @@ scripts/run_backfill.ps1
 scripts/scrape_vercel_usage.py
 scripts/split_batches.ps1
 scripts/sql_batches/
+secrets/
