@@ -465,36 +465,40 @@ let academicYear = '2025-26';
 let lastWrongWords = [];
 let bonusLabel = 'Bonus Revision';
 
-// Browser Speech Synthesis TTS (no API key needed)
-let ttsVoice = null;
+// Google Cloud TTS
+const TTS_API_KEY = 'AIzaSyD4oaBljE-DXeeYioZVoFhHxeAZqfo3wnA';
+const TTS_VOICE = 'en-GB-Wavenet-A';  // British female Wavenet voice
+const audioCache = {};  // word -> { normal: Audio, slow: Audio }
 
-function initVoice() {
-  if (ttsVoice) return;
-  const voices = speechSynthesis.getVoices();
-  // Prefer a British English female voice
-  ttsVoice = voices.find(v => v.lang === 'en-GB' && v.name.includes('Female'))
-    || voices.find(v => v.lang === 'en-GB')
-    || voices.find(v => v.lang.startsWith('en'))
-    || voices[0];
+async function fetchTTSAudio(word, speakingRate) {
+  const resp = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${TTS_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      input: { text: word },
+      voice: { languageCode: 'en-GB', name: TTS_VOICE },
+      audioConfig: { audioEncoding: 'MP3', speakingRate }
+    })
+  });
+  const data = await resp.json();
+  if (!data.audioContent) throw new Error('No audio returned');
+  const audio = new Audio('data:audio/mp3;base64,' + data.audioContent);
+  return audio;
 }
 
-// Ensure voices are loaded (some browsers load async)
-speechSynthesis.onvoiceschanged = initVoice;
-initVoice();
-
-function speakWithSynthesis(word, rate, onEnd) {
-  const utter = new SpeechSynthesisUtterance(word);
-  utter.lang = 'en-GB';
-  utter.rate = rate;
-  if (ttsVoice) utter.voice = ttsVoice;
-  if (onEnd) utter.onend = onEnd;
-  utter.onerror = onEnd;
-  speechSynthesis.speak(utter);
-}
-
-async function prefetchAudio() {
-  // No prefetch needed for browser SpeechSynthesis
-  initVoice();
+async function prefetchAudio(words) {
+  const unique = [...new Set(words.map(w => w.toLowerCase()))];
+  await Promise.all(unique.map(async (word) => {
+    try {
+      const [normal, slow] = await Promise.all([
+        fetchTTSAudio(word, 0.85),
+        fetchTTSAudio(word, 0.7),
+      ]);
+      audioCache[word] = { normal, slow };
+    } catch (e) {
+      console.warn('TTS fetch failed for', word, e);
+    }
+  }));
 }
 
 // Parse words — handles both JSON string and native array
@@ -851,17 +855,31 @@ function focusNext(currentIdx) {
 
 function speakWord(btn) {
   const word = btn.getAttribute('data-word').toLowerCase();
-  btn.classList.add('playing');
-  initVoice();
+  const cached = audioCache[word];
 
-  // Speak at normal speed, then slowly after a pause
-  speakWithSynthesis(word, 0.85, () => {
-    setTimeout(() => {
-      speakWithSynthesis(word, 0.7, () => {
-        btn.classList.remove('playing');
-      });
-    }, 400);
-  });
+  btn.classList.add('playing');
+
+  if (cached) {
+    // Play from pre-cached Google TTS audio
+    const normal = cached.normal.cloneNode();
+    const slow = cached.slow.cloneNode();
+    normal.onended = () => {
+      setTimeout(() => {
+        slow.onended = () => btn.classList.remove('playing');
+        slow.onerror = () => btn.classList.remove('playing');
+        slow.play();
+      }, 400);
+    };
+    normal.onerror = () => btn.classList.remove('playing');
+    normal.play();
+  } else {
+    // Fallback: fetch on demand if not cached
+    fetchTTSAudio(word, 0.85).then(audio => {
+      audio.onended = () => btn.classList.remove('playing');
+      audio.onerror = () => btn.classList.remove('playing');
+      audio.play();
+    }).catch(() => btn.classList.remove('playing'));
+  }
 }
 
 function updateTimer() {
