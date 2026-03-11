@@ -22,6 +22,7 @@ from config import (
 )
 from logger import logger
 from domains.api_usage.services.anthropic_scraper import get_anthropic_usage as scrape_anthropic
+from domains.api_usage.services.gcp_monitoring import get_gcp_cost_summary
 
 # Claude Code OAuth credentials path
 CLAUDE_CODE_CREDS = Path.home() / ".claude" / ".credentials.json"
@@ -273,7 +274,7 @@ def _log_balance(log_file: Path, service: str, balance: float | None):
         logger.warning(f"Failed to log balance: {e}")
 
 
-def _format_message(claude_data: dict, grok_data: dict, kimi_data: dict, max_data: dict) -> str:
+def _format_message(claude_data: dict, grok_data: dict, kimi_data: dict, max_data: dict, gcp_data: dict = None) -> str:
     """Format the Discord message with all platform data."""
     lines = ["**AI Platform Summary**", ""]
 
@@ -336,6 +337,25 @@ def _format_message(claude_data: dict, grok_data: dict, kimi_data: dict, max_dat
     else:
         lines.append(f"\U0001f319 **Kimi:** {kimi_data.get('error', 'unavailable')}")
 
+    # GCP / Google Cloud
+    if gcp_data and gcp_data.get("configured") and not gcp_data.get("error"):
+        mtd = gcp_data.get("month_to_date", {})
+        hour = gcp_data.get("past_hour", {})
+        projected = gcp_data.get("projected_monthly_usd", 0)
+
+        mtd_cost = mtd.get("cost_usd", 0)
+        hour_cost = hour.get("cost_usd", 0)
+        hour_calls = hour.get("gemini_calls", 0)
+
+        emoji = "\u26a0\ufe0f" if projected > 20 else "\u2601\ufe0f"
+        proj_part = f" | proj ~${projected:.0f}/mo" if projected else ""
+        hour_part = f" | 1h: ${hour_cost:.3f} ({hour_calls} calls)" if hour_calls else ""
+        lines.append(f"{emoji} **GCP:** ${mtd_cost:.2f} MTD{proj_part}{hour_part}")
+    elif gcp_data and gcp_data.get("error"):
+        lines.append(f"\u2601\ufe0f **GCP:** {gcp_data['error']}")
+    elif gcp_data and not gcp_data.get("configured"):
+        lines.append("\u2601\ufe0f **GCP:** not configured")
+
     # Alerts
     alerts = []
     if five_hour and five_hour.get("utilization", 0) >= 80:
@@ -348,6 +368,8 @@ def _format_message(claude_data: dict, grok_data: dict, kimi_data: dict, max_dat
         alerts.append("\u26a0\ufe0f Grok credits low!")
     if kimi_balance is not None and kimi_balance < BALANCE_THRESHOLD:
         alerts.append("\u26a0\ufe0f Kimi credits low!")
+    if gcp_data and gcp_data.get("projected_monthly_usd", 0) > 20:
+        alerts.append(f"\u26a0\ufe0f GCP projected ${gcp_data['projected_monthly_usd']:.0f}/mo — review API usage!")
 
     if alerts:
         lines.append("")
@@ -371,11 +393,12 @@ async def balance_monitor(bot):
     try:
         # Fetch all platform data concurrently
         import asyncio
-        claude_data, grok_data, kimi_data, max_data = await asyncio.gather(
+        claude_data, grok_data, kimi_data, max_data, gcp_data = await asyncio.gather(
             _get_claude_data(),
             _get_grok_data(),
             _get_moonshot_data(),
             _get_max_usage(),
+            get_gcp_cost_summary(),
             return_exceptions=False
         )
 
@@ -384,7 +407,7 @@ async def balance_monitor(bot):
         _log_balance(MOONSHOT_BALANCE_LOG, "Moonshot", kimi_data.get("balance"))
 
         # Format and send
-        message = _format_message(claude_data, grok_data, kimi_data, max_data)
+        message = _format_message(claude_data, grok_data, kimi_data, max_data, gcp_data)
         await channel.send(message)
 
         logger.info(

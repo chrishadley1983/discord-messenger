@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spelling Test</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Fredoka', sans-serif;
+    background: linear-gradient(135deg, #e0f7fa 0%, #f3e5f5 50%, #fff9c4 100%);
+    min-height: 100vh;
+    padding: 20px;
+    color: #333;
+  }
+
+  .container {
+    max-width: 600px;
+    margin: 0 auto;
+  }
+
+  h1 {
+    text-align: center;
+    font-size: 2.2em;
+    color: #6a1b9a;
+    margin-bottom: 8px;
+  }
+
+  /* Setup screen */
+  .card {
+    background: white;
+    border-radius: 20px;
+    padding: 28px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    margin-bottom: 20px;
+  }
+
+  label {
+    display: block;
+    font-weight: 600;
+    font-size: 1.1em;
+    margin-bottom: 8px;
+    color: #4a148c;
+  }
+
+  select, .setup-input {
+    width: 100%;
+    padding: 14px 16px;
+    border: 3px solid #ce93d8;
+    border-radius: 14px;
+    font-family: 'Fredoka', sans-serif;
+    font-size: 1.1em;
+    margin-bottom: 18px;
+    outline: none;
+    transition: border-color 0.2s;
+    background: white;
+  }
+
+  select:focus, .setup-input:focus {
+    border-color: #7b1fa2;
+  }
+
+  .btn {
+    display: block;
+    width: 100%;
+    padding: 16px;
+    border: none;
+    border-radius: 14px;
+    font-family: 'Fredoka', sans-serif;
+    font-size: 1.2em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.15); }
+  .btn:active { transform: translateY(0); }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #7b1fa2, #ab47bc);
+    color: white;
+  }
+
+  .btn-success {
+    background: linear-gradient(135deg, #2e7d32, #66bb6a);
+    color: white;
+  }
+
+  .btn-retry {
+    background: linear-gradient(135deg, #e65100, #ff9800);
+    color: white;
+    margin-top: 12px;
+  }
+
+  .btn-back {
+    background: linear-gradient(135deg, #546e7a, #90a4ae);
+    color: white;
+    margin-top: 12px;
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  /* Test screen */
+  .word-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+    min-height: 52px;
+  }
+
+  .word-num {
+    font-weight: 700;
+    font-size: 1.3em;
+    color: #7b1fa2;
+    width: 32px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .listen-btn {
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    border-radius: 50%;
+    border: 3px solid #ce93d8;
+    background: white;
+    cursor: pointer;
+    font-size: 1.4em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .listen-btn:hover {
+    background: #f3e5f5;
+    border-color: #7b1fa2;
+    transform: scale(1.1);
+  }
+
+  .listen-btn.playing {
+    background: #7b1fa2;
+    border-color: #7b1fa2;
+    animation: pulse 0.8s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+  }
+
+  .word-input {
+    flex: 1;
+    min-width: 0;
+    height: 48px;
+    padding: 0 14px;
+    border: 3px solid #e0e0e0;
+    border-radius: 14px;
+    font-family: 'Fredoka', sans-serif;
+    font-size: 1.1em;
+    outline: none;
+    transition: border-color 0.2s;
+    margin: 0;
+  }
+
+  .word-input:focus {
+    border-color: #7b1fa2;
+  }
+
+  .word-input.correct {
+    border-color: #4caf50;
+    background: #e8f5e9;
+  }
+
+  .word-input.wrong {
+    border-color: #f44336;
+    background: #ffebee;
+  }
+
+  .hint-btn {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    border-radius: 50%;
+    border: 2px solid #e0e0e0;
+    background: white;
+    cursor: pointer;
+    font-size: 1em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+    color: #999;
+  }
+
+  .hint-btn:hover {
+    border-color: #ce93d8;
+    color: #7b1fa2;
+    background: #faf5ff;
+  }
+
+  .hint-btn.used {
+    border-color: #ce93d8;
+    color: #7b1fa2;
+  }
+
+  .sentence-row {
+    margin-top: -6px;
+    margin-bottom: 12px;
+    margin-left: 96px;
+    margin-right: 48px;
+    padding: 8px 12px;
+    background: #faf5ff;
+    border-radius: 10px;
+    font-size: 0.88em;
+    color: #6a1b9a;
+    line-height: 1.5;
+    animation: fadeIn 0.2s;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .sentence-row .blank {
+    display: inline-block;
+    min-width: 60px;
+    border-bottom: 2px dashed #ab47bc;
+    text-align: center;
+    font-weight: 600;
+  }
+
+  .correction {
+    font-size: 0.9em;
+    color: #f44336;
+    font-weight: 600;
+    margin-top: -8px;
+    margin-bottom: 10px;
+    margin-left: 96px;
+  }
+
+  .section-label {
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #ab47bc;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 20px;
+    margin-bottom: 10px;
+    padding-top: 16px;
+    border-top: 2px dashed #e0e0e0;
+  }
+
+  .section-label:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+  }
+
+  /* Results */
+  .score-display {
+    text-align: center;
+    padding: 20px;
+  }
+
+  .score-big {
+    font-size: 4em;
+    font-weight: 700;
+    color: #6a1b9a;
+  }
+
+  .score-label {
+    font-size: 1.3em;
+    color: #666;
+    margin-top: 4px;
+  }
+
+  .score-emoji {
+    font-size: 3em;
+    margin-top: 8px;
+  }
+
+  .timer {
+    text-align: center;
+    font-size: 1.1em;
+    color: #999;
+    margin-bottom: 16px;
+  }
+
+  /* Progress bar */
+  .progress-bar {
+    height: 8px;
+    background: #e0e0e0;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #7b1fa2, #ab47bc);
+    border-radius: 4px;
+    transition: width 0.3s;
+  }
+
+  /* History */
+  .history-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 6px;
+  }
+
+  .history-table th {
+    text-align: left;
+    padding: 8px 12px;
+    color: #7b1fa2;
+    font-size: 0.9em;
+  }
+
+  .history-table td {
+    padding: 10px 12px;
+    background: #f5f5f5;
+    font-size: 0.95em;
+  }
+
+  .history-table tr td:first-child { border-radius: 10px 0 0 10px; }
+  .history-table tr td:last-child { border-radius: 0 10px 10px 0; }
+
+  .mode-toggle {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+
+  .mode-btn {
+    flex: 1;
+    padding: 12px;
+    border: 3px solid #ce93d8;
+    border-radius: 14px;
+    background: white;
+    font-family: 'Fredoka', sans-serif;
+    font-size: 1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #7b1fa2;
+  }
+
+  .mode-btn.active {
+    background: #7b1fa2;
+    color: white;
+    border-color: #7b1fa2;
+  }
+
+  .swap-note {
+    text-align: center;
+    font-size: 0.85em;
+    color: #999;
+    margin-top: -10px;
+    margin-bottom: 14px;
+  }
+
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Spelling Test</h1>
+
+  <!-- SETUP SCREEN -->
+  <div id="setup-screen">
+    <div class="card">
+      <label for="child-select">Who's doing the test?</label>
+      <select id="child-select">
+        <option value="">Pick your name...</option>
+        <option value="Max">Max</option>
+        <option value="Emmie">Emmie</option>
+      </select>
+
+      <div id="week-info" class="hidden">
+        <label>Whose spellings?</label>
+        <select id="spelling-owner">
+          <option value="Max">Max's spellings</option>
+          <option value="Emmie">Emmie's spellings</option>
+        </select>
+        <p class="swap-note">You can practise each other's words too!</p>
+
+        <label>What do you want to practise?</label>
+        <div class="mode-toggle">
+          <button class="mode-btn active" data-mode="current" onclick="setMode('current')">This Week</button>
+          <button class="mode-btn" data-mode="revision" onclick="setMode('revision')">Revision Mix</button>
+        </div>
+        <p id="week-label" style="text-align:center; color:#999; margin-bottom:18px;"></p>
+      </div>
+
+      <button class="btn btn-primary" id="start-btn" disabled onclick="startTest()">
+        Let's Go!
+      </button>
+    </div>
+
+    <div id="history-section" class="card hidden">
+      <label>Recent Results</label>
+      <div id="history-content"></div>
+    </div>
+  </div>
+
+  <!-- TEST SCREEN -->
+  <div id="test-screen" class="hidden">
+    <div class="card">
+      <div class="timer" id="timer">0:00</div>
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      <div id="words-container"></div>
+      <button class="btn btn-success" id="check-btn" onclick="checkAnswers()">
+        Check My Answers
+      </button>
+    </div>
+  </div>
+
+  <!-- RESULTS SCREEN -->
+  <div id="results-screen" class="hidden">
+    <div class="card">
+      <div class="score-display">
+        <div class="score-big" id="score-text"></div>
+        <div class="score-label" id="score-label"></div>
+        <div class="score-emoji" id="score-emoji"></div>
+      </div>
+      <div class="timer" id="time-taken"></div>
+      <div id="results-detail"></div>
+      <button class="btn btn-retry hidden" id="retry-btn" onclick="retryWrong()">
+        Try Wrong Words Again
+      </button>
+      <button class="btn btn-back" onclick="backToStart()">
+        Back to Start
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://modjoikyuhqzouxvieua.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1vZGpvaWt5dWhxem91eHZpZXVhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYxNDE3MjksImV4cCI6MjA4MTcxNzcyOX0.EWGr0LOwFKFw3krrzZQZP_Gcew13s1Z9H3LxB0-JmPA';
+
+let currentChild = '';
+let spellingOwner = '';
+let currentMode = 'current';
+let testWords = [];
+let currentWeekWords = [];   // track which are this-week vs bonus
+let bonusWords = [];
+let timerInterval = null;
+let startTime = null;
+let weekNumber = null;
+let academicYear = '2025-26';
+let lastWrongWords = [];
+let bonusLabel = 'Bonus Revision';
+
+// Google Cloud TTS
+const TTS_API_KEY = 'AIzaSyD4oaBljE-DXeeYioZVoFhHxeAZqfo3wnA';
+const TTS_VOICE = 'en-GB-Wavenet-A';  // British female Wavenet voice
+const audioCache = {};  // word -> { normal: Audio, slow: Audio }
+
+async function fetchTTSAudio(word, speakingRate) {
+  const resp = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${TTS_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      input: { text: word },
+      voice: { languageCode: 'en-GB', name: TTS_VOICE },
+      audioConfig: { audioEncoding: 'MP3', speakingRate }
+    })
+  });
+  const data = await resp.json();
+  if (!data.audioContent) throw new Error('No audio returned');
+  const audio = new Audio('data:audio/mp3;base64,' + data.audioContent);
+  return audio;
+}
+
+async function prefetchAudio(words) {
+  const unique = [...new Set(words.map(w => w.toLowerCase()))];
+  await Promise.all(unique.map(async (word) => {
+    try {
+      const [normal, slow] = await Promise.all([
+        fetchTTSAudio(word, 0.85),
+        fetchTTSAudio(word, 0.7),
+      ]);
+      audioCache[word] = { normal, slow };
+    } catch (e) {
+      console.warn('TTS fetch failed for', word, e);
+    }
+  }));
+}
+
+// Parse words — handles both JSON string and native array
+function parseWords(w) {
+  if (Array.isArray(w)) return w;
+  try { return JSON.parse(w); } catch { return []; }
+}
+
+// Supabase REST helper
+async function sbFetch(table, params = '') {
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+  });
+  return resp.json();
+}
+
+async function sbInsert(table, data) {
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    },
+    body: JSON.stringify(data)
+  });
+  return resp.json();
+}
+
+// Calculate current teaching week — must match data_fetchers.py logic exactly
+function getCurrentWeek() {
+  // Term dates for 2025-26 academic year (from data_fetchers.py)
+  const TERM_DATES = [
+    [new Date(2025, 8, 4),  new Date(2025, 9, 24)],  // Autumn 1
+    [new Date(2025, 10, 3), new Date(2025, 11, 19)],  // Autumn 2
+    [new Date(2026, 0, 5),  new Date(2026, 1, 13)],   // Spring 1
+    [new Date(2026, 1, 23), new Date(2026, 2, 27)],   // Spring 2
+    [new Date(2026, 3, 13), new Date(2026, 4, 22)],   // Summer 1
+    [new Date(2026, 5, 1),  new Date(2026, 6, 22)],   // Summer 2
+  ];
+  const SPELLING_WEEK_OFFSET = -3;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  let teachingWeek = 0;
+
+  for (const [termStart, termEnd] of TERM_DATES) {
+    // Find first Monday on or after term start
+    let monday = new Date(termStart);
+    const dayOfWeek = monday.getDay();
+    if (dayOfWeek !== 1) {
+      monday.setDate(monday.getDate() + (7 - dayOfWeek + 1) % 7);
+    }
+
+    const endDate = today < termEnd ? today : termEnd;
+    while (monday <= endDate) {
+      teachingWeek++;
+      monday.setDate(monday.getDate() + 7);
+    }
+
+    if (today <= termEnd) break;
+  }
+
+  return Math.max(1, Math.min(36, teachingWeek + SPELLING_WEEK_OFFSET));
+}
+
+// Child selection
+document.getElementById('child-select').addEventListener('change', async function() {
+  currentChild = this.value;
+  const weekInfo = document.getElementById('week-info');
+  const startBtn = document.getElementById('start-btn');
+  const historySection = document.getElementById('history-section');
+
+  if (!currentChild) {
+    weekInfo.classList.add('hidden');
+    startBtn.disabled = true;
+    historySection.classList.add('hidden');
+    return;
+  }
+
+  // Default spelling owner to the child taking the test
+  document.getElementById('spelling-owner').value = currentChild;
+  spellingOwner = currentChild;
+
+  weekInfo.classList.remove('hidden');
+  startBtn.disabled = false;
+  weekNumber = getCurrentWeek();
+  updateWeekLabel();
+  loadHistory();
+});
+
+document.getElementById('spelling-owner').addEventListener('change', function() {
+  spellingOwner = this.value;
+});
+
+function setMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  updateWeekLabel();
+}
+
+function updateWeekLabel() {
+  const label = document.getElementById('week-label');
+  if (currentMode === 'current') {
+    label.textContent = `Week ${weekNumber} spellings + 5 bonus revision words`;
+  } else {
+    label.textContent = `10 random words from the last month`;
+  }
+}
+
+async function loadHistory() {
+  const data = await sbFetch('spelling_test_results',
+    `child_name=eq.${currentChild}&order=created_at.desc&limit=5`);
+
+  const section = document.getElementById('history-section');
+  const content = document.getElementById('history-content');
+
+  if (!data.length) {
+    section.classList.add('hidden');
+    return;
+  }
+
+  section.classList.remove('hidden');
+  content.innerHTML = `<table class="history-table">
+    <tr><th>Date</th><th>Type</th><th>Score</th><th>Time</th></tr>
+    ${data.map(r => {
+      const date = new Date(r.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+      const mins = Math.floor((r.time_seconds || 0) / 60);
+      const secs = (r.time_seconds || 0) % 60;
+      return `<tr>
+        <td>${date}</td>
+        <td>${r.week_number === 0 ? 'Revision' : 'Wk ' + r.week_number}</td>
+        <td>${r.score}/${r.total}</td>
+        <td>${mins}:${String(secs).padStart(2,'0')}</td>
+      </tr>`;
+    }).join('')}
+  </table>`;
+}
+
+// Start the test
+async function startTest() {
+  document.getElementById('start-btn').disabled = true;
+  document.getElementById('start-btn').textContent = 'Loading...';
+
+  bonusLabel = 'Bonus Revision';
+  const owner = spellingOwner || currentChild;
+
+  if (currentMode === 'current') {
+    // Current week spellings + 5 bonus from prior weeks
+    const [currentData, priorData] = await Promise.all([
+      sbFetch('school_spellings',
+        `child_name=eq.${owner}&academic_year=eq.${academicYear}&week_number=eq.${weekNumber}&select=words`),
+      sbFetch('school_spellings',
+        `child_name=eq.${owner}&academic_year=eq.${academicYear}&week_number=lt.${weekNumber}&week_number=gte.${Math.max(1, weekNumber - 4)}&select=words`),
+    ]);
+
+    if (!currentData.length) {
+      alert(`No spellings found for ${owner} in week ${weekNumber}. Try Revision Mix instead!`);
+      document.getElementById('start-btn').disabled = false;
+      document.getElementById('start-btn').textContent = "Let's Go!";
+      return;
+    }
+
+    currentWeekWords = shuffle(parseWords(currentData[0].words));
+
+    // Collect prior words, excluding any that appear in current week
+    let priorPool = [];
+    priorData.forEach(s => {
+      priorPool = priorPool.concat(parseWords(s.words));
+    });
+    const currentSet = new Set(currentWeekWords.map(w => w.toLowerCase()));
+    priorPool = [...new Set(priorPool)].filter(w => !currentSet.has(w.toLowerCase()));
+
+    // If no prior words available, grab 5 from Emmie's current week as a challenge
+    if (priorPool.length === 0 && owner !== 'Emmie') {
+      const emmieData = await sbFetch('school_spellings',
+        `child_name=eq.Emmie&academic_year=eq.${academicYear}&week_number=eq.${weekNumber}&select=words`);
+      if (emmieData.length) {
+        const emmieWords = parseWords(emmieData[0].words);
+        priorPool = emmieWords.filter(w => !currentSet.has(w.toLowerCase()));
+        bonusLabel = 'Challenge Round';
+      }
+    }
+
+    bonusWords = shuffle(priorPool).slice(0, 5);
+    testWords = [...currentWeekWords, ...bonusWords];
+    await Promise.all([loadSentences(testWords), prefetchAudio(testWords)]);
+
+  } else {
+    // Revision: 10 random from last month
+    const minWeek = Math.max(1, weekNumber - 4);
+    const allData = await sbFetch('school_spellings',
+      `child_name=eq.${owner}&academic_year=eq.${academicYear}&week_number=gte.${minWeek}&week_number=lte.${weekNumber}&select=words`);
+
+    if (!allData.length) {
+      alert(`No spellings found for ${owner}. Try adding some first!`);
+      document.getElementById('start-btn').disabled = false;
+      document.getElementById('start-btn').textContent = "Let's Go!";
+      return;
+    }
+
+    let allWords = [];
+    allData.forEach(s => { allWords = allWords.concat(parseWords(s.words)); });
+    allWords = [...new Set(allWords)];
+    testWords = shuffle(allWords).slice(0, 10);
+    currentWeekWords = [];
+    bonusWords = testWords;
+    await Promise.all([loadSentences(testWords), prefetchAudio(testWords)]);
+  }
+
+  showTestScreen();
+}
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function showTestScreen() {
+  document.getElementById('setup-screen').classList.add('hidden');
+  document.getElementById('results-screen').classList.add('hidden');
+  document.getElementById('test-screen').classList.remove('hidden');
+
+  const container = document.getElementById('words-container');
+  container.innerHTML = '';
+
+  let wordIdx = 0;
+
+  // This Week section
+  if (currentWeekWords.length > 0) {
+    const lbl = document.createElement('div');
+    lbl.className = 'section-label';
+    lbl.textContent = `This Week (${currentWeekWords.length} words)`;
+    container.appendChild(lbl);
+
+    currentWeekWords.forEach(word => {
+      container.appendChild(createWordRow(word, wordIdx));
+      wordIdx++;
+    });
+  }
+
+  // Bonus / Revision section
+  if (bonusWords.length > 0) {
+    const lbl = document.createElement('div');
+    lbl.className = 'section-label';
+    lbl.textContent = currentMode === 'current'
+      ? `${bonusLabel} (${bonusWords.length} words)`
+      : `Revision Mix (${bonusWords.length} words)`;
+    container.appendChild(lbl);
+
+    bonusWords.forEach(word => {
+      container.appendChild(createWordRow(word, wordIdx));
+      wordIdx++;
+    });
+  }
+
+  updateProgress();
+
+  startTime = Date.now();
+  timerInterval = setInterval(updateTimer, 1000);
+
+  document.getElementById('answer-0').focus();
+
+  container.querySelectorAll('.word-input').forEach(input => {
+    input.addEventListener('input', updateProgress);
+  });
+
+  document.getElementById('check-btn').textContent = 'Check My Answers';
+  document.getElementById('check-btn').disabled = false;
+}
+
+function createWordRow(word, idx) {
+  const wrapper = document.createElement('div');
+
+  const row = document.createElement('div');
+  row.className = 'word-row';
+  row.innerHTML = `
+    <span class="word-num">${idx + 1}</span>
+    <button class="listen-btn" data-word="${word.replace(/"/g, '&quot;')}" onclick="speakWord(this)" title="Listen">
+      🔊
+    </button>
+    <input type="text" class="word-input" id="answer-${idx}"
+           placeholder="Type what you hear..."
+           autocomplete="off" autocapitalize="off" spellcheck="false"
+           onkeydown="if(event.key==='Enter'){focusNext(${idx})}">
+    <button class="hint-btn" data-word="${word.replace(/"/g, '&quot;')}" data-idx="${idx}" onclick="toggleHint(this)" title="Hint: use in a sentence">
+      ?
+    </button>
+  `;
+  wrapper.appendChild(row);
+  return wrapper;
+}
+
+function toggleHint(btn) {
+  const word = btn.getAttribute('data-word');
+  const existing = btn.parentElement.parentElement.querySelector('.sentence-row');
+
+  if (existing) {
+    existing.remove();
+    btn.classList.remove('used');
+    return;
+  }
+
+  btn.classList.add('used');
+  const sentence = getSentence(word);
+  const blanked = sentence.replace(new RegExp(word, 'gi'), '<span class="blank">____</span>');
+
+  const div = document.createElement('div');
+  div.className = 'sentence-row';
+  div.innerHTML = blanked;
+  btn.parentElement.parentElement.appendChild(div);
+}
+
+// Sentence bank — loaded from Supabase at test start
+let sentenceBank = {};
+
+async function loadSentences(words) {
+  // Fetch sentences for all test words in one call
+  const wordList = words.map(w => w.toLowerCase());
+  const filter = wordList.map(w => `"${w}"`).join(',');
+  const data = await sbFetch('spelling_sentences', `word=in.(${filter})&select=word,sentence`);
+  sentenceBank = {};
+  if (Array.isArray(data)) {
+    data.forEach(row => { sentenceBank[row.word] = row.sentence; });
+  }
+}
+
+const SENTENCE_BANK = {};
+
+function getSentence(word) {
+  const lower = word.toLowerCase();
+  if (sentenceBank[lower]) return sentenceBank[lower];
+  if (SENTENCE_BANK[lower]) return SENTENCE_BANK[lower];
+
+  const starters = [
+    `Can you use the word ${word} in your writing?`,
+    `The teacher asked us to spell the word ${word}.`,
+    `I practised writing the word ${word} three times.`,
+    `Remember how to spell ${word} for the test.`,
+  ];
+  return starters[Math.floor(Math.random() * starters.length)];
+}
+
+function focusNext(currentIdx) {
+  const next = document.getElementById(`answer-${currentIdx + 1}`);
+  if (next) next.focus();
+  else document.getElementById('check-btn').focus();
+}
+
+function speakWord(btn) {
+  const word = btn.getAttribute('data-word').toLowerCase();
+  const cached = audioCache[word];
+
+  btn.classList.add('playing');
+
+  if (cached) {
+    // Play from pre-cached Google TTS audio
+    const normal = cached.normal.cloneNode();
+    const slow = cached.slow.cloneNode();
+    normal.onended = () => {
+      setTimeout(() => {
+        slow.onended = () => btn.classList.remove('playing');
+        slow.onerror = () => btn.classList.remove('playing');
+        slow.play();
+      }, 400);
+    };
+    normal.onerror = () => btn.classList.remove('playing');
+    normal.play();
+  } else {
+    // Fallback: fetch on demand if not cached
+    fetchTTSAudio(word, 0.85).then(audio => {
+      audio.onended = () => btn.classList.remove('playing');
+      audio.onerror = () => btn.classList.remove('playing');
+      audio.play();
+    }).catch(() => btn.classList.remove('playing'));
+  }
+}
+
+function updateTimer() {
+  const elapsed = Math.floor((Date.now() - startTime) / 1000);
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  document.getElementById('timer').textContent = `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
+function updateProgress() {
+  const filled = testWords.reduce((count, _, i) => {
+    const el = document.getElementById(`answer-${i}`);
+    return count + (el && el.value.trim() ? 1 : 0);
+  }, 0);
+  const pct = (filled / testWords.length) * 100;
+  document.getElementById('progress-fill').style.width = `${pct}%`;
+}
+
+async function checkAnswers() {
+  clearInterval(timerInterval);
+  const timeTaken = Math.floor((Date.now() - startTime) / 1000);
+
+  let score = 0;
+  const wrongWords = [];
+  const answers = {};
+
+  testWords.forEach((word, i) => {
+    const input = document.getElementById(`answer-${i}`);
+    const answer = input.value.trim().toLowerCase();
+    const correct = word.toLowerCase();
+    answers[word] = answer;
+
+    if (answer === correct) {
+      score++;
+      input.classList.add('correct');
+      input.disabled = true;
+    } else {
+      input.classList.add('wrong');
+      input.disabled = true;
+      wrongWords.push(word);
+
+      // Show correction below the row
+      const correction = document.createElement('div');
+      correction.className = 'correction';
+      correction.textContent = `Correct spelling: ${word}`;
+      input.closest('.word-row').after(correction);
+    }
+  });
+
+  lastWrongWords = [...wrongWords];
+
+  document.getElementById('check-btn').disabled = true;
+  document.getElementById('check-btn').textContent = `${score}/${testWords.length} — Saving...`;
+
+  // Disable listen buttons
+  document.querySelectorAll('.listen-btn').forEach(b => b.disabled = true);
+
+  // Save results
+  await sbInsert('spelling_test_results', {
+    child_name: currentChild,
+    academic_year: academicYear,
+    week_number: currentMode === 'current' ? weekNumber : 0,
+    score: score,
+    total: testWords.length,
+    wrong_words: wrongWords,
+    answers: answers,
+    time_seconds: timeTaken,
+  });
+
+  // Show results summary inline (stays on test screen until user clicks)
+  document.getElementById('check-btn').textContent = 'See Results';
+  document.getElementById('check-btn').disabled = false;
+  document.getElementById('check-btn').onclick = () => showResults(score, testWords.length, wrongWords, timeTaken);
+}
+
+function showResults(score, total, wrongWords, timeTaken) {
+  document.getElementById('test-screen').classList.add('hidden');
+  document.getElementById('results-screen').classList.remove('hidden');
+
+  const pct = Math.round((score / total) * 100);
+  document.getElementById('score-text').textContent = `${score}/${total}`;
+
+  const mins = Math.floor(timeTaken / 60);
+  const secs = timeTaken % 60;
+  document.getElementById('time-taken').textContent = `Time: ${mins}:${String(secs).padStart(2, '0')}`;
+
+  let emoji, label;
+  if (pct === 100) { emoji = '🌟🎉🌟'; label = 'Perfect! Amazing!'; }
+  else if (pct >= 80) { emoji = '⭐👏'; label = 'Brilliant work!'; }
+  else if (pct >= 60) { emoji = '👍😊'; label = 'Good effort!'; }
+  else if (pct >= 40) { emoji = '💪🙂'; label = 'Keep practising!'; }
+  else { emoji = '📚💪'; label = "Don't give up!"; }
+
+  document.getElementById('score-emoji').textContent = emoji;
+  document.getElementById('score-label').textContent = label;
+
+  const retryBtn = document.getElementById('retry-btn');
+  if (wrongWords.length > 0) {
+    retryBtn.classList.remove('hidden');
+    retryBtn.textContent = `Retry ${wrongWords.length} Wrong Word${wrongWords.length > 1 ? 's' : ''}`;
+
+    document.getElementById('results-detail').innerHTML = `<p style="text-align:center; color:#999; margin: 12px 0;">
+      Wrong: ${wrongWords.join(', ')}
+    </p>`;
+  } else {
+    retryBtn.classList.add('hidden');
+    document.getElementById('results-detail').innerHTML = '';
+  }
+}
+
+function retryWrong() {
+  if (!lastWrongWords.length) return;
+  currentWeekWords = [];
+  bonusWords = [...lastWrongWords];
+  testWords = [...lastWrongWords];
+  showTestScreen();
+}
+
+function backToStart() {
+  clearInterval(timerInterval);
+  document.getElementById('results-screen').classList.add('hidden');
+  document.getElementById('test-screen').classList.add('hidden');
+  document.getElementById('setup-screen').classList.remove('hidden');
+  document.getElementById('start-btn').disabled = false;
+  document.getElementById('start-btn').textContent = "Let's Go!";
+  loadHistory();
+}
+
+
+</script>
+</body>
+</html>

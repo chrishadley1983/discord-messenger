@@ -291,7 +291,23 @@ async def incremental_seed_import(bot=None):
         except Exception as e:
             logger.error(f"Failed to post seed summary to Discord: {e}")
 
-    return results
+    # Return dict for _tracked_job wrapper to interpret
+    validation_failures = [o for o in outcomes if not o.validated]
+    all_ok = len(validation_failures) == 0 and total_failed == 0
+    failure_summary = "; ".join(
+        f"{o.label}: {o.validate_error}" for o in validation_failures
+    ) if validation_failures else ""
+    if total_failed > 0:
+        failure_summary += f"; {total_failed} items failed to import"
+
+    return {
+        "Incremental Seed": (
+            all_ok,
+            f"{total_imported} imported, {total_skipped} skipped, "
+            f"{len(validation_failures)} adapters failed"
+            + (f" ({failure_summary})" if failure_summary else "")
+        )
+    }
 
 
 def register_incremental_seed(scheduler, bot=None):

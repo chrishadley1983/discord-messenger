@@ -28,17 +28,22 @@ class CalendarEventsAdapter(SeedAdapter):
         self.years_back = config.get("years_back", 5) if config else 5
 
     async def validate(self) -> tuple[bool, str]:
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.api_base}/calendar/today",
-                    timeout=5,
-                )
-                if response.status_code == 200:
-                    return True, ""
-                return False, f"Calendar API returned {response.status_code}"
-        except Exception as e:
-            return False, f"Cannot reach calendar API: {e}"
+        import asyncio
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(
+                        f"{self.api_base}/calendar/today",
+                        timeout=10,
+                    )
+                    if response.status_code == 200:
+                        return True, ""
+                    return False, f"Calendar API returned {response.status_code}"
+            except Exception as e:
+                if attempt < 2:
+                    await asyncio.sleep(5)
+                    continue
+                return False, f"Cannot reach calendar API after 3 attempts: {e}"
 
     async def fetch(self, limit: int = 5000) -> list[SeedItem]:
         """Fetch all calendar events from the last N years."""
