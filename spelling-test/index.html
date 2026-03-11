@@ -465,20 +465,15 @@ let academicYear = '2025-26';
 let lastWrongWords = [];
 let bonusLabel = 'Bonus Revision';
 
-// Google Cloud TTS
-const TTS_API_KEY = 'AIzaSyD4oaBljE-DXeeYioZVoFhHxeAZqfo3wnA';
-const TTS_VOICE = 'en-GB-Wavenet-A';  // British female Wavenet voice
+// Google Cloud TTS via Supabase Edge Function proxy (API key stored server-side)
+const TTS_PROXY_URL = `${SUPABASE_URL}/functions/v1/tts-proxy`;
 const audioCache = {};  // word -> { normal: Audio, slow: Audio }
 
 async function fetchTTSAudio(word, speakingRate) {
-  const resp = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${TTS_API_KEY}`, {
+  const resp = await fetch(TTS_PROXY_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      input: { text: word },
-      voice: { languageCode: 'en-GB', name: TTS_VOICE },
-      audioConfig: { audioEncoding: 'MP3', speakingRate }
-    })
+    body: JSON.stringify({ word, speakingRate })
   });
   const data = await resp.json();
   if (!data.audioContent) throw new Error('No audio returned');
