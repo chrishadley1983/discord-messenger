@@ -106,7 +106,7 @@ class PeterbotScheduler:
 
     # Job execution configuration
     JOB_TIMEOUT_SECONDS = 1200  # 20 minutes max per job
-    MAX_QUEUED_JOBS = 3  # Max jobs to queue when busy
+    MAX_QUEUED_JOBS = 10  # Max jobs to queue when busy
 
     def __init__(self, bot, scheduler: AsyncIOScheduler, peterbot_channel_id: int):
         """Initialize scheduler.

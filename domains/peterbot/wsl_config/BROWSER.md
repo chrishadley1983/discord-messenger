@@ -2,6 +2,25 @@
 
 You have a **Playwright browser** available via MCP. This uses Chromium in headless mode.
 
+## ⛔ ABSOLUTE RULE: Never Output Text During a Browser Flow
+
+**Once you have opened the browser, EVERY response MUST contain a tool call.**
+If you output plain text (e.g. "Please log in" or "I need your credentials"), the Claude process **immediately exits**, the browser **is destroyed**, and all progress is lost.
+
+**If you need Chris to intervene** (login, CAPTCHA, 2FA, approval):
+1. Send a Discord webhook via `Bash` (see "Login Pages" section below)
+2. `sleep 45-60` in the same Bash call
+3. `browser_snapshot` to check if the page progressed
+
+**This is the #1 cause of broken browser flows.** Never forget it.
+
+## ⛔ ABSOLUTE RULE: Always Use Playwright MCP Tools
+
+**NEVER try to connect to Chrome via CDP (port 9222), Chrome DevTools Protocol, or any other browser automation method.**
+Your browser is the Playwright MCP — use `browser_navigate`, `browser_click`, etc. directly.
+The Playwright browser window is visible on Chris's desktop via WSLg.
+Do NOT waste turns searching for running Chrome instances or trying to connect to existing browsers.
+
 ## Tool Names (DO NOT use ToolSearch — call directly)
 
 - `mcp__playwright__browser_navigate` — go to a URL

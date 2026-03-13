@@ -155,21 +155,21 @@ async def _post_summary(bot, title: str, results: dict):
 def register_school_sync(scheduler, bot=None):
     """Register school sync jobs with the scheduler.
 
-    - Daily at 7:00 AM UK: Gmail parser + Arbor monitor
+    - Daily at 7:03 AM UK: Gmail parser + Arbor monitor (staggered from 07:00 to avoid collision)
     - Weekly Saturday 6:00 AM UK: Newsletter + term dates + calendar sync
     """
     scheduler.add_job(
         school_daily_sync,
         'cron',
         hour=7,
-        minute=0,
+        minute=3,
         timezone="Europe/London",
         id="school_daily_sync",
         max_instances=1,
         coalesce=True,
         args=[bot],
     )
-    logger.info("Registered school daily sync (7:00 AM UK)")
+    logger.info("Registered school daily sync (7:03 AM UK)")
 
     scheduler.add_job(
         school_weekly_sync,

@@ -1598,50 +1598,54 @@ async def places_search(
         location = os.getenv("HOME_ADDRESS", "47 Correnden Road, TN10 3AU")
 
     try:
-        # First, geocode the location to get lat/lng
-        async with httpx.AsyncClient() as client:
-            geo_response = await client.get(
-                "https://maps.googleapis.com/maps/api/geocode/json",
-                params={"address": location, "key": api_key},
-                timeout=30
-            )
-            geo_data = geo_response.json()
-
-        lat_lng = None
-        if geo_data.get("status") == "OK" and geo_data.get("results"):
-            loc = geo_data["results"][0]["geometry"]["location"]
-            lat_lng = f"{loc['lat']},{loc['lng']}"
-
-        # Search for places
-        params = {
-            "query": query,
-            "key": api_key
+        # Use Places API (New) - Text Search
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": api_key,
+            "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.googleMapsUri,places.types,places.regularOpeningHours",
         }
-        if lat_lng:
-            params["location"] = lat_lng
-            params["radius"] = 10000  # 10km
+        body = {"textQuery": query}
+
+        # If location provided, geocode it for location bias
+        if location:
+            async with httpx.AsyncClient() as client:
+                geo_response = await client.get(
+                    "https://maps.googleapis.com/maps/api/geocode/json",
+                    params={"address": location, "key": api_key},
+                    timeout=30
+                )
+                geo_data = geo_response.json()
+            if geo_data.get("status") == "OK" and geo_data.get("results"):
+                loc = geo_data["results"][0]["geometry"]["location"]
+                body["locationBias"] = {
+                    "circle": {
+                        "center": {"latitude": loc["lat"], "longitude": loc["lng"]},
+                        "radius": 10000.0,
+                    }
+                }
 
         async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://maps.googleapis.com/maps/api/place/textsearch/json",
-                params=params,
-                timeout=30
+            response = await client.post(
+                "https://places.googleapis.com/v1/places:searchText",
+                headers=headers,
+                json=body,
+                timeout=30,
             )
             data = response.json()
 
-        if data.get("status") != "OK":
-            return {"error": f"Search failed: {data.get('status')}"}
+        if "error" in data:
+            return {"error": f"Search failed: {data['error'].get('message', data['error'].get('status', 'unknown'))}"}
 
         places = []
-        for place in data.get("results", [])[:10]:
+        for place in data.get("places", [])[:10]:
             places.append({
-                "place_id": place.get("place_id"),
-                "name": place.get("name"),
-                "address": place.get("formatted_address", ""),
+                "place_id": place.get("id"),
+                "name": place.get("displayName", {}).get("text", ""),
+                "address": place.get("formattedAddress", ""),
                 "rating": place.get("rating"),
-                "user_ratings_total": place.get("user_ratings_total"),
-                "open_now": place.get("opening_hours", {}).get("open_now"),
-                "types": place.get("types", [])[:3]
+                "user_ratings_total": place.get("userRatingCount"),
+                "google_maps_url": place.get("googleMapsUri"),
+                "types": place.get("types", [])[:3],
             })
 
         return {

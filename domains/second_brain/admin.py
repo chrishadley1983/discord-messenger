@@ -289,8 +289,7 @@ async def cmd_health() -> None:
         # Embedding stats
         stats = report.embedding_stats
         _safe_print("\n--- Embedding Pipeline (current session) ---")
-        _safe_print(f"  Edge function: {stats.get('edge_ok', 0)} ok / {stats.get('edge_fail', 0)} fail")
-        _safe_print(f"  HuggingFace:   {stats.get('hf_single_ok', 0)} ok / {stats.get('hf_single_fail', 0)} fail")
+        _safe_print(f"  HuggingFace: {stats.get('hf_single_ok', 0)} ok / {stats.get('hf_single_fail', 0)} fail")
         _safe_print(f"  Retries: {stats.get('retries', 0)} | Cache hits: {stats.get('cache_hits', 0)}")
 
         # Connection coverage

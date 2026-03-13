@@ -20,6 +20,10 @@ beautifulsoup4>=4.12.0
 # WhatsApp (optional - install later when needed)
 # twilio>=9.0.0
 
+# Google Cloud (monitoring, billing, BigQuery)
+google-cloud-monitoring>=2.20.0
+google-cloud-bigquery>=3.20.0
+
 # Browser automation (for Anthropic scraping)
 playwright>=1.40.0
 

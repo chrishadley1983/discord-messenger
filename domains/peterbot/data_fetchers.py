@@ -3508,6 +3508,29 @@ async def get_system_health_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
+async def get_pocket_money_weekly_data() -> dict[str, Any]:
+    """Fetch pocket money grid calculation from IHD dashboard.
+
+    Calls the /api/kids/pocket-money/calculate endpoint to get the
+    weekly grid summary with totals for each child.
+    """
+    import httpx
+
+    IHD_BASE = "http://192.168.0.110:3000"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{IHD_BASE}/api/kids/pocket-money/calculate")
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                logger.warning(f"Pocket money calculate returned {resp.status_code}")
+                return {"error": f"API returned {resp.status_code}"}
+    except Exception as e:
+        logger.error(f"Pocket money data fetch error: {e}")
+        return {"error": str(e)}
+
+
 # Map skill names to their data fetchers
 # Skills not in this dict use web search (news, etc.)
 SKILL_DATA_FETCHERS = {
@@ -3592,4 +3615,6 @@ SKILL_DATA_FETCHERS = {
     "practice-allocate": get_practice_allocate_data,
     # System health monitoring
     "system-health": get_system_health_data,
+    # Pocket money weekly
+    "pocket-money-weekly": get_pocket_money_weekly_data,
 }

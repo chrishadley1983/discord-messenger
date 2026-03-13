@@ -87,7 +87,7 @@ claude = ClaudeClient(
 )
 
 # Initialize scheduler
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(job_defaults={"misfire_grace_time": 60})
 
 # Message deduplication: track recently processed message IDs
 _processed_messages: dict[int, float] = {}  # message_id -> timestamp
@@ -355,6 +355,7 @@ async def on_ready():
         except Exception as e:
             logger.error(f"Reprocess pending failed: {e}")
 
+    reprocess_pending = _tracked_job("reprocess_pending", reprocess_pending)
     scheduler.add_job(
         reprocess_pending,
         IntervalTrigger(hours=6),
@@ -364,7 +365,7 @@ async def on_ready():
     )
     logger.info("Reprocess pending items registered (every 6h)")
 
-    # Second Brain health check — daily at 7am UK
+    # Second Brain health check — daily at 7:05am UK (staggered from 07:00 to avoid collision)
     ALERTS_CHANNEL_ID = 1466019126194606286
 
     async def daily_health_check():
@@ -382,19 +383,20 @@ async def on_ready():
         except Exception as e:
             logger.error(f"Daily health check failed: {e}")
 
+    daily_health_check = _tracked_job("daily_health_check", daily_health_check)
     scheduler.add_job(
         daily_health_check,
         'cron',
         hour=7,
-        minute=0,
+        minute=5,
         timezone="Europe/London",
         id="__daily_health_check",
         max_instances=1,
         coalesce=True,
     )
-    logger.info("Daily health check registered (7:00 AM UK)")
+    logger.info("Daily health check registered (7:05 AM UK)")
 
-    # Second Brain weekly digest — Sunday 9am UK
+    # Second Brain weekly digest — Sunday 9:04am UK (staggered to avoid Sunday collision)
     async def weekly_health_digest():
         """Post weekly health + content digest to #alerts."""
         try:
@@ -412,18 +414,19 @@ async def on_ready():
         except Exception as e:
             logger.error(f"Weekly health digest failed: {e}")
 
+    weekly_health_digest = _tracked_job("weekly_health_digest", weekly_health_digest)
     scheduler.add_job(
         weekly_health_digest,
         'cron',
         day_of_week='sun',
         hour=9,
-        minute=0,
+        minute=4,
         timezone="Europe/London",
         id="__weekly_health_digest",
         max_instances=1,
         coalesce=True,
     )
-    logger.info("Weekly health digest registered (Sunday 9:00 AM UK)")
+    logger.info("Weekly health digest registered (Sunday 9:04 AM UK)")
 
     logger.info(f"Bot ready - {len(registry.all_domains())} domains registered")
 
@@ -1213,9 +1216,12 @@ def _kill_orphaned_bots():
                 capture_output=True, text=True, timeout=10
             )
             if "RUNNING" in svc_result.stdout:
-                subprocess.run(["sc", "stop", "DiscordBot"], capture_output=True, timeout=10)
-                killed += 1
-                logger.warning("Stopped DiscordBot NSSM service (was running a duplicate bot)")
+                logger.error(
+                    "DiscordBot NSSM service is already running. "
+                    "Refusing to start a duplicate — exiting. "
+                    "Use 'nssm restart DiscordBot' to restart the service instead."
+                )
+                sys.exit(1)
         except Exception as e:
             logger.debug(f"Service check skipped: {e}")
     else:

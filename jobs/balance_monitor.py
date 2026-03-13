@@ -339,18 +339,41 @@ def _format_message(claude_data: dict, grok_data: dict, kimi_data: dict, max_dat
 
     # GCP / Google Cloud
     if gcp_data and gcp_data.get("configured") and not gcp_data.get("error"):
-        mtd = gcp_data.get("month_to_date", {})
-        hour = gcp_data.get("past_hour", {})
-        projected = gcp_data.get("projected_monthly_usd", 0)
+        source = gcp_data.get("source", "estimates")
 
-        mtd_cost = mtd.get("cost_usd", 0)
-        hour_cost = hour.get("cost_usd", 0)
-        hour_calls = hour.get("gemini_calls", 0)
+        if source == "bigquery":
+            # Real billing data from BigQuery
+            mtd = gcp_data.get("month_to_date", {})
+            mtd_gbp = mtd.get("cost_gbp", 0)
+            today_gbp = gcp_data.get("today_gbp", 0)
+            yesterday_gbp = gcp_data.get("yesterday_gbp", 0)
+            projected_gbp = gcp_data.get("projected_monthly_gbp", 0)
 
-        emoji = "\u26a0\ufe0f" if projected > 20 else "\u2601\ufe0f"
-        proj_part = f" | proj ~${projected:.0f}/mo" if projected else ""
-        hour_part = f" | 1h: ${hour_cost:.3f} ({hour_calls} calls)" if hour_calls else ""
-        lines.append(f"{emoji} **GCP:** ${mtd_cost:.2f} MTD{proj_part}{hour_part}")
+            emoji = "\u26a0\ufe0f" if gcp_data.get("alert") else "\u2601\ufe0f"
+            proj_part = f" | proj ~\u00a3{projected_gbp:.0f}/mo" if projected_gbp else ""
+            today_part = f" | Today: \u00a3{today_gbp:.2f}" if today_gbp else ""
+            yesterday_part = f" | Yesterday: \u00a3{yesterday_gbp:.2f}" if yesterday_gbp else ""
+            lines.append(f"{emoji} **GCP:** \u00a3{mtd_gbp:.2f} MTD{proj_part}{today_part}{yesterday_part}")
+
+            # Top services
+            svcs = mtd.get("service_breakdown", [])[:3]
+            if svcs:
+                svc_parts = [f"{s['service']}: \u00a3{s['cost_gbp']:.2f}" for s in svcs]
+                lines.append(f"   {', '.join(svc_parts)}")
+        else:
+            # Fallback: estimates from Cloud Monitoring
+            mtd = gcp_data.get("month_to_date", {})
+            hour = gcp_data.get("past_hour", {})
+            projected = gcp_data.get("projected_monthly_usd", 0)
+
+            mtd_cost = mtd.get("cost_usd", 0)
+            hour_cost = hour.get("cost_usd", 0)
+            hour_calls = hour.get("gemini_calls", 0)
+
+            emoji = "\u26a0\ufe0f" if projected > 20 else "\u2601\ufe0f"
+            proj_part = f" | proj ~${projected:.0f}/mo" if projected else ""
+            hour_part = f" | 1h: ${hour_cost:.3f} ({hour_calls} calls)" if hour_calls else ""
+            lines.append(f"{emoji} **GCP:** ~${mtd_cost:.2f} MTD (est){proj_part}{hour_part}")
     elif gcp_data and gcp_data.get("error"):
         lines.append(f"\u2601\ufe0f **GCP:** {gcp_data['error']}")
     elif gcp_data and not gcp_data.get("configured"):
@@ -368,7 +391,11 @@ def _format_message(claude_data: dict, grok_data: dict, kimi_data: dict, max_dat
         alerts.append("\u26a0\ufe0f Grok credits low!")
     if kimi_balance is not None and kimi_balance < BALANCE_THRESHOLD:
         alerts.append("\u26a0\ufe0f Kimi credits low!")
-    if gcp_data and gcp_data.get("projected_monthly_usd", 0) > 20:
+    if gcp_data and gcp_data.get("source") == "bigquery" and gcp_data.get("alert"):
+        yesterday_gbp = gcp_data.get("yesterday_gbp", 0)
+        threshold = gcp_data.get("alert_threshold_gbp", 3)
+        alerts.append(f"\u26a0\ufe0f GCP yesterday \u00a3{yesterday_gbp:.2f} exceeded \u00a3{threshold:.0f}/day threshold!")
+    elif gcp_data and gcp_data.get("projected_monthly_usd", 0) > 20:
         alerts.append(f"\u26a0\ufe0f GCP projected ${gcp_data['projected_monthly_usd']:.0f}/mo — review API usage!")
 
     if alerts:

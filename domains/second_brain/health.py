@@ -276,12 +276,9 @@ def _get_warnings(report: HealthReport) -> list[str]:
             )
 
     stats = report.embedding_stats
-    total_attempts = (
-        stats.get("edge_ok", 0) + stats.get("edge_fail", 0)
-        + stats.get("hf_single_ok", 0) + stats.get("hf_single_fail", 0)
-    )
+    total_attempts = stats.get("hf_single_ok", 0) + stats.get("hf_single_fail", 0)
     if total_attempts > 0:
-        fail_rate = (stats.get("edge_fail", 0) + stats.get("hf_single_fail", 0)) / total_attempts * 100
+        fail_rate = stats.get("hf_single_fail", 0) / total_attempts * 100
         if fail_rate > HEALTH_EMBED_FAIL_RATE:
             warnings.append(f":warning: Embedding failure rate {fail_rate:.0f}% (session)")
 
@@ -367,13 +364,9 @@ def format_weekly_discord(report: HealthReport, digest_data=None) -> str:
 
     # Embedding pipeline
     stats = report.embedding_stats
-    total_attempts = (
-        stats.get("edge_ok", 0) + stats.get("edge_fail", 0)
-        + stats.get("hf_single_ok", 0) + stats.get("hf_single_fail", 0)
-    )
+    total_attempts = stats.get("hf_single_ok", 0) + stats.get("hf_single_fail", 0)
     if total_attempts > 0:
         lines.append("**Embedding Pipeline** (since last restart)")
-        lines.append(f"Edge function: {stats.get('edge_ok', 0)} ok / {stats.get('edge_fail', 0)} fail")
         lines.append(f"HuggingFace: {stats.get('hf_single_ok', 0)} ok / {stats.get('hf_single_fail', 0)} fail")
         lines.append(f"Retries: {stats.get('retries', 0)} | Cache hits: {stats.get('cache_hits', 0)}")
         lines.append("")

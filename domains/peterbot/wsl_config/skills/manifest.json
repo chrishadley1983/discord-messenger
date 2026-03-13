@@ -716,6 +716,17 @@
     "description": "Morning football results \u2014 Premier League, Champions League, Dover Athletic",
     "channel": "#peterbot"
   },
+  "pocket-money-weekly": {
+    "triggers": [
+      "pocket money",
+      "pocket money update",
+      "kids pocket money"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Sunday pocket money calculation \u2014 present grid to Chris for approval, then credit balances",
+    "channel": "#peterbot"
+  },
   "practice-allocate": {
     "triggers": [
       "allocate practice",

@@ -152,6 +152,8 @@ Read `RECIPES.md` for full recipe search/save workflow, API endpoints, and meal 
 
 Read `BROWSER.md` before any browser interaction (bookings, forms, payments, Stripe, Amazon checkout, login flows).
 
+**⛔ CRITICAL:** Once the browser is open, NEVER output plain text — it kills the process and destroys the browser. If you need Chris to act (login, CAPTCHA, 2FA), use the webhook+sleep pattern from BROWSER.md. This is the #1 cause of failed browser flows.
+
 ### Live Data Routing
 
 Priority order:

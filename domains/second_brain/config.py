@@ -19,7 +19,7 @@ EMBEDDING_DIMENSIONS: Final[int] = 384  # gte-small produces 384-dim vectors
 EMBEDDING_TEXT_LIMIT: Final[int] = 8000  # Max chars before truncation
 EMBEDDING_SINGLE_TIMEOUT: Final[int] = 60  # Seconds for single embedding request
 EMBEDDING_BATCH_TIMEOUT: Final[int] = 120  # Seconds for batch embedding request
-EMBEDDING_MAX_RETRIES: Final[int] = 3  # Max retry attempts
+EMBEDDING_MAX_RETRIES: Final[int] = 5  # Max retry attempts (handles cold starts + rate limits)
 EMBEDDING_RETRY_BASE_DELAY: Final[float] = 2.0  # Base delay (seconds) for exponential backoff
 EMBEDDING_MAX_CONCURRENT: Final[int] = 5  # Max concurrent requests in sequential fallback
 

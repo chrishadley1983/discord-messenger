@@ -1,8 +1,7 @@
 """Embedding generation for Second Brain.
 
-Fallback chain:
-1. Supabase Edge Function (gte-small, deployed, zero external dependency)
-2. HuggingFace Inference API (requires HF_TOKEN env var)
+Primary: HuggingFace Inference API (gte-small via router.huggingface.co)
+Note: Supabase Edge Function was planned but never deployed — skipped entirely.
 
 Raises EmbeddingError on failure — callers decide how to handle.
 """
@@ -10,12 +9,12 @@ Raises EmbeddingError on failure — callers decide how to handle.
 import asyncio
 import hashlib
 import os
+import random
 import time
 from dataclasses import dataclass
 
 import httpx
 
-from config import SUPABASE_URL, SUPABASE_KEY
 from logger import logger
 from .config import (
     EMBEDDING_DIMENSIONS,
@@ -28,7 +27,7 @@ from .config import (
 )
 
 
-# HuggingFace Inference API (fallback)
+# HuggingFace Inference API (primary)
 HF_INFERENCE_URL = "https://router.huggingface.co/hf-inference/models/thenlper/gte-small/pipeline/feature-extraction"
 HF_TOKEN = os.getenv("HF_TOKEN")
 
@@ -63,8 +62,6 @@ class EmbeddingError(Exception):
 
 @dataclass
 class _EmbeddingStats:
-    edge_ok: int = 0
-    edge_fail: int = 0
     hf_single_ok: int = 0
     hf_batch_ok: int = 0
     hf_single_fail: int = 0
@@ -79,8 +76,6 @@ _stats = _EmbeddingStats()
 def get_embedding_stats() -> dict:
     """Return current embedding pipeline counters."""
     return {
-        "edge_ok": _stats.edge_ok,
-        "edge_fail": _stats.edge_fail,
         "hf_single_ok": _stats.hf_single_ok,
         "hf_batch_ok": _stats.hf_batch_ok,
         "hf_single_fail": _stats.hf_single_fail,
@@ -107,72 +102,14 @@ def reset_embedding_stats() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Supabase Edge Function (primary)
-# ---------------------------------------------------------------------------
-
-async def _embed_via_edge_function(text: str) -> list[float] | None:
-    """Generate embedding via Supabase Edge Function.
-
-    Returns None on failure (caller falls through to HuggingFace).
-    """
-    try:
-        client = _get_http_client()
-        response = await client.post(
-            f"{SUPABASE_URL}/functions/v1/embed",
-            headers={
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={"text": text},
-            timeout=30,
-        )
-        if response.status_code == 404:
-            logger.debug("Edge Function /embed not deployed")
-            return None
-        response.raise_for_status()
-        data = response.json()
-        embedding = data.get("embedding")
-        if embedding and len(embedding) == EMBEDDING_DIMENSIONS:
-            _stats.edge_ok += 1
-            return embedding
-        logger.warning(f"Edge Function returned unexpected shape: {len(embedding) if embedding else 'None'}")
-        return None
-    except Exception as e:
-        _stats.edge_fail += 1
-        logger.debug(f"Edge Function embedding failed: {e}")
-        return None
-
-
-async def _embed_batch_via_edge_function(texts: list[str]) -> list[list[float]] | None:
-    """Generate embeddings for batch via Edge Function (sequential, one at a time).
-
-    Edge Function doesn't support batch natively, so we run concurrent requests.
-    Returns None if any single embedding fails.
-    """
-    async def _one(text: str) -> list[float] | None:
-        async with _semaphore:
-            return await _embed_via_edge_function(text)
-
-    results = await asyncio.gather(*[_one(t) for t in texts])
-
-    # Check all succeeded
-    embeddings = []
-    for r in results:
-        if r is None:
-            return None  # Fall through to HuggingFace batch
-        embeddings.append(r)
-    return embeddings
-
-
-# ---------------------------------------------------------------------------
 # Core embedding functions
 # ---------------------------------------------------------------------------
 
 async def generate_embedding(text: str) -> list[float]:
     """Generate embedding for a single text.
 
-    Chain: Edge Function -> HuggingFace -> EmbeddingError.
-    Uses a 60-second TTL cache to avoid duplicate API calls.
+    Uses HuggingFace Inference API with retry/backoff.
+    60-second TTL cache avoids duplicate API calls.
 
     Raises:
         EmbeddingError: If all methods fail.
@@ -190,18 +127,12 @@ async def generate_embedding(text: str) -> list[float]:
         else:
             del _embedding_cache[cache_key]
 
-    # 1. Try Supabase Edge Function (primary)
-    embedding = await _embed_via_edge_function(text)
-    if embedding:
-        _cache_put(cache_key, embedding)
-        return embedding
-
-    # 2. Try HuggingFace (fallback)
+    # HuggingFace Inference API (primary — Edge Function not deployed)
     if HF_TOKEN:
         async with _semaphore:
             try:
                 data = await _hf_request_with_retry(
-                    payload={"inputs": text, "options": {"wait_for_model": True}},
+                    payload={"inputs": text},
                     timeout=EMBEDDING_SINGLE_TIMEOUT,
                     context=f"single ({len(text)} chars)",
                 )
@@ -213,17 +144,17 @@ async def generate_embedding(text: str) -> list[float]:
                         return vec
             except Exception as e:
                 _stats.hf_single_fail += 1
-                logger.warning(f"HuggingFace fallback failed: {e}")
+                logger.warning(f"HuggingFace embedding failed: {e}")
 
     raise EmbeddingError(
-        f"All embedding methods failed for text ({len(text)} chars): {text[:60]}..."
+        f"Embedding failed for text ({len(text)} chars): {text[:60]}..."
     )
 
 
 async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
     """Generate embeddings for multiple texts.
 
-    Chain: Edge Function (concurrent) -> HuggingFace batch -> concurrent singles.
+    Tries HuggingFace batch first, falls back to concurrent singles.
 
     Raises:
         EmbeddingError: If any embedding in the batch fails.
@@ -234,16 +165,11 @@ async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
     # Truncate texts
     texts = [t[:EMBEDDING_TEXT_LIMIT] if len(t) > EMBEDDING_TEXT_LIMIT else t for t in texts]
 
-    # 1. Try Edge Function (concurrent individual calls)
-    edge_results = await _embed_batch_via_edge_function(texts)
-    if edge_results:
-        return edge_results
-
-    # 2. Try HuggingFace batch
+    # 1. Try HuggingFace batch (primary — Edge Function not deployed)
     if HF_TOKEN:
         try:
             data = await _hf_request_with_retry(
-                payload={"inputs": texts, "options": {"wait_for_model": True}},
+                payload={"inputs": texts},
                 timeout=EMBEDDING_BATCH_TIMEOUT,
                 context=f"batch ({len(texts)} texts)",
             )
@@ -254,7 +180,7 @@ async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
             _stats.hf_batch_fail += 1
             logger.warning(f"HF batch failed ({len(texts)} texts), falling back to concurrent singles: {e}")
 
-    # 3. Concurrent single fallback (tries Edge first, then HF per text)
+    # 2. Concurrent single fallback
     _stats.sequential_fallbacks += 1
     logger.info(f"Concurrent single fallback for {len(texts)} embeddings")
 
@@ -297,29 +223,68 @@ async def _hf_request_with_retry(
     timeout: int,
     context: str,
 ) -> list:
-    """Make HuggingFace API request with retries and exponential backoff.
+    """Make HuggingFace API request with retries and exponential backoff + jitter.
 
     Retries on: 429 (rate limit), 502/503 (gateway/model loading),
     network timeouts, connection errors.
+    Non-retryable: 402 (credits exhausted), 4xx (client errors).
+
+    Best practices applied:
+    - wait_for_model only sent on retry after 503 (not on first attempt)
+    - 503 estimated_time from response body used to set retry delay
+    - Jitter added to prevent thundering herd during morning burst
+    - 402 detected and raised immediately (monthly credit limit)
     """
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     last_error = None
+    got_503 = False
 
     for attempt in range(1, EMBEDDING_MAX_RETRIES + 1):
         try:
             client = _get_http_client()
+
+            # Only send wait_for_model on retry after a 503 (model cold start)
+            req_payload = dict(payload)
+            if got_503:
+                req_payload["options"] = {"wait_for_model": True}
+
             response = await client.post(
                 HF_INFERENCE_URL,
                 headers=headers,
-                json=payload,
+                json=req_payload,
                 timeout=timeout,
             )
 
+            # 402 = monthly credits exhausted — not retryable
+            if response.status_code == 402:
+                raise EmbeddingError(
+                    f"HuggingFace free tier credits exhausted (402). "
+                    f"Check usage at huggingface.co/settings/billing"
+                )
+
             if response.status_code in (429, 502, 503):
+                # Base delay with exponential backoff
                 delay = EMBEDDING_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+
+                # 503: check estimated_time in response body for model loading
+                if response.status_code == 503:
+                    got_503 = True
+                    try:
+                        body = response.json()
+                        estimated = body.get("estimated_time")
+                        if estimated and isinstance(estimated, (int, float)):
+                            delay = max(delay, estimated)
+                    except Exception:
+                        pass
+
+                # 429: respect Retry-After header
                 retry_after = response.headers.get("Retry-After")
                 if retry_after and retry_after.isdigit():
                     delay = max(delay, int(retry_after))
+
+                # Add jitter (±25%) to prevent thundering herd
+                delay *= 1.0 + random.uniform(-0.25, 0.25)
+
                 _stats.retries += 1
                 logger.warning(
                     f"HF {context}: {response.status_code} on attempt {attempt}/{EMBEDDING_MAX_RETRIES}, "
@@ -334,6 +299,7 @@ async def _hf_request_with_retry(
         except httpx.TimeoutException as e:
             _stats.retries += 1
             delay = EMBEDDING_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+            delay *= 1.0 + random.uniform(-0.25, 0.25)
             logger.warning(
                 f"HF {context}: timeout on attempt {attempt}/{EMBEDDING_MAX_RETRIES}, "
                 f"retrying in {delay:.1f}s"
@@ -344,6 +310,7 @@ async def _hf_request_with_retry(
         except httpx.ConnectError as e:
             _stats.retries += 1
             delay = EMBEDDING_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+            delay *= 1.0 + random.uniform(-0.25, 0.25)
             logger.warning(
                 f"HF {context}: connection error on attempt {attempt}/{EMBEDDING_MAX_RETRIES}, "
                 f"retrying in {delay:.1f}s — {e}"

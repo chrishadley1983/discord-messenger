@@ -48,6 +48,7 @@ Chris can add items here for Peter to work on in the background.
 
 ### Done
 
+- [x] [PROACTIVE] Research GCP BigQuery cost optimization — Completed 2026-03-13. Found root cause: free tier is 1 TB queries + 10 GB storage/month. Costs likely from SELECT * queries, unpartitioned tables, or query volume exceeding 1 TB. Recommendations posted to #peterbot.
 - [x] [PROACTIVE] Create "usual breakfast" nutrition preset — Already exists! Verified 2026-03-09. Favourite found with full macros: 410 cal, 16.3g P, 42.5g C, 16.5g F.
 - [x] [FIX] whatsapp-health job failing — Fixed 2026-03-06. Renamed skill from `whatsapp-health` to `whatsapp-keepalive` to match folder name. Updated SCHEDULE.md accordingly.
 

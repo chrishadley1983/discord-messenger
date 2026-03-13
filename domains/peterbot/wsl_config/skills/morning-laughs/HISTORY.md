@@ -148,3 +148,13 @@
 - 2026-03-11: I used to be a shoe salesman until they gave me the boot.
 - 2026-03-11: Why did the gym close down? It just didn't work out.
 - 2026-03-11: "Hardships often prepare ordinary people for an extraordinary destiny." — C.S. Lewis
+
+- 2026-03-12: What do you call an alligator wearing a vest? An investigator.
+- 2026-03-12: I used to be a tennis player, but it just wasn't my racket.
+- 2026-03-12: Why did the mushroom go to the party? Because he was a fungi.
+- 2026-03-12: "Everything you've ever wanted is on the other side of fear." — George Addair
+
+- 2026-03-13: What do you call a penguin in the desert? Lost.
+- 2026-03-13: I used to be a banker, but I lost interest... then I found it again at a higher rate!
+- 2026-03-13: Why did the electrician break up with the light bulb? There was no spark.
+- 2026-03-13: "Success usually comes to those who are too busy to be looking for it." — Henry David Thoreau

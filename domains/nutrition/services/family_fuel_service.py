@@ -16,7 +16,7 @@ from logger import logger
 
 FAMILY_FUEL_DB_URL = os.getenv(
     "FAMILY_FUEL_DATABASE_URL",
-    "postgresql://postgres:Emmie2018!!!A@db.pocptwknyxyrtmnfnrph.supabase.co:5432/postgres",
+    "postgresql://postgres.pocptwknyxyrtmnfnrph:Emmie2018!!!A@aws-1-eu-west-1.pooler.supabase.com:5432/postgres",
 )
 
 # Chris's userId in the Family Fuel app

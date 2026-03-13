@@ -13,7 +13,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Morning Laughs | morning-laughs | 06:30 UK | #peterbot | yes |
 | Morning Quality Report | morning-quality-report | 06:45 UK | #peter-heartbeat | yes |
 | System Health | system-health | 06:50 UK | #alerts | yes |
-| Morning Briefing | morning-briefing | 07:00 UK | #ai-briefings | yes |
+| Morning Briefing | morning-briefing | 07:01 UK | #ai-briefings | yes |
 | Morning News | news | 07:02 UK | #news | yes |
 | Kids Daily Briefing | kids-daily | 07:25 UK | #peterbot+WhatsApp:group | yes |
 | Morning Cooking Reminder | cooking-reminder | 07:30 UK | #food-log | yes |
@@ -46,7 +46,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Healthera Prescriptions | healthera-prescriptions | 09:10 UK | #peterbot | yes |
 | HB Full Sync + Print | hb-full-sync-print | 09:35 UK | #peterbot | yes |
 | Weekly Spellings | school-weekly-spellings | Mon 07:30 UK | #peter-chat+WhatsApp:group | yes |
-| Subscription Monitor | subscription-monitor | Sunday 09:00 UK | #alerts+WhatsApp:chris | yes |
+| Subscription Monitor | subscription-monitor | Sunday 09:02 UK | #alerts+WhatsApp:chris | yes |
 | Recipe Discovery | recipe-discovery | Sunday 10:00 UK | #food-log | yes |
 | Property Valuation | property-valuation | 1st 10:15 UK | #peterbot | yes |
 | Saturday Sport Preview | saturday-sport-preview | Sat 08:00 UK | #peterbot+WhatsApp:chris | yes |
@@ -60,6 +60,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Paper Builder | paper-builder | Tue 19:30 UK | #peterbot | yes |
 | Practice Allocate | practice-allocate | Tue 21:00 UK | #peterbot | yes |
 | Spelling Test Reminder | spelling-test-generator | Fri 19:00 UK | #peterbot+WhatsApp:chris | yes |
+| Pocket Money Weekly | pocket-money-weekly | Sunday 09:32 UK | #peterbot | yes |
 
 ## Interval Jobs
 

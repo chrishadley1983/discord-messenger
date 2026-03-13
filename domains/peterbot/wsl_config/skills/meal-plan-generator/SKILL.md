@@ -20,6 +20,18 @@ channel: null
 
 Generate a balanced weekly meal plan by combining the default template, food preferences, Gousto lock-ins, calendar constraints, recipe candidates, and meal history. Uses a fast 2-message interview flow (defaults-heavy) then Claude picks optimal meals.
 
+**Every meal in the plan MUST exist in Family Fuel with a recipe ID before publishing. No exceptions.**
+
+## Fixed Deployment URLs
+
+| Asset | Domain | Notes |
+|-------|--------|-------|
+| Meal plan page | `hadley-meals.surge.sh` | Updated each week, always current |
+| Shopping list | `hadley-shopping.surge.sh` | Updated each week, always current |
+| Recipe cards | `hadley-recipes.surge.sh/{id}.html` | Persistent per recipe ID |
+
+**NEVER use any other URL pattern.** No `hadley-shop-wXX`, no `hadley-meals-w12`, no custom domains.
+
 ## Pre-fetched Data
 
 Data fetcher: `meal-plan-generator` — pulls all of the following in parallel:
@@ -37,9 +49,18 @@ Data fetcher: `meal-plan-generator` — pulls all of the following in parallel:
 
 ## Workflow
 
+### Step 0: Import Gousto Recipes (AUTOMATIC — runs before anything else)
+
+**This is mandatory. Do it immediately, before presenting defaults.**
+
+1. Call `POST /meal-plan/import/gousto`
+2. This searches Gmail for Gousto order confirmation emails, scrapes each recipe page, and saves to Family Fuel with full ingredients, instructions, and nutrition
+3. Note the `saved_to_family_fuel` recipe IDs — these are needed later for recipe cards
+4. If the import fails or finds no emails, continue (Chris may not have Gousto this week)
+
 ### Step 1: Present Defaults & Confirm
 
-Load the template and present it with any auto-detected overrides:
+Load the template and present it with Gousto lock-ins and calendar overrides:
 
 ```
 Right, let's sort this week's meals. Here's your default template:
@@ -51,7 +72,7 @@ Right, let's sort this week's meals. Here's your default template:
 
 📅 Calendar flags: Thursday has "Parents Evening" until 7pm — I've dropped Thu to 15 min max.
 
-🥘 Gousto arriving: Chicken Katsu, Pork Tacos, Veggie Curry (3 nights covered).
+🥘 Gousto arriving: Chicken Katsu, Pork Tacos, Veggie Curry (3 nights covered, all saved to Family Fuel ✅).
 
 Any changes this week, or shall I crack on?
 ```
@@ -62,9 +83,21 @@ Any changes this week, or shall I crack on?
 
 Once Chris confirms (or provides overrides), generate the meal plan:
 
-1. **Lock in Gousto meals** — assign to days based on template fit (prep time, portions). Run `POST /meal-plan/import/gousto` to auto-save Gousto recipes to Family Fuel.
+1. **Lock in Gousto meals** — assign to days based on template fit (prep time, portions). Gousto recipes already have Family Fuel IDs from Step 0.
 2. **Lock in any overrides** Chris mentioned
-3. **Fill remaining slots** — for each unfilled "cook" day, select from candidates. **Every meal you add MUST have a recipe in Family Fuel** — if one doesn't exist, save it first via `POST /recipes` (with full ingredients and instructions) before adding it to the plan. This ensures recipe cards and shopping lists work.
+3. **Fill remaining slots** — for each unfilled "cook" day, select from candidates:
+
+#### HARD GATE: Every Meal Must Have a Family Fuel Recipe ID
+
+For each non-Gousto meal you want to add:
+1. **Search Family Fuel first**: `GET /recipes/search?q=<name>&limit=5`
+2. **If found**: use the existing recipe ID
+3. **If NOT found**: you MUST create it before proceeding:
+   - Fetch the full recipe (from source URL, Second Brain, or web search)
+   - Call `POST /recipes` with **complete data**: recipeName, ingredients (every single one with quantity/unit), instructions (step-by-step), servings, prepTimeMinutes, cookTimeMinutes, cuisineType, dietary flags, nutrition if available
+   - Use the returned recipe ID
+
+**DO NOT add a meal to the plan without a Family Fuel recipe ID. If you cannot get one, pick a different meal.**
 
 **Scoring criteria (in priority order):**
 - **Prep time fit**: MUST be ≤ day's max_prep_mins (hard constraint)
@@ -102,21 +135,23 @@ When `preferences.batch_cook_per_week >= 1`:
 **Wednesday** — Leftovers: Beef Chilli 🔄 _(reheat, 10 min)_
 ```
 
-4. **Present the draft plan:**
+### Present the Draft Plan
+
+Show the plan with Family Fuel IDs visible (so Chris can verify everything is tracked):
 
 ```
 Here's this week's plan:
 
-**Monday** — Chicken Stir-fry _(Family Fuel, 25 min, 4 portions)_
-**Tuesday** — Gousto: Chicken Katsu _(quick, 15 min)_
-**Wednesday** — Salmon & Veg Traybake _(Second Brain, 35 min, 2 portions)_
-**Thursday** — Gousto: Pork Tacos _(quick, 15 min)_
-**Friday** — Homemade Pizza Night _(Family Fuel, 40 min, 4 portions)_
-**Saturday** — Gousto: Veggie Curry _(45 min, 4 portions)_
+**Monday** — Chicken Stir-fry _(Family Fuel ✅, 25 min, 4 portions)_
+**Tuesday** — Gousto: Chicken Katsu _(Family Fuel ✅, 15 min)_
+**Wednesday** — Salmon & Veg Traybake _(Family Fuel ✅, 35 min, 2 portions)_
+**Thursday** — Gousto: Pork Tacos _(Family Fuel ✅, 15 min)_
+**Friday** — Homemade Pizza Night _(Family Fuel ✅, 40 min, 4 portions)_
+**Saturday** — Gousto: Veggie Curry _(Family Fuel ✅, 45 min, 4 portions)_
 **Sunday** — OUT
 
 Protein balance: 🐔×2 🐷×1 🐟×1 🥬×1 🍕×1
-💰 Deals used: chicken breast (save £1), prawns (2 for £6)
+All 6 recipes in Family Fuel ✅ — recipe cards will be generated.
 Any swaps?
 ```
 
@@ -124,35 +159,58 @@ Any swaps?
 
 If Chris says "swap Monday for something with beef" or "change Friday to that Jamie Oliver thing":
 - Re-run selection for just that day with the new constraint
+- Same rule: new meal MUST have a Family Fuel recipe ID (search or create)
 - Show the updated plan
 - Repeat until Chris is happy
 
-### Step 4: Save, Publish & Generate Shopping List
+### Step 4: Save & Publish
 
 Once Chris approves:
-1. **Save to database (MANDATORY)**: Call `POST /meal-plan` with the full plan. This is what powers reminders, "what's for dinner?", and meal ratings. Without this, Peter won't know the plan exists.
-   ```json
-   POST http://172.19.64.1:8100/meal-plan
-   {
-     "week_start": "2026-03-08",
-     "source": "generated",
-     "notes": "Batch cook burritos Monday for Mon-Wed lunches",
-     "items": [
-       {"date": "2026-03-08", "meal_slot": "dinner", "adults_meal": "Korean Fried Chicken Bao Buns", "source_tag": "gousto", "cook_time_mins": 35, "servings": 2},
-       {"date": "2026-03-09", "meal_slot": "lunch", "adults_meal": "Easy Burritos", "source_tag": "family_fuel", "cook_time_mins": 40, "servings": 6},
-       {"date": "2026-03-09", "meal_slot": "dinner", "adults_meal": "Sausage & Squash Gnocchi", "source_tag": "gousto", "cook_time_mins": 25, "servings": 2}
-     ]
-   }
-   ```
-2. Log all meals to `POST /meal-plan/history` (without ratings — those come later)
-3. **Publish meal plan page**: call `POST /meal-plan/view/html` with the plan data. Include `cook_time_mins` and `servings` on each item, and `notes` dict for per-day notes (e.g. `{"2026-03-10": "Get chicken out of freezer at lunch"}`). Set `auto_generate_cards: true` to generate recipe cards. Deploy via `POST /deploy/surge` with `{"html": "<the HTML>", "domain": "hadley-meals.surge.sh"}`, share link. To update notes later, re-generate and re-deploy the page.
 
-#### Step 4a: MANDATORY Ingredient Verification (DO NOT SKIP)
+#### 4a. Save to database (MANDATORY)
 
-**Before building the shopping list, you MUST verify every non-Gousto recipe:**
+Call `POST /meal-plan` with the full plan. This powers reminders, "what's for dinner?", and meal ratings.
+```json
+POST http://172.19.64.1:8100/meal-plan
+{
+  "week_start": "2026-03-14",
+  "source": "generated",
+  "notes": "Batch cook ricotta pasta Tuesday for Tue-Wed lunches",
+  "items": [
+    {"date": "2026-03-14", "meal_slot": "dinner", "adults_meal": "Sausages, Mash & Veg", "source_tag": "family_fuel", "recipe_id": "abc-123", "cook_time_mins": 45, "servings": 4},
+    {"date": "2026-03-15", "meal_slot": "dinner", "adults_meal": "Chicken Katsu Curry", "source_tag": "gousto", "recipe_id": "def-456", "cook_time_mins": 35, "servings": 2}
+  ]
+}
+```
+
+#### 4b. Log meal history
+Call `POST /meal-plan/history` (without ratings — those come later)
+
+#### 4c. Generate recipe cards
+For every recipe in the plan, verify a recipe card exists at `hadley-recipes.surge.sh/{recipe_id}.html`. The `POST /meal-plan/view/html` endpoint with `auto_generate_cards: true` handles this — but you MUST pass recipe IDs in the plan items for it to work.
+
+#### 4d. Publish meal plan page
+Call `POST /meal-plan/view/html` with:
+- Plan items including `recipe_id` on every meal
+- `auto_generate_cards: true` (generates and deploys missing recipe card HTMLs)
+- `notes` dict for per-day notes
+- `cook_time_mins` and `servings` on each item
+
+Deploy via `POST /deploy/surge` with `{"html": "<the HTML>", "domain": "hadley-meals.surge.sh"}`.
+
+**All recipe links in the meal plan page MUST point to `hadley-recipes.surge.sh/{recipe_id}.html` — NEVER to external URLs like BBC Good Food or Gousto.** External source URLs go in the recipe card itself (as a "Source" link), not in the meal plan.
+
+#### 4e. Verify recipe card deployment
+For every recipe in the plan, confirm `hadley-recipes.surge.sh/{recipe_id}.html` returns 200. If any are missing, regenerate and redeploy.
+
+### Step 5: Shopping List
+
+#### 5a. MANDATORY Ingredient Verification (DO NOT SKIP)
+
+**Before building the shopping list, you MUST verify every non-Gousto recipe.**
 
 For each recipe that isn't from Gousto:
-1. **Fetch the FULL recipe** via `GET /recipes/{id}` (or the original URL if web recipe)
+1. **Fetch the FULL recipe** via `GET /recipes/{id}` — the recipe WILL be in Family Fuel because of the Step 2 hard gate
 2. **List every ingredient** from the recipe, including:
    - Main proteins/carbs
    - Sauces, condiments, dressings
@@ -176,18 +234,38 @@ For each recipe that isn't from Gousto:
 
 **If you skip this step, ingredients WILL be missed and the shopping list will be incomplete.**
 
-#### Step 4b: Build Shopping List
+#### 5b. Build Shopping List
 
-5. Extract ingredients from selected recipes (Family Fuel recipes have structured ingredient data)
-6. Exclude Gousto ingredients (they come in the box)
-7. Add due staples to the shopping list
-8. Ask: "Any extra staples off-schedule? (e.g., run out of something early)"
-9. Generate shopping list: PDF + interactive HTML page via `POST /meal-plan/shopping-list/html`
-10. Deploy shopping list HTML via `POST /deploy/surge` with `{"html": "<the HTML>", "domain": "hadley-shop-wXX.surge.sh"}`, share link
-11. Mark staples as added via `POST /meal-plan/staples/mark-added`
-12. Send both links to Chris (and optionally Abby via WhatsApp)
+1. Extract ingredients from Family Fuel recipes (structured ingredient data)
+2. Exclude Gousto ingredients (they come in the box)
+3. Add due staples to the shopping list
+4. Ask: "Any extra staples off-schedule? (e.g., run out of something early)"
 
-#### Step 4c: Offer Trolley Add
+#### 5c. Generate & Deploy Shopping List
+
+**You MUST use the API endpoint — DO NOT hand-build HTML.**
+
+Call `POST /meal-plan/shopping-list/html` with:
+```json
+{
+  "categories": {
+    "Fruit & Veg": [{"item": "Cherry Tomatoes", "quantity": "1 pack", "for_recipe": "Carbonara"}],
+    "Dairy & Eggs": [{"item": "Eggs", "quantity": "12", "for_recipe": "Weekly staple"}]
+  },
+  "staples": [{"name": "Milk", "category": "Dairy & Eggs", "quantity": "12 pints"}],
+  "gousto_items": ["Chicken Katsu ingredients", "Pork Taco ingredients"],
+  "title": "Weekly Shop",
+  "week_start": "2026-03-14"
+}
+```
+
+Deploy via `POST /deploy/surge` with `{"html": "<the HTML>", "domain": "hadley-shopping.surge.sh"}`.
+
+Mark staples as added via `POST /meal-plan/staples/mark-added`.
+
+Send both links to Chris (and optionally Abby via WhatsApp).
+
+### Step 6: Offer Trolley Add
 
 After deploying the shopping list, ask:
 
@@ -200,40 +278,78 @@ If Chris says yes:
 2. This auto-deduplicates against items already in the trolley
 3. Present results using the same format as the `grocery-shop` skill (added / need your pick / not found)
 4. Follow the same resolve flow for ambiguous items
-5. Offer to book a delivery slot
+5. After all items are added, favourite any that aren't already favourited (for faster matching next time)
+6. Offer to book a delivery slot
 
 If Chris says no or ignores, that's fine — the shopping list is still available as HTML.
 
+## Completion Checklist (MANDATORY)
+
+**Before sharing links with Chris, run through EVERY item. ALL must be TRUE.**
+
+```
+RECIPE DATA
+[ ] Every meal in the plan has a Family Fuel recipe ID (no exceptions)
+[ ] Every non-Gousto recipe was saved with FULL ingredients and instructions
+[ ] Gousto import ran and saved recipes to Family Fuel
+[ ] PATCH /recipes/{id}/usage called for every recipe used
+
+MEAL PLAN PAGE
+[ ] POST /meal-plan called (plan saved to database)
+[ ] POST /meal-plan/history called (meals logged)
+[ ] Meal plan HTML deployed to hadley-meals.surge.sh (not any other URL)
+[ ] Every recipe link points to hadley-recipes.surge.sh/{id}.html (not external URLs)
+[ ] auto_generate_cards was true in the HTML generation call
+
+RECIPE CARDS
+[ ] Every recipe card URL (hadley-recipes.surge.sh/{id}.html) returns 200
+[ ] Cards include full ingredients, method, nutrition, and source link
+
+SHOPPING LIST
+[ ] Ingredient verification completed for every non-Gousto recipe
+[ ] Shopping list generated via POST /meal-plan/shopping-list/html (not hand-built HTML)
+[ ] Shopping list deployed to hadley-shopping.surge.sh (not any other URL)
+[ ] Due staples included
+[ ] Gousto items shown in separate section (not on main shopping list)
+
+LINKS
+[ ] hadley-meals.surge.sh loads correctly
+[ ] hadley-shopping.surge.sh loads correctly
+[ ] All recipe card links from meal plan page are clickable and load
+```
+
+**If ANY item is FALSE, fix it before sharing links. Do not skip items.**
+
 ## Recipe Sources (Priority Order)
 
-1. **Family Fuel API** — Structured search with full ingredient data for shopping list generation. `GET http://172.19.64.1:8100/recipes/search?q=chicken&cuisine=italian&limit=20`. Preferred source because ingredients are structured (name, quantity, unit, category).
-2. **Second Brain** — Semantic/fuzzy search for broader matching. `search_knowledge("recipe familyfuel [criteria]")` or `search_knowledge("[criteria]")`. Includes Gousto history and web saves.
-3. **Web search** — If not enough candidates from stored recipes, search UK recipe sites (BBC Good Food, Mob Kitchen, Jamie Oliver, Joe Wicks) for new ideas. When using a web recipe, offer to save it to Family Fuel for future use.
+1. **Family Fuel API** — Structured search with full ingredient data. `GET http://172.19.64.1:8100/recipes/search?q=chicken&cuisine=italian&limit=20`. Preferred because ingredients are structured (name, quantity, unit, category).
+2. **Second Brain** — Semantic/fuzzy search for broader matching. `search_knowledge("recipe familyfuel [criteria]")`. Includes Gousto history and web saves.
+3. **Web search** — If not enough candidates from stored recipes, search UK recipe sites (BBC Good Food, Mob Kitchen, Jamie Oliver, Joe Wicks). **When using a web recipe, you MUST save it to Family Fuel with full ingredients and instructions before adding it to the plan.**
 
 When a Family Fuel recipe is used in a plan, call `PATCH /recipes/{id}/usage` to track usage frequency.
 
 ## Hadley API Endpoints
 
-- `POST /meal-plan` — Save generated plan with items (MUST call this — powers reminders, ratings, "what's for dinner?")
+- `POST /meal-plan` — Save generated plan with items (MUST call — powers reminders, ratings, "what's for dinner?")
 - `GET /meal-plan/templates/default` — Default template
 - `GET /meal-plan/preferences` — Food preferences
 - `GET /meal-plan/current` — Current plan (for Gousto lock-ins)
 - `GET /meal-plan/history?days=21` — Recent history
 - `GET /meal-plan/staples/due` — Due staples
 - `GET /calendar/meal-context` — Calendar meal context (pre-computed overrides)
+- `POST /meal-plan/import/gousto` — Import Gousto recipes from Gmail → Family Fuel (MUST run in Step 0)
 - `POST /recipes/extract` — Extract + optionally save recipe from URL via Chrome CDP (body: `{url, auto_save?}`)
-- `GET /recipes/batch-friendly?limit=10` — Batch-cook-friendly recipes (freezable or yields multiple meals)
+- `GET /recipes/batch-friendly?limit=10` — Batch-cook-friendly recipes
 - `GET /recipes/search?q=&cuisine=&meal_type=&tags=&limit=` — Search Family Fuel recipes
 - `GET /recipes/{id}` — Full recipe with ingredients + instructions
-- `POST /recipes` — Save a new recipe to Family Fuel (manual)
+- `POST /recipes` — Save a new recipe to Family Fuel (full ingredients, instructions, nutrition required)
 - `PATCH /recipes/{id}/usage` — Track recipe usage
 - `PATCH /recipes/{id}/rating` — Update recipe rating
 - `POST /meal-plan/history` — Log meals to history
 - `POST /meal-plan/staples/mark-added` — Mark staples as added
-- `POST /meal-plan/view/html` — Generate interactive HTML meal plan page (deploy to surge.sh)
-- `POST /meal-plan/shopping-list/html` — Generate interactive HTML shopping list
-- `POST /meal-plan/shopping-list/generate` — Generate PDF shopping list
-- `POST /meal-plan/shopping-list/to-trolley?store=sainsburys` — One-click add shopping list to trolley (with dedup)
+- `POST /meal-plan/view/html` — Generate interactive HTML meal plan page (deploy to hadley-meals.surge.sh)
+- `POST /meal-plan/shopping-list/html` — Generate interactive HTML shopping list (deploy to hadley-shopping.surge.sh)
+- `POST /meal-plan/shopping-list/to-trolley?store=sainsburys` — One-click add shopping list to trolley
 - `POST /grocery/sainsburys/trolley/resolve` — Resolve ambiguous item (body: `{item_name, product_uid, quantity?}`)
 
 ## Output Format
@@ -243,6 +359,7 @@ Use Discord-friendly formatting:
 - _(italics)_ for recipe source, timing, portions
 - Emoji protein indicators: 🐔 chicken, 🐄 beef, 🐷 pork, 🐑 lamb, 🐟 fish, 🦐 seafood, 🥬 veggie, 🌱 vegan
 - Keep compact — the full plan should fit in one Discord message
+- Show "Family Fuel ✅" next to every meal to confirm it's tracked
 
 ## Rules
 
@@ -252,14 +369,15 @@ Use Discord-friendly formatting:
 - Always show protein balance summary
 - Never suggest meals rated 1-2 with would_make_again=false
 - Respect the hard constraint: prep time MUST fit the day's max
-- When searching for recipes, prefer Family Fuel (has structured ingredients) over web recipes (need manual ingredient lists)
-- **Every meal in the plan MUST have a Family Fuel recipe** — if you add a meal that isn't in Family Fuel, save it first via `POST /recipes` with full ingredients, instructions, and macros. This is required for recipe cards and shopping list generation to work.
+- **Every meal MUST have a Family Fuel recipe ID** — no exceptions, no external-URL-only meals
+- **Always use the API endpoints for HTML generation** — never hand-build HTML for meal plans or shopping lists
+- **Always deploy to the fixed URLs** — hadley-meals.surge.sh, hadley-shopping.surge.sh, hadley-recipes.surge.sh
 - After generating the shopping list, always ask about extra staples before finalising
 - UK English throughout
 
 ## Critical: Shopping List Completeness
 
-**NEVER guess ingredients. ALWAYS verify against the actual recipe.**
+**NEVER guess ingredients. ALWAYS verify against the actual Family Fuel recipe.**
 
 Common mistakes to avoid:
 - ❌ Saying "refried beans" when the recipe uses black beans
@@ -267,9 +385,12 @@ Common mistakes to avoid:
 - ❌ Missing garnishes (lime, coriander, spring onions)
 - ❌ Skipping components (slaw, salad, pickled onions)
 - ❌ Assuming Chris has specialty items in stock
+- ❌ Hand-building shopping list HTML instead of using the API
+- ❌ Deploying to a custom surge URL instead of hadley-shopping.surge.sh
+- ❌ Linking to BBC Good Food / Gousto website instead of recipe cards
 
 **Mandatory process:**
-1. Fetch the full recipe (API or original URL)
+1. Fetch the full recipe from Family Fuel: `GET /recipes/{id}`
 2. List EVERY ingredient line-by-line
 3. Cross-check against pantry assumptions
 4. Add everything else to the shopping list
