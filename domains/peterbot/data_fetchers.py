@@ -5,6 +5,7 @@ Skills without a fetcher use web search during execution.
 """
 
 import asyncio
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -955,6 +956,24 @@ async def get_spurs_live_data() -> dict[str, Any]:
         home = spurs_match["homeTeam"]["shortName"]
         away = spurs_match["awayTeam"]["shortName"]
         score = spurs_match["score"]
+
+        # Dedup: if FINISHED and we already sent the FT notification, go silent
+        state_file = Path(__file__).parent.parent.parent / "data" / "spurs_live_state.json"
+        if is_finished:
+            try:
+                if state_file.exists():
+                    state = json.loads(state_file.read_text(encoding="utf-8"))
+                    if state.get("date") == today and state.get("status") == "FINISHED":
+                        return {"spurs_playing": False}
+            except Exception:
+                pass
+            # First FT notification — record it
+            try:
+                state_file.parent.mkdir(parents=True, exist_ok=True)
+                state_file.write_text(json.dumps({"date": today, "status": "FINISHED"}), encoding="utf-8")
+            except Exception as e:
+                logger.debug(f"Spurs state write failed: {e}")
+
         scorers = []
         if spurs_match.get("goals"):
             for g in spurs_match["goals"]:
