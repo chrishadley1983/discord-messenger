@@ -641,6 +641,18 @@ class PeterbotScheduler:
                     data = await fetcher()
                     logger.debug(f"Pre-fetched data for {job.skill}")
 
+                    # Check for __skip__ signal — fetcher says don't invoke Claude
+                    if isinstance(data, dict) and data.get("__skip__"):
+                        reason = data.get("reason", "skip requested")
+                        logger.info(f"Job {job.name} skipped by fetcher: {reason}")
+                        self.last_job_status[job.skill] = True
+                        if JOB_HISTORY_ENABLED:
+                            try:
+                                record_job_complete(job_id, success=True, output=f"SKIP: {reason}", execution_id=execution_id)
+                            except Exception:
+                                pass
+                        return
+
                     # Extract file attachments if present
                     if isinstance(data, dict) and "files_to_attach" in data:
                         files_to_attach = data.pop("files_to_attach", [])
@@ -1160,35 +1172,49 @@ class PeterbotScheduler:
     async def _send_whatsapp(self, message: str, target: str = ""):
         """Send message via Evolution API WhatsApp.
 
+        Pre-checks connection state, sends with retry (handled by client),
+        and posts a Discord alert on failure so issues are visible immediately.
+
         Args:
             message: Message text
             target: Routing target — "group" (extended team), "chris", "abby",
                     or "" (default: chris + abby individually)
         """
+        failures = []  # Collect failures for alerting
+
         try:
             from integrations.whatsapp import (
                 send_to_recipients, send_to_chris, send_to_abby, send_to_group,
-                CONTACTS,
+                is_connected,
             )
+
+            # Pre-flight connection check
+            if not await is_connected():
+                error_msg = ("WhatsApp disconnected — Evolution API instance "
+                             "is not in 'open' state. Messages will not be delivered.")
+                logger.error(error_msg)
+                failures.append(error_msg)
+                await self._alert_whatsapp_failure(failures, target)
+                return
 
             if target == "group":
                 result = await send_to_group("extended-team", message)
                 if "error" not in result:
                     logger.info("Sent WhatsApp to group: extended-team")
                 else:
-                    logger.error(f"WhatsApp group send failed: {result}")
+                    failures.append(f"group (extended-team): {result.get('error', result)}")
             elif target == "chris":
                 result = await send_to_chris(message)
                 if "error" not in result:
                     logger.info("Sent WhatsApp to Chris")
                 else:
-                    logger.error(f"WhatsApp send to Chris failed: {result}")
+                    failures.append(f"chris: {result.get('error', result)}")
             elif target == "abby":
                 result = await send_to_abby(message)
                 if "error" not in result:
                     logger.info("Sent WhatsApp to Abby")
                 else:
-                    logger.error(f"WhatsApp send to Abby failed: {result}")
+                    failures.append(f"abby: {result.get('error', result)}")
             else:
                 # Default: send to both individually
                 results = await send_to_recipients(message)
@@ -1196,12 +1222,35 @@ class PeterbotScheduler:
                     if r["success"]:
                         logger.info(f"Sent WhatsApp to {r['number']}")
                     else:
-                        logger.error(f"WhatsApp send failed to {r['number']}: {r['result']}")
+                        failures.append(f"{r['number']}: {r['result'].get('error', r['result'])}")
+
+            if failures:
+                await self._alert_whatsapp_failure(failures, target)
 
         except ImportError:
             logger.debug("Evolution API client not available")
         except Exception as e:
             logger.error(f"WhatsApp error: {e}")
+            await self._alert_whatsapp_failure([str(e)], target)
+
+    async def _alert_whatsapp_failure(self, failures: list[str], target: str):
+        """Post a visible alert to #alerts when WhatsApp sending fails."""
+        error_detail = "\n".join(f"- {f}" for f in failures)
+        alert_msg = (
+            f"**WhatsApp Send Failed** (target: {target or 'chris+abby'})\n\n"
+            f"{error_detail}\n\n"
+            f"Check: `curl http://localhost:8085/instance/connectionState/peter-whatsapp "
+            f'-H "apikey: peter-whatsapp-2026-hadley"`'
+        )
+        logger.error(f"WhatsApp failure alert: {failures}")
+        try:
+            alert_channel_id = CHANNEL_IDS.get("#alerts")
+            if alert_channel_id:
+                channel = self.bot.get_channel(alert_channel_id)
+                if channel:
+                    await channel.send(alert_msg)
+        except Exception as e:
+            logger.error(f"Failed to post WhatsApp failure alert: {e}")
 
     def get_job_status(self) -> dict[str, bool]:
         """Get status of last job executions for heartbeat."""
