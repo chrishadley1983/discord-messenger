@@ -61,6 +61,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Practice Allocate | practice-allocate | Tue 21:00 UK | #peterbot | yes |
 | Spelling Test Reminder | spelling-test-generator | Fri 19:00 UK | #peterbot+WhatsApp:chris | yes |
 | Pocket Money Weekly | pocket-money-weekly | Sunday 09:32 UK | #peterbot | yes |
+| Osaka Mint Check | osaka-mint-check | 08:25 UK | #peterbot+WhatsApp:chris | yes |
 
 ## Interval Jobs
 

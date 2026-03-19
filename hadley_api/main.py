@@ -42,6 +42,8 @@ from hadley_api.voice_routes import router as voice_router
 app.include_router(voice_router)
 from hadley_api.spelling_routes import router as spelling_router
 app.include_router(spelling_router)
+from hadley_api.japan_routes import router as japan_router
+app.include_router(japan_router)
 
 
 @app.get("/gcp/usage")
@@ -6542,7 +6544,7 @@ class MealPlanIngredientsUpdate(BaseModel):
 
 @app.get("/meal-plan/current")
 async def meal_plan_current():
-    """Get the current week's meal plan with items and ingredients."""
+    """Get the current week's meals by querying items directly by date range (Mon-Sun)."""
     from domains.nutrition.services.meal_plan_service import get_current_meal_plan
 
     try:
@@ -6550,6 +6552,22 @@ async def meal_plan_current():
         if not plan:
             return {"plan": None, "message": "No meal plan found for this week"}
         return {"plan": plan, "fetched_at": datetime.now(UK_TZ).isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/meal-plan/meals")
+async def meal_plan_meals_by_date(
+    start: str = Query(description="Start date (YYYY-MM-DD)"),
+    end: str = Query(default=None, description="End date (YYYY-MM-DD), defaults to start"),
+):
+    """Get meals for a specific date or date range, regardless of plan grouping."""
+    from domains.nutrition.services.meal_plan_service import get_meals_for_date_range
+
+    try:
+        end_date = end or start
+        items = await get_meals_for_date_range(start, end_date)
+        return {"items": items, "count": len(items), "start": start, "end": end_date}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -6890,9 +6908,10 @@ async def meal_plan_create(request: Request):
     """Create or update a meal plan with items in one call.
 
     Body: {
-        week_start: "YYYY-MM-DD" (Monday of the plan week),
+        week_start: "YYYY-MM-DD" (optional — defaults to Monday of earliest item date),
         source: "generated" | "manual" | etc,
         notes: "optional notes",
+        check_overlaps: true (optional — if true, returns conflicts instead of overwriting),
         items: [
             {
                 date: "YYYY-MM-DD",
@@ -6909,16 +6928,38 @@ async def meal_plan_create(request: Request):
     }
     """
     from domains.nutrition.services.meal_plan_service import (
-        upsert_meal_plan, upsert_meal_plan_items
+        upsert_meal_plan, upsert_meal_plan_items, check_meal_overlaps
     )
 
     MEAL_SLOT_MAP = {"breakfast": 0, "lunch": 1, "dinner": 2, "snack": 3}
 
     try:
         body = await request.json()
+        items = body.get("items", [])
+
+        # Map string meal_slot to integer and keep only valid DB columns
+        valid_cols = {"date", "meal_slot", "adults_meal", "kids_meal",
+                      "source_tag", "recipe_url", "cook_time_mins",
+                      "servings", "notes"}
+        core_cols = {"date", "meal_slot", "adults_meal", "kids_meal",
+                     "source_tag", "recipe_url"}
+        cleaned = []
+        for item in items:
+            row = {k: v for k, v in item.items() if k in valid_cols and v is not None}
+            # Convert string meal_slot to integer
+            if isinstance(row.get("meal_slot"), str):
+                row["meal_slot"] = MEAL_SLOT_MAP.get(row["meal_slot"].lower(), 2)
+            cleaned.append(row)
+
+        # Derive week_start from items if not provided
         week_start = body.get("week_start")
-        if not week_start:
-            raise HTTPException(status_code=400, detail="week_start is required")
+        if not week_start and cleaned:
+            earliest = min(item["date"] for item in cleaned)
+            d = datetime.fromisoformat(earliest).date()
+            monday = d - timedelta(days=d.weekday())
+            week_start = monday.isoformat()
+        elif not week_start:
+            raise HTTPException(status_code=400, detail="week_start is required when no items are provided")
 
         plan = await upsert_meal_plan(
             week_start=week_start,
@@ -6926,22 +6967,18 @@ async def meal_plan_create(request: Request):
             notes=body.get("notes"),
         )
 
-        items = body.get("items", [])
+        # Check for overlaps if requested
+        if body.get("check_overlaps") and cleaned:
+            conflicts = await check_meal_overlaps(cleaned, exclude_plan_id=plan["id"])
+            if conflicts:
+                return {
+                    "plan": plan,
+                    "conflicts": conflicts,
+                    "message": f"Found {len(conflicts)} overlapping meals. Remove them first or set check_overlaps=false to overwrite."
+                }
+
         saved_items = []
-        if items:
-            # Map string meal_slot to integer and keep only valid DB columns
-            valid_cols = {"date", "meal_slot", "adults_meal", "kids_meal",
-                          "source_tag", "recipe_url", "cook_time_mins",
-                          "servings", "notes"}
-            core_cols = {"date", "meal_slot", "adults_meal", "kids_meal",
-                         "source_tag", "recipe_url"}
-            cleaned = []
-            for item in items:
-                row = {k: v for k, v in item.items() if k in valid_cols and v is not None}
-                # Convert string meal_slot to integer
-                if isinstance(row.get("meal_slot"), str):
-                    row["meal_slot"] = MEAL_SLOT_MAP.get(row["meal_slot"].lower(), 2)
-                cleaned.append(row)
+        if cleaned:
             try:
                 saved_items = await upsert_meal_plan_items(plan["id"], cleaned)
             except Exception as item_err:
@@ -7688,9 +7725,20 @@ async def generate_meal_plan_view_html(req: MealPlanViewHTMLRequest):
     from datetime import datetime as dt
 
     generated_at = dt.now(UK_TZ).strftime("%d %b %Y, %H:%M")
-    week_start = req.plan.get("week_start", "")
+
+    # Derive date range label from items rather than week_start
+    items = req.plan.get("items", [])
+    item_dates = sorted({item.get("date", "") for item in items if item.get("date")})
     week_label = ""
-    if week_start:
+    if item_dates:
+        try:
+            first = dt.fromisoformat(item_dates[0])
+            last = dt.fromisoformat(item_dates[-1])
+            week_label = f"{first.strftime('%a %-d %b')} to {last.strftime('%a %-d %b')}"
+        except Exception:
+            week_label = f"{item_dates[0]} to {item_dates[-1]}"
+    elif req.plan.get("week_start"):
+        week_start = req.plan["week_start"]
         try:
             ws = dt.fromisoformat(week_start)
             week_label = f"w/c {ws.strftime('%-d %b %Y')}"

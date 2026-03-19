@@ -44,10 +44,15 @@ Chris can add items here for Peter to work on in the background.
 
 ### Awaiting Chris
 
+- [ ] [FIX] school_weekly_sync failing — pymupdf missing. Error: `ModuleNotFoundError: No module named 'fitz'`. Need to add `pymupdf` to Discord-Messenger/requirements.txt and run `pip install pymupdf`. Peter confirmed: scripts are in hadley-bricks repo at `scripts/school/`, but they run via bot.py using sys.executable, so the package must be in the bot's Python environment.
 - [ ] [FIX] Claude API balance check broken — Session expired, needs `anthropic_auth.py` re-run. Noticed in 07:03 balance check: "Session expired - run anthropic_auth.py". **Peter cannot action** — requires Chris to run the auth script on his machine.
 
 ### Done
 
+- [x] [PROACTIVE] Add parents evening slots to calendar — Completed 2026-03-19. Extracted from Gmail booking confirmations (13 Mar). Added two events to Google Calendar for 1 Apr 2026: 17:20 Emily Scott & Clair Thornton, 17:30 Chloe Adams & Coralie Tringham. Reminders set for 1 day and 1 hour before.
+- [x] [PROACTIVE] Verify flat white recipe — Completed 2026-03-16. Confirmed flat white recipe EXISTS in nutrition favourites: "90ml semi-skimmed milk, 50ml espresso" (44 cal, 3.2g protein). Also correctly embedded in "usual breakfast" favourite. Not in Second Brain separately, but not needed there — nutrition system has it.
+- [x] [SKILL] Recipe skill: add save-by-position handling — Completed 2026-03-15. Updated `recipe-discovery` and `daily-recipes` skills with explicit "save N" position-based save instructions. Skills now document how to match numbers to recipe positions and save by URL.
+- [x] [FIX] school_weekly_sync location clarified — Resolved 2026-03-14. Scripts live in hadley-bricks repo at `scripts/school/`, NOT peterbot. Job is registered in `bot.py` via APScheduler (not SCHEDULE.md). CLAUDE.md updated with infrastructure jobs section.
 - [x] [PROACTIVE] Research GCP BigQuery cost optimization — Completed 2026-03-13. Found root cause: free tier is 1 TB queries + 10 GB storage/month. Costs likely from SELECT * queries, unpartitioned tables, or query volume exceeding 1 TB. Recommendations posted to #peterbot.
 - [x] [PROACTIVE] Create "usual breakfast" nutrition preset — Already exists! Verified 2026-03-09. Favourite found with full macros: 410 cal, 16.3g P, 42.5g C, 16.5g F.
 - [x] [FIX] whatsapp-health job failing — Fixed 2026-03-06. Renamed skill from `whatsapp-health` to `whatsapp-keepalive` to match folder name. Updated SCHEDULE.md accordingly.

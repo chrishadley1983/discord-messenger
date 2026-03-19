@@ -45,6 +45,28 @@
     "description": "Proactive alerts when ticket ballots open for England Cricket, England Football, Oval Invincibles",
     "channel": "#peterbot+WhatsApp:chris"
   },
+  "chrome-cdp": {
+    "triggers": [
+      "check this page",
+      "open chrome",
+      "browse to",
+      "screenshot this",
+      "look at this website",
+      "scrape this page",
+      "click on",
+      "what's on this page",
+      "navigate to",
+      "check royal mail",
+      "track my parcel",
+      "check amazon",
+      "check vinted",
+      "check sainsburys"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Interact with Chrome browser via CDP \u2014 navigate pages, take screenshots, click elements, extract text, fill forms. Use when asked to check a website, scrape data, or automate browser tasks.",
+    "channel": null
+  },
   "cooking-reminder": {
     "triggers": [
       "cooking reminders",
@@ -683,6 +705,16 @@
     "conversational": true,
     "scheduled": true,
     "description": "Daily nutrition wrap-up at 9pm",
+    "channel": null
+  },
+  "osaka-mint-check": {
+    "triggers": [
+      "osaka mint",
+      "cherry blossom registration"
+    ],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Checks Osaka Mint Bureau cherry blossom reservation status",
     "channel": null
   },
   "paper-builder": {
