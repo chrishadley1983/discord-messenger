@@ -1484,6 +1484,372 @@ async def record_heartbeat_run():
     return {"status": "error", "error": stderr}
 
 
+# =============================================================================
+# SKILLS DIRECTORY - Unified skill/command aggregation from 4 sources
+# =============================================================================
+
+# In-memory cache for skills directory
+_skills_directory_cache: dict = {"data": None, "timestamp": 0}
+_SKILLS_CACHE_TTL = 60  # seconds
+
+# Category assignment mapping for Peterbot skills (F7)
+_CATEGORY_PREFIXES = {
+    "Hadley Bricks": ["hb-", "hadley-bricks", "instagram-", "vinted"],
+    "Health & Fitness": ["health-", "weekly-health", "monthly-health", "hydration", "nutrition-"],
+    "Family & Kids": ["kids-", "school-", "spelling-", "practice-", "pocket-money"],
+    "News & Sport": ["football-", "cricket-", "spurs-", "pl-results", "saturday-sport"],
+    "Food & Cooking": ["meal-", "cooking-", "recipe-", "price-scanner", "daily-recipes", "grocery-", "shopping-list-"],
+    "Daily Briefings": ["news", "morning-briefing", "morning-laughs", "youtube-digest", "knowledge-digest"],
+    "Finance": ["balance-", "api-usage", "subscription-", "property-"],
+    "System & Ops": ["system-health", "security-", "whatsapp-health", "heartbeat", "parser-", "morning-quality-", "self-reflect"],
+    "Utilities": ["remind", "purchase", "daily-thoughts", "chrome-cdp", "ballot-"],
+    "Development": ["github-"],
+}
+
+# Known projects with commands (F3)
+_KNOWN_PROJECTS = {
+    "discord-messenger": "Discord Messenger",
+    "hadley-bricks-inventory-management": "Hadley Bricks IM",
+    "hadley-bricks-shopify": "Hadley Bricks Shopify",
+    "peterbot-mem": "Peterbot Mem",
+    "family-meal-planner": "Family Meal Planner",
+    "finance-tracker": "Finance Tracker",
+    "Football Prediction Game": "Football Prediction Game",
+    "japan-family-guide": "Japan Family Guide",
+}
+
+# Slugify project names for IDs
+_PROJECT_SLUGS = {
+    "discord-messenger": "discord-messenger",
+    "hadley-bricks-inventory-management": "hadley-bricks-im",
+    "hadley-bricks-shopify": "hadley-bricks-shopify",
+    "peterbot-mem": "peterbot-mem",
+    "family-meal-planner": "family-meal-planner",
+    "finance-tracker": "finance-tracker",
+    "Football Prediction Game": "football-prediction-game",
+    "japan-family-guide": "japan-family-guide",
+}
+
+
+def _assign_category(skill_name: str) -> Optional[str]:
+    """Assign a category to a Peterbot skill based on name prefix matching."""
+    for category, prefixes in _CATEGORY_PREFIXES.items():
+        for prefix in prefixes:
+            if prefix.endswith("-"):
+                if skill_name.startswith(prefix):
+                    return category
+            else:
+                if skill_name == prefix or skill_name.startswith(prefix + "-"):
+                    return category
+    return "Other"
+
+
+def _get_file_modified(file_path: Path) -> Optional[str]:
+    """Get ISO formatted last modified time for a file."""
+    try:
+        mtime = file_path.stat().st_mtime
+        return datetime.fromtimestamp(mtime, tz=UK_TZ).isoformat()
+    except (OSError, ValueError):
+        return None
+
+
+def _derive_type(entry: dict) -> str:
+    """Derive skill type from metadata."""
+    if entry.get("scheduled"):
+        return "scheduled"
+    if entry.get("triggers") and len(entry["triggers"]) > 0:
+        return "triggered"
+    if entry.get("conversational"):
+        return "conversational"
+    return "command"
+
+
+def _parse_command_description(file_path: Path) -> str:
+    """Extract description from a command .md file (first non-heading, non-empty line)."""
+    try:
+        content = file_path.read_text(encoding="utf-8")
+        for line in content.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                continue
+            return stripped[:120]
+        return "No description"
+    except Exception:
+        return "No description"
+
+
+def _scan_peterbot_skills() -> list[dict]:
+    """Scan Peterbot skills from manifest.json (F1)."""
+    project_root = Path(__file__).parent.parent
+    manifest_path = project_root / "domains" / "peterbot" / "wsl_config" / "skills" / "manifest.json"
+    skills_base = project_root / "domains" / "peterbot" / "wsl_config" / "skills"
+
+    entries = []
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return entries
+
+    for name, meta in manifest.items():
+        skill_md_path = skills_base / name / "SKILL.md"
+        last_modified = _get_file_modified(skill_md_path) if skill_md_path.exists() else None
+        rel_path = f"domains/peterbot/wsl_config/skills/{name}/SKILL.md"
+
+        entry = {
+            "id": f"peterbot::{name}",
+            "name": name,
+            "description": meta.get("description"),
+            "source": "peterbot",
+            "project": None,
+            "path": rel_path,
+            "runs_on": "wsl",
+            "triggers": meta.get("triggers", []),
+            "scheduled": meta.get("scheduled", False),
+            "conversational": meta.get("conversational", False),
+            "channel": meta.get("channel"),
+            "category": _assign_category(name),
+            "last_modified": last_modified,
+            "shared_with": None,
+            "project_count": 0,
+        }
+        entry["type"] = _derive_type(entry)
+        entries.append(entry)
+
+    return entries
+
+
+def _scan_global_skills() -> list[dict]:
+    """Scan global skills from ~/.skills/skills/ (F2)."""
+    skills_dir = Path.home() / ".skills" / "skills"
+    entries = []
+    if not skills_dir.exists():
+        return entries
+
+    for skill_dir in sorted(skills_dir.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.exists():
+            continue
+
+        name = skill_dir.name
+        # Parse SKILL.md for description
+        try:
+            content = skill_md.read_text(encoding="utf-8")
+            metadata = parse_skill_metadata(content)
+        except Exception:
+            metadata = {}
+
+        entries.append({
+            "id": f"global-skill::{name}",
+            "name": name,
+            "description": metadata.get("description", "No description"),
+            "source": "global-skill",
+            "project": None,
+            "path": str(skill_md),
+            "runs_on": "windows",
+            "type": "command",
+            "triggers": metadata.get("triggers", []),
+            "scheduled": metadata.get("scheduled", False),
+            "conversational": metadata.get("conversational", False),
+            "channel": None,
+            "category": None,
+            "last_modified": _get_file_modified(skill_md),
+            "shared_with": None,
+            "project_count": 0,
+        })
+
+    return entries
+
+
+def _scan_project_commands() -> list[dict]:
+    """Scan project commands from known projects (F3)."""
+    projects_dir = Path.home() / "claude-projects"
+    raw_commands: list[dict] = []
+
+    for folder_name, display_name in _KNOWN_PROJECTS.items():
+        slug = _PROJECT_SLUGS[folder_name]
+        commands_dir = projects_dir / folder_name / ".claude" / "commands"
+        if not commands_dir.exists():
+            continue
+
+        for md_file in sorted(commands_dir.glob("*.md")):
+            if md_file.name.upper() in ("README.md", "CLAUDE.md"):
+                continue
+            cmd_name = md_file.stem
+            raw_commands.append({
+                "name": cmd_name,
+                "description": _parse_command_description(md_file),
+                "project_slug": slug,
+                "project_display": display_name,
+                "path": str(md_file),
+                "last_modified": _get_file_modified(md_file),
+            })
+
+    return raw_commands
+
+
+def _group_project_commands(raw_commands: list[dict]) -> list[dict]:
+    """Group shared project commands (F5)."""
+    from collections import defaultdict
+    by_name: dict[str, list[dict]] = defaultdict(list)
+    for cmd in raw_commands:
+        by_name[cmd["name"]].append(cmd)
+
+    entries = []
+    for name, cmds in sorted(by_name.items()):
+        projects = sorted(set(c["project_slug"] for c in cmds))
+        # Use alphabetically first project as primary
+        primary = cmds[0]
+        for c in cmds:
+            if c["project_slug"] == projects[0]:
+                primary = c
+                break
+
+        entries.append({
+            "id": f"project-command::{projects[0]}::{name}",
+            "name": name,
+            "description": primary["description"],
+            "source": "project-command",
+            "project": projects[0] if len(projects) == 1 else None,
+            "path": primary["path"],
+            "runs_on": "windows",
+            "type": "command",
+            "triggers": [],
+            "scheduled": False,
+            "conversational": False,
+            "channel": None,
+            "category": None,
+            "last_modified": primary["last_modified"],
+            "shared_with": projects,
+            "project_count": len(projects),
+        })
+
+    return entries
+
+
+def _scan_global_commands() -> list[dict]:
+    """Scan global commands from ~/.claude/commands/ (F4)."""
+    commands_dir = Path.home() / ".claude" / "commands"
+    entries = []
+    if not commands_dir.exists():
+        return entries
+
+    for md_file in sorted(commands_dir.glob("*.md")):
+        name = md_file.stem
+        entries.append({
+            "id": f"global-command::{name}",
+            "name": name,
+            "description": _parse_command_description(md_file),
+            "source": "global-command",
+            "project": None,
+            "path": str(md_file),
+            "runs_on": "windows",
+            "type": "command",
+            "triggers": [],
+            "scheduled": False,
+            "conversational": False,
+            "channel": None,
+            "category": None,
+            "last_modified": _get_file_modified(md_file),
+            "shared_with": None,
+            "project_count": 0,
+        })
+
+    return entries
+
+
+def _build_skills_directory() -> list[dict]:
+    """Build the full skills directory from all 4 sources."""
+    all_entries = []
+    all_entries.extend(_scan_peterbot_skills())
+    all_entries.extend(_scan_global_skills())
+    all_entries.extend(_group_project_commands(_scan_project_commands()))
+    all_entries.extend(_scan_global_commands())
+    return all_entries
+
+
+@app.get("/api/skills/directory")
+async def skills_directory(refresh: bool = False):
+    """Unified skills directory aggregating 4 sources (F1-F7)."""
+    import time as _time
+    now = _time.time()
+    if not refresh and _skills_directory_cache["data"] is not None and (now - _skills_directory_cache["timestamp"]) < _SKILLS_CACHE_TTL:
+        return _skills_directory_cache["data"]
+
+    entries = await asyncio.to_thread(_build_skills_directory)
+    result = {"skills": entries, "count": len(entries)}
+    _skills_directory_cache["data"] = result
+    _skills_directory_cache["timestamp"] = now
+    return result
+
+
+@app.get("/api/skills/directory/{skill_id:path}")
+async def skills_directory_detail(skill_id: str):
+    """Get full content for any skill/command by ID (F8)."""
+    parts = skill_id.split("::")
+    if len(parts) < 2:
+        raise HTTPException(400, "Invalid skill ID format")
+
+    source = parts[0]
+    project_root = Path(__file__).parent.parent
+
+    try:
+        if source == "peterbot":
+            name = parts[1]
+            if not re.match(r'^[a-zA-Z0-9_-]+$', name):
+                raise HTTPException(400, "Invalid skill name")
+            file_path = project_root / "domains" / "peterbot" / "wsl_config" / "skills" / name / "SKILL.md"
+        elif source == "global-skill":
+            name = parts[1]
+            if not re.match(r'^[a-zA-Z0-9_-]+$', name):
+                raise HTTPException(400, "Invalid skill name")
+            file_path = Path.home() / ".skills" / "skills" / name / "SKILL.md"
+        elif source == "project-command":
+            if len(parts) < 3:
+                raise HTTPException(400, "Invalid project command ID")
+            project_slug = parts[1]
+            cmd_name = parts[2]
+            if not re.match(r'^[a-zA-Z0-9_-]+$', cmd_name):
+                raise HTTPException(400, "Invalid command name")
+            # Reverse-lookup folder name from slug
+            folder_name = None
+            for fn, slug in _PROJECT_SLUGS.items():
+                if slug == project_slug:
+                    folder_name = fn
+                    break
+            if not folder_name:
+                raise HTTPException(404, "Project not found")
+            file_path = Path.home() / "claude-projects" / folder_name / ".claude" / "commands" / f"{cmd_name}.md"
+        elif source == "global-command":
+            name = parts[1]
+            if not re.match(r'^[a-zA-Z0-9_-]+$', name):
+                raise HTTPException(400, "Invalid command name")
+            file_path = Path.home() / ".claude" / "commands" / f"{name}.md"
+        else:
+            raise HTTPException(400, f"Unknown source: {source}")
+
+        if not file_path.exists():
+            raise HTTPException(404, "File not found")
+
+        content = file_path.read_text(encoding="utf-8")
+        return {
+            "id": skill_id,
+            "name": parts[-1],
+            "source": source,
+            "content": content,
+            "path": str(file_path),
+            "last_modified": _get_file_modified(file_path),
+            "exists": True,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Error reading skill: {str(e)}")
+
+
 def parse_skill_metadata(content: str) -> dict:
     """Parse SKILL.md content to extract metadata.
 

@@ -11,6 +11,11 @@ Features:
 - Quick tail view for specific sources
 - Error aggregation across all sources
 - Performance-optimized lazy loading for large files
+- Log volume histogram (F1)
+- Pattern grouping with traceback merging (F4, F9)
+- Faceted filtering (F3)
+- Context view for surrounding logs (F6)
+- Noise suppression (F10)
 
 Usage:
     from peter_dashboard.api.logs import router
@@ -28,6 +33,7 @@ from collections import defaultdict
 from functools import lru_cache
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
+from math import ceil
 
 from fastapi import APIRouter, Query, HTTPException
 
@@ -79,6 +85,55 @@ LOG_LEVELS = {
     "CRITICAL": 50
 }
 
+# =============================================================================
+# Noise Patterns (F10)
+# =============================================================================
+NOISE_PATTERNS = [
+    re.compile(r'GET /health', re.IGNORECASE),
+    re.compile(r'GET /api/status', re.IGNORECASE),
+    re.compile(r'RequestsDependencyWarning', re.IGNORECASE),
+    re.compile(r'BigQuery billing unavailable', re.IGNORECASE),
+    re.compile(r'discord\.gateway.*RESUMED', re.IGNORECASE),
+    re.compile(r'Heartbeat.*acknowledged', re.IGNORECASE),
+    re.compile(r'urllib3.*or chardet.*doesn\'t match', re.IGNORECASE),
+]
+
+# Traceback detection pattern
+TRACEBACK_START = re.compile(r'Traceback \(most recent call last\)')
+TRACEBACK_FRAME = re.compile(r'^\s+File ".*", line \d+')
+TRACEBACK_CONT = re.compile(r'^\s+\S')  # indented continuation lines
+
+
+def _is_noise(message: str) -> bool:
+    """Check if a log message matches known noise patterns."""
+    for pattern in NOISE_PATTERNS:
+        if pattern.search(message):
+            return True
+    return False
+
+
+def normalize_message(message: str) -> str:
+    """Normalize a log message for grouping by stripping variable parts.
+
+    Used by both /unified?group=true and /errors for consistent grouping.
+    """
+    normalized = message
+    # Strip IP:port
+    normalized = re.sub(r'\d+\.\d+\.\d+\.\d+:\d+', '<IP>', normalized)
+    # Strip UUIDs
+    normalized = re.sub(
+        r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+        '<UUID>', normalized, flags=re.I
+    )
+    # Strip hex IDs (8+ chars)
+    normalized = re.sub(r'\b[0-9a-f]{8,}\b', '<ID>', normalized, flags=re.I)
+    # Strip port numbers
+    normalized = re.sub(r':\d{4,5}\b', ':<PORT>', normalized)
+    # Strip numeric sequences (but keep short ones like status codes)
+    normalized = re.sub(r'\b\d{6,}\b', '<NUM>', normalized)
+    # Truncate for grouping key
+    return normalized[:120]
+
 
 @dataclass
 class LogEntry:
@@ -90,16 +145,33 @@ class LogEntry:
     message: str
     metadata: Dict[str, Any] = field(default_factory=dict)
     raw_line: str = ""
+    extra_lines: List[str] = field(default_factory=list)
+    noise: bool = False
+    group_key: str = ""
+    group_count: int = 1
+    group_entries: List[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "id": self.id,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "source": self.source,
             "level": self.level,
             "message": self.message,
-            "metadata": self.metadata
+            "metadata": self.metadata,
+            "noise": self.noise,
         }
+        if self.extra_lines:
+            result["extra_lines"] = self.extra_lines
+            result["traceback_frames"] = len([
+                l for l in self.extra_lines if TRACEBACK_FRAME.match(l)
+            ])
+        if self.group_key:
+            result["group_key"] = self.group_key
+        if self.group_count > 1:
+            result["group_count"] = self.group_count
+            result["group_entries"] = self.group_entries
+        return result
 
 
 class LogParser:
@@ -107,9 +179,11 @@ class LogParser:
 
     # Pattern for standard Python logging format
     # Example: [2026-02-04 14:47:49] [INFO    ] discord.client: logging in
+    VALID_LEVELS = {'DEBUG', 'INFO', 'WARNING', 'WARN', 'ERROR', 'CRITICAL', 'FATAL', 'FUTURE'}
+
     PYTHON_LOG_PATTERN = re.compile(
         r'^\[?(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)\]?\s*'
-        r'\[?\s*(\w+)\s*\]?\s*'
+        r'\[?\s*(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL|FUTURE)\s*\]?\s*'
         r'(?:(\S+?):\s*)?'
         r'(.+?)$',
         re.MULTILINE
@@ -118,7 +192,7 @@ class LogParser:
     # Pattern for uvicorn/FastAPI format
     # Example: INFO:     127.0.0.1:60842 - "GET /health HTTP/1.1" 200 OK
     UVICORN_PATTERN = re.compile(
-        r'^(\w+):\s+(.+)$'
+        r'^(INFO|WARNING|ERROR|DEBUG|CRITICAL):\s+(.+)$'
     )
 
     # Pattern for ANSI escape codes (to strip)
@@ -161,7 +235,7 @@ class LogParser:
                 if timestamp is None:
                     timestamp = datetime.now(UK_TZ)
 
-                return LogEntry(
+                entry = LogEntry(
                     id=str(uuid.uuid4())[:8],
                     timestamp=timestamp,
                     source=source,
@@ -170,6 +244,9 @@ class LogParser:
                     metadata={"module": module} if module else {},
                     raw_line=line
                 )
+                entry.noise = _is_noise(entry.message)
+                entry.group_key = normalize_message(entry.message)
+                return entry
             except Exception:
                 pass
 
@@ -197,7 +274,7 @@ class LogParser:
                     "status": int(status)
                 }
 
-            return LogEntry(
+            entry = LogEntry(
                 id=str(uuid.uuid4())[:8],
                 timestamp=timestamp,
                 source=source,
@@ -206,9 +283,12 @@ class LogParser:
                 metadata=metadata,
                 raw_line=line
             )
+            entry.noise = _is_noise(entry.message)
+            entry.group_key = normalize_message(entry.message)
+            return entry
 
         # Fallback: treat as INFO level message
-        return LogEntry(
+        entry = LogEntry(
             id=str(uuid.uuid4())[:8],
             timestamp=datetime.now(UK_TZ),
             source=source,
@@ -216,6 +296,9 @@ class LogParser:
             message=line.strip(),
             raw_line=line
         )
+        entry.noise = _is_noise(entry.message)
+        entry.group_key = normalize_message(entry.message)
+        return entry
 
 
 def _get_log_files(source: Optional[str] = None) -> List[tuple[str, Path]]:
@@ -310,6 +393,104 @@ def _read_file_lines(file_path: Path, max_lines: int = 500, from_end: bool = Tru
     return lines
 
 
+def _read_all_lines(file_path: Path) -> List[str]:
+    """Read all lines from a file. Used for histogram/facet endpoints."""
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            return f.readlines()
+    except Exception:
+        return []
+
+
+def _merge_tracebacks(entries: List[LogEntry]) -> List[LogEntry]:
+    """Merge multi-line traceback blocks into their preceding error entry.
+
+    Detects 'Traceback (most recent call last):' blocks and attaches
+    all frame lines + final exception line to the preceding ERROR entry.
+    """
+    if not entries:
+        return entries
+
+    merged = []
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+
+        # Check if this entry starts a traceback
+        if TRACEBACK_START.search(entry.message):
+            # Collect all traceback continuation lines
+            tb_lines = [entry.raw_line]
+            j = i + 1
+            while j < len(entries):
+                next_entry = entries[j]
+                raw = next_entry.raw_line
+                # Traceback continuation: indented lines (File "...", code lines, exception)
+                if (TRACEBACK_FRAME.match(raw) or
+                        TRACEBACK_CONT.match(raw) or
+                        raw.strip().startswith('File "') or
+                        (not LogParser.PYTHON_LOG_PATTERN.match(raw) and raw.strip())):
+                    tb_lines.append(raw)
+                    j += 1
+                else:
+                    break
+
+            # Find the preceding ERROR entry to attach to
+            if merged and merged[-1].level in ("ERROR", "CRITICAL"):
+                merged[-1].extra_lines = tb_lines
+            else:
+                # No preceding error - keep traceback as its own entry
+                entry.extra_lines = tb_lines[1:]  # skip the "Traceback..." line itself
+                entry.level = "ERROR"
+                merged.append(entry)
+            i = j
+            continue
+
+        merged.append(entry)
+        i += 1
+
+    return merged
+
+
+def _group_consecutive(entries: List[LogEntry]) -> List[LogEntry]:
+    """Group consecutive entries with the same group_key into single entries.
+
+    Returns a new list where consecutive same-group entries are collapsed
+    with group_count and group_entries populated.
+    """
+    if not entries:
+        return entries
+
+    grouped = []
+    current = entries[0]
+    current_members = []
+
+    for entry in entries[1:]:
+        if (entry.group_key == current.group_key and
+                entry.source == current.source and
+                not entry.extra_lines and not current.extra_lines):
+            # Same group - accumulate
+            current.group_count += 1
+            current_members.append({
+                "id": entry.id,
+                "timestamp": entry.timestamp.isoformat() if entry.timestamp else None,
+                "message": entry.message,
+            })
+        else:
+            # Different group - flush current
+            if current_members:
+                current.group_entries = current_members
+            grouped.append(current)
+            current = entry
+            current_members = []
+
+    # Flush last entry
+    if current_members:
+        current.group_entries = current_members
+    grouped.append(current)
+
+    return grouped
+
+
 def _parse_logs_from_file(
     file_path: Path,
     source: str,
@@ -366,6 +547,54 @@ def _parse_logs_from_file(
     return entries, total_matching
 
 
+def _parse_all_entries(
+    source_filter: Optional[str] = None,
+    level_filter: Optional[List[str]] = None,
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+    search: Optional[str] = None,
+    max_per_file: int = 2000,
+) -> List[LogEntry]:
+    """Parse entries from all files with filtering but no pagination.
+
+    Used by histogram, facets, and grouping endpoints that need full data.
+    """
+    log_files = _get_log_files(source_filter)
+    all_entries = []
+
+    for src_name, file_path in log_files:
+        lines = _read_file_lines(file_path, max_lines=max_per_file, from_end=True)
+        lines.reverse()
+
+        for line in lines:
+            entry = LogParser.parse_line(line.strip(), src_name)
+            if not entry:
+                continue
+
+            if level_filter and entry.level not in level_filter:
+                continue
+
+            if since and entry.timestamp and entry.timestamp < since:
+                continue
+
+            if until and entry.timestamp and entry.timestamp > until:
+                continue
+
+            if search and search.lower() not in entry.message.lower():
+                continue
+
+            all_entries.append(entry)
+
+    # Sort chronologically
+    min_dt = datetime.min.replace(tzinfo=UK_TZ)
+    all_entries.sort(
+        key=lambda e: e.timestamp.replace(tzinfo=UK_TZ) if e.timestamp and e.timestamp.tzinfo is None
+            else (e.timestamp or min_dt)
+    )
+
+    return all_entries
+
+
 # =============================================================================
 # API Endpoints
 # =============================================================================
@@ -378,39 +607,18 @@ async def get_unified_logs(
     until: Optional[str] = Query(None, description="ISO timestamp - only logs before this time"),
     search: Optional[str] = Query(None, description="Text search in log messages"),
     limit: int = Query(100, ge=1, le=500, description="Max results (default 100, max 500)"),
-    offset: int = Query(0, ge=0, description="Pagination offset")
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    group: bool = Query(False, description="Group consecutive similar entries"),
+    suppress_noise: bool = Query(False, description="Flag noise entries"),
 ) -> dict:
     """Get aggregated logs from all sources with filtering.
 
     Returns logs from all configured sources (Discord bot, Hadley API,
     Peter Dashboard) merged and sorted by timestamp.
 
-    Query Parameters:
-    - source: Filter by source (discord_bot, hadley_api, peter_dashboard, bot)
-    - level: Filter by level (DEBUG, INFO, WARNING, ERROR)
-    - since: ISO timestamp, only logs after this time
-    - until: ISO timestamp, only logs before this time
-    - search: Text search in log messages
-    - limit: Max results (default 100, max 500)
-    - offset: Pagination offset
-
-    Returns:
-    ```json
-    {
-      "logs": [
-        {
-          "id": "uuid",
-          "timestamp": "2026-02-05T12:00:00Z",
-          "source": "discord_bot",
-          "level": "INFO",
-          "message": "Message received from #peterbot",
-          "metadata": {}
-        }
-      ],
-      "total": 1000,
-      "has_more": true
-    }
-    ```
+    Additional params:
+    - group: Collapse consecutive identical messages (F4)
+    - suppress_noise: Flag entries matching NOISE_PATTERNS (F10)
     """
     # Parse filters
     level_filter = None
@@ -452,7 +660,6 @@ async def get_unified_logs(
         total_count += count
 
     # Sort by timestamp (most recent first)
-    # Use timezone-aware minimum datetime for comparison
     min_dt = datetime.min.replace(tzinfo=UK_TZ)
     all_entries.sort(
         key=lambda e: e.timestamp.replace(tzinfo=UK_TZ) if e.timestamp and e.timestamp.tzinfo is None
@@ -460,39 +667,214 @@ async def get_unified_logs(
         reverse=True
     )
 
+    # Merge tracebacks (F9)
+    all_entries = _merge_tracebacks(all_entries)
+
+    # Group consecutive similar entries (F4)
+    if group:
+        all_entries = _group_consecutive(all_entries)
+
     # Apply final pagination
     paginated_entries = all_entries[offset:offset + limit]
 
     return {
         "logs": [e.to_dict() for e in paginated_entries],
         "total": total_count,
-        "has_more": (offset + limit) < total_count
+        "has_more": (offset + limit) < len(all_entries)
+    }
+
+
+@router.get("/histogram")
+async def get_log_histogram(
+    hours: int = Query(6, ge=1, le=48, description="Hours to look back (default 6)"),
+    buckets: int = Query(60, ge=10, le=120, description="Number of time buckets (default 60)"),
+    source: Optional[str] = Query(None, description="Filter by source"),
+) -> dict:
+    """Get log volume histogram for the stacked bar chart (F1).
+
+    Returns array of time buckets with severity counts per bucket.
+    """
+    now = datetime.now(UK_TZ)
+    since = now - timedelta(hours=hours)
+    bucket_duration = timedelta(hours=hours) / buckets
+
+    # Initialize buckets
+    histogram = []
+    for i in range(buckets):
+        bucket_start = since + (bucket_duration * i)
+        histogram.append({
+            "timestamp": bucket_start.isoformat(),
+            "counts": {"DEBUG": 0, "INFO": 0, "WARNING": 0, "ERROR": 0}
+        })
+
+    # Parse entries from all files
+    entries = _parse_all_entries(
+        source_filter=source,
+        since=since,
+        max_per_file=5000,
+    )
+
+    for entry in entries:
+        if not entry.timestamp:
+            continue
+
+        ts = entry.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UK_TZ)
+
+        # Calculate bucket index
+        elapsed = (ts - since).total_seconds()
+        bucket_idx = min(int(elapsed / bucket_duration.total_seconds()), buckets - 1)
+        if 0 <= bucket_idx < buckets:
+            level = entry.level
+            if level in ("CRITICAL", "ERROR"):
+                histogram[bucket_idx]["counts"]["ERROR"] += 1
+            elif level in ("WARNING", "WARN"):
+                histogram[bucket_idx]["counts"]["WARNING"] += 1
+            elif level == "DEBUG":
+                histogram[bucket_idx]["counts"]["DEBUG"] += 1
+            else:
+                histogram[bucket_idx]["counts"]["INFO"] += 1
+
+    return {
+        "histogram": histogram,
+        "hours": hours,
+        "buckets": buckets,
+        "bucket_seconds": int(bucket_duration.total_seconds()),
+    }
+
+
+@router.get("/facets")
+async def get_log_facets(
+    hours: int = Query(6, ge=1, le=48, description="Hours to look back"),
+    source: Optional[str] = Query(None, description="Filter by source"),
+    level: Optional[str] = Query(None, description="Filter by level"),
+) -> dict:
+    """Get faceted counts for sources, levels, and top patterns (F3)."""
+    since = datetime.now(UK_TZ) - timedelta(hours=hours)
+
+    level_filter = None
+    if level:
+        level_filter = [l.upper().strip() for l in level.split(',')]
+
+    entries = _parse_all_entries(
+        source_filter=source,
+        level_filter=level_filter,
+        since=since,
+        max_per_file=3000,
+    )
+
+    # Aggregate counts
+    source_counts: Dict[str, int] = defaultdict(int)
+    level_counts: Dict[str, int] = defaultdict(int)
+    pattern_counts: Dict[str, dict] = defaultdict(lambda: {"count": 0, "sample": ""})
+
+    for entry in entries:
+        source_counts[entry.source] += 1
+
+        lvl = entry.level
+        if lvl in ("WARN",):
+            lvl = "WARNING"
+        if lvl in ("CRITICAL",):
+            lvl = "ERROR"
+        level_counts[lvl] += 1
+
+        key = normalize_message(entry.message)
+        pattern_counts[key]["count"] += 1
+        if not pattern_counts[key]["sample"]:
+            pattern_counts[key]["sample"] = entry.message[:200]
+
+    # Build response
+    sources = [
+        {"name": s, "display_name": LOG_SOURCES.get(s, {}).get("display_name", s), "count": c}
+        for s, c in sorted(source_counts.items(), key=lambda x: -x[1])
+    ]
+
+    levels = [
+        {"name": l, "count": c}
+        for l, c in sorted(level_counts.items(), key=lambda x: -LOG_LEVELS.get(x[0], 0))
+    ]
+
+    top_patterns = sorted(pattern_counts.values(), key=lambda x: -x["count"])[:10]
+    patterns = [
+        {"pattern": p["sample"][:100], "count": p["count"], "sample": p["sample"]}
+        for p in top_patterns
+    ]
+
+    return {
+        "sources": sources,
+        "levels": levels,
+        "top_patterns": patterns,
+    }
+
+
+@router.get("/context")
+async def get_log_context(
+    source: str = Query(..., description="Log source name"),
+    timestamp: str = Query(..., description="ISO timestamp of the target log entry"),
+    lines: int = Query(5, ge=1, le=20, description="Lines before/after"),
+) -> dict:
+    """Get surrounding log lines for context (F6).
+
+    Returns N lines before and after the given timestamp from the same source.
+    """
+    try:
+        target_ts = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+    except ValueError as e:
+        raise HTTPException(400, f"Invalid timestamp: {e}")
+
+    log_files = _get_log_files(source)
+    if not log_files:
+        return {"before": [], "after": [], "source": source}
+
+    # Parse all entries from this source
+    all_entries = []
+    for src_name, file_path in log_files:
+        file_lines = _read_file_lines(file_path, max_lines=2000, from_end=True)
+        file_lines.reverse()
+        for line in file_lines:
+            entry = LogParser.parse_line(line.strip(), src_name)
+            if entry:
+                all_entries.append(entry)
+
+    # Sort chronologically
+    min_dt = datetime.min.replace(tzinfo=UK_TZ)
+    all_entries.sort(
+        key=lambda e: e.timestamp.replace(tzinfo=UK_TZ) if e.timestamp and e.timestamp.tzinfo is None
+            else (e.timestamp or min_dt)
+    )
+
+    # Find closest entry to target timestamp
+    closest_idx = 0
+    min_diff = float('inf')
+    for i, entry in enumerate(all_entries):
+        if entry.timestamp:
+            ts = entry.timestamp
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UK_TZ)
+            diff = abs((ts - target_ts).total_seconds())
+            if diff < min_diff:
+                min_diff = diff
+                closest_idx = i
+
+    # Extract context window
+    start = max(0, closest_idx - lines)
+    end = min(len(all_entries), closest_idx + lines + 1)
+
+    before = [e.to_dict() for e in all_entries[start:closest_idx]]
+    after = [e.to_dict() for e in all_entries[closest_idx + 1:end]]
+
+    return {
+        "before": before,
+        "target": all_entries[closest_idx].to_dict() if all_entries else None,
+        "after": after,
+        "source": source,
     }
 
 
 @router.get("/sources")
 async def get_log_sources() -> dict:
-    """Get available log sources and their stats.
-
-    Returns information about each log source including file size,
-    last modified time, and line count.
-
-    Returns:
-    ```json
-    {
-      "sources": [
-        {
-          "name": "discord_bot",
-          "display_name": "Discord Bot",
-          "file": "logs/discord_bot-20260205.log",
-          "size_bytes": 1234567,
-          "last_modified": "2026-02-05T12:00:00Z",
-          "line_count": 5000
-        }
-      ]
-    }
-    ```
-    """
+    """Get available log sources and their stats."""
     sources = []
 
     for src_name, config in LOG_SOURCES.items():
@@ -546,25 +928,7 @@ async def get_log_tail(
     source: str = Query(..., description="Log source name"),
     lines: int = Query(50, ge=1, le=500, description="Number of lines to return (default 50)")
 ) -> dict:
-    """Get the last N lines from a specific source.
-
-    Provides quick access to recent log entries for a specific source
-    without full parsing and filtering.
-
-    Query Parameters:
-    - source: Log source name (required)
-    - lines: Number of lines to return (default 50, max 500)
-
-    Returns:
-    ```json
-    {
-      "source": "discord_bot",
-      "lines": [
-        {"timestamp": "...", "level": "INFO", "message": "..."}
-      ]
-    }
-    ```
-    """
+    """Get the last N lines from a specific source."""
     if source not in LOG_SOURCES and source != "bot":
         raise HTTPException(400, f"Unknown source: {source}. Valid sources: {list(LOG_SOURCES.keys())}")
 
@@ -602,31 +966,7 @@ async def get_log_tail(
 async def get_recent_errors(
     hours: int = Query(24, ge=1, le=168, description="Hours to look back (default 24, max 168)")
 ) -> dict:
-    """Get recent errors across all sources.
-
-    Aggregates error-level log entries from the specified time period
-    and groups them by message pattern to show frequency.
-
-    Query Parameters:
-    - hours: Hours to look back (default 24, max 168 = 1 week)
-
-    Returns:
-    ```json
-    {
-      "errors": [
-        {
-          "timestamp": "...",
-          "source": "hadley_api",
-          "message": "Connection refused to database",
-          "count": 3,
-          "first_seen": "...",
-          "last_seen": "..."
-        }
-      ],
-      "total_errors_24h": 15
-    }
-    ```
-    """
+    """Get recent errors across all sources."""
     since = datetime.now(UK_TZ) - timedelta(hours=hours)
 
     # Get all log files
@@ -656,13 +996,7 @@ async def get_recent_errors(
         for entry in entries:
             total_errors += 1
 
-            # Create a simplified key for grouping similar errors
-            # Remove specific values like IDs, timestamps, ports
-            key_message = re.sub(r'\d+\.\d+\.\d+\.\d+:\d+', '<IP>', entry.message)
-            key_message = re.sub(r':\d+', ':<PORT>', key_message)
-            key_message = re.sub(r'\b[0-9a-f]{8,}\b', '<ID>', key_message, flags=re.I)
-            key_message = key_message[:100]  # Truncate for grouping
-
+            key_message = normalize_message(entry.message)
             key = f"{entry.source}:{key_message}"
 
             error_info = error_map[key]
@@ -698,28 +1032,7 @@ async def get_recent_errors(
 
 @router.get("/stats")
 async def get_log_stats() -> dict:
-    """Get overall log statistics.
-
-    Returns summary statistics about log volume and error rates
-    across all sources.
-
-    Returns:
-    ```json
-    {
-      "total_files": 15,
-      "total_size_bytes": 12345678,
-      "by_source": {
-        "discord_bot": {"files": 5, "size_bytes": 1234567},
-        "hadley_api": {"files": 5, "size_bytes": 2345678}
-      },
-      "recent_activity": {
-        "logs_1h": 150,
-        "logs_24h": 5000,
-        "errors_24h": 12
-      }
-    }
-    ```
-    """
+    """Get overall log statistics."""
     total_files = 0
     total_size = 0
     by_source: Dict[str, dict] = {}

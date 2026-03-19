@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 
 import requests
 
@@ -19,6 +20,10 @@ logger = logging.getLogger(__name__)
 EVOLUTION_URL = os.getenv("EVOLUTION_API_URL", "http://localhost:8085")
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "peter-whatsapp-2026-hadley")
 EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "peter-whatsapp")
+
+# Retry config
+MAX_RETRIES = 3
+RETRY_BACKOFF = [2, 5, 10]  # seconds between retries
 
 # Known contacts
 CONTACTS = {
@@ -62,6 +67,53 @@ def _discord_to_whatsapp_markdown(text: str) -> str:
     return text
 
 
+def _send_with_retry(method: str, url: str, payload: dict, timeout: int = 15) -> dict:
+    """Send a request to Evolution API with retry and backoff.
+
+    Retries on connection errors and 5xx responses. Does NOT retry on
+    4xx (bad request) since those won't self-heal.
+
+    Returns:
+        API response dict or error dict with "error" key
+    """
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = requests.request(
+                method, url, headers=HEADERS, json=payload, timeout=timeout,
+            )
+
+            if resp.ok:
+                if attempt > 0:
+                    logger.info(f"WhatsApp send succeeded on retry {attempt}")
+                return resp.json()
+
+            # Don't retry client errors (4xx)
+            if 400 <= resp.status_code < 500:
+                logger.error(f"WhatsApp send failed ({resp.status_code}): {resp.text[:200]}")
+                return {"error": resp.text, "status": resp.status_code}
+
+            # Server error — retry
+            last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+            logger.warning(f"WhatsApp send attempt {attempt + 1}/{MAX_RETRIES} "
+                           f"failed ({resp.status_code}), retrying...")
+
+        except requests.ConnectionError as e:
+            last_error = f"Connection error: {e}"
+            logger.warning(f"WhatsApp send attempt {attempt + 1}/{MAX_RETRIES} "
+                           f"connection failed, retrying...")
+        except requests.RequestException as e:
+            last_error = str(e)
+            logger.warning(f"WhatsApp send attempt {attempt + 1}/{MAX_RETRIES} "
+                           f"error: {e}, retrying...")
+
+        if attempt < MAX_RETRIES - 1:
+            time.sleep(RETRY_BACKOFF[attempt])
+
+    logger.error(f"WhatsApp send failed after {MAX_RETRIES} attempts: {last_error}")
+    return {"error": last_error, "retries_exhausted": True}
+
+
 def send_text_sync(number: str, text: str) -> dict:
     """Send a text message synchronously.
 
@@ -77,27 +129,14 @@ def send_text_sync(number: str, text: str) -> dict:
         number = _format_number(number)
     text = _discord_to_whatsapp_markdown(text)
 
-    try:
-        resp = requests.post(
-            f"{EVOLUTION_URL}/message/sendText/{EVOLUTION_INSTANCE}",
-            headers=HEADERS,
-            json={
-                "number": number,
-                "text": text,
-            },
-            timeout=15,
-        )
-
-        if resp.ok:
-            logger.info(f"WhatsApp sent to {number}")
-            return resp.json()
-        else:
-            logger.error(f"WhatsApp send failed ({resp.status_code}): {resp.text[:200]}")
-            return {"error": resp.text, "status": resp.status_code}
-
-    except requests.RequestException as e:
-        logger.error(f"WhatsApp send error: {e}")
-        return {"error": str(e)}
+    result = _send_with_retry(
+        "POST",
+        f"{EVOLUTION_URL}/message/sendText/{EVOLUTION_INSTANCE}",
+        {"number": number, "text": text},
+    )
+    if "error" not in result:
+        logger.info(f"WhatsApp sent to {number}")
+    return result
 
 
 async def send_text(number: str, text: str) -> dict:
@@ -142,22 +181,14 @@ async def send_to_group(group_key: str, text: str) -> dict:
     text = _discord_to_whatsapp_markdown(text)
 
     def _send():
-        try:
-            resp = requests.post(
-                f"{EVOLUTION_URL}/message/sendText/{EVOLUTION_INSTANCE}",
-                headers=HEADERS,
-                json={"number": group_jid, "text": text},
-                timeout=15,
-            )
-            if resp.ok:
-                logger.info(f"WhatsApp sent to group {group_key}")
-                return resp.json()
-            else:
-                logger.error(f"WhatsApp group send failed ({resp.status_code}): {resp.text[:200]}")
-                return {"error": resp.text, "status": resp.status_code}
-        except requests.RequestException as e:
-            logger.error(f"WhatsApp group send error: {e}")
-            return {"error": str(e)}
+        result = _send_with_retry(
+            "POST",
+            f"{EVOLUTION_URL}/message/sendText/{EVOLUTION_INSTANCE}",
+            {"number": group_jid, "text": text},
+        )
+        if "error" not in result:
+            logger.info(f"WhatsApp sent to group {group_key}")
+        return result
 
     return await asyncio.to_thread(_send)
 
@@ -175,27 +206,15 @@ def send_audio_sync(number: str, audio_base64: str) -> dict:
     if "@" not in number:
         number = _format_number(number)
 
-    try:
-        resp = requests.post(
-            f"{EVOLUTION_URL}/message/sendWhatsAppAudio/{EVOLUTION_INSTANCE}",
-            headers=HEADERS,
-            json={
-                "number": number,
-                "audio": audio_base64,
-            },
-            timeout=30,
-        )
-
-        if resp.ok:
-            logger.info(f"WhatsApp audio sent to {number}")
-            return resp.json()
-        else:
-            logger.error(f"WhatsApp audio send failed ({resp.status_code}): {resp.text[:200]}")
-            return {"error": resp.text, "status": resp.status_code}
-
-    except requests.RequestException as e:
-        logger.error(f"WhatsApp audio send error: {e}")
-        return {"error": str(e)}
+    result = _send_with_retry(
+        "POST",
+        f"{EVOLUTION_URL}/message/sendWhatsAppAudio/{EVOLUTION_INSTANCE}",
+        {"number": number, "audio": audio_base64},
+        timeout=30,
+    )
+    if "error" not in result:
+        logger.info(f"WhatsApp audio sent to {number}")
+    return result
 
 
 async def send_audio(number: str, audio_base64: str) -> dict:

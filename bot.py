@@ -4,6 +4,10 @@ A modular Discord bot with AI coaching/assistance via Claude API.
 Routes messages to domain handlers based on channel.
 """
 
+# Suppress RequestsDependencyWarning spam before any requests import
+import warnings
+warnings.filterwarnings("ignore", message="urllib3.*or chardet.*doesn't match")
+
 import asyncio
 import io
 import os
@@ -98,6 +102,26 @@ MESSAGE_DEDUP_SECONDS = 5
 USE_PETERBOT_SCHEDULER = True  # Phase 7b complete - skills created
 peterbot_scheduler = None  # Initialized in on_ready
 _ready_initialized = False  # Guard against multiple on_ready calls
+
+
+def _create_logged_task(coro, name: str = None):
+    """Create an asyncio task with exception logging.
+
+    Replaces bare asyncio.create_task() to ensure background task exceptions
+    are logged instead of silently swallowed.
+    """
+    task = asyncio.create_task(coro, name=name)
+
+    def _on_done(t):
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc:
+            logger.error(f"Background task {name or 'unnamed'} failed: {exc}", exc_info=exc)
+
+    task.add_done_callback(_on_done)
+    return task
+
 
 def _tracked_job(job_id: str, func):
     """Wrap a legacy async job function with execution tracking and failure alerting.
@@ -334,6 +358,17 @@ async def on_ready():
             return aio_web.json_response({"error": str(e)}, status=500)
 
     async def _start_whatsapp_server():
+        # Pre-check port availability before attempting to bind
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(("127.0.0.1", 8101))
+            sock.close()
+        except OSError:
+            logger.warning("WhatsApp port 8101 already in use — skipping server start")
+            sock.close()
+            return
+
         app = aio_web.Application()
         app.router.add_post("/whatsapp/message", _whatsapp_handler)
         runner = aio_web.AppRunner(app)
@@ -342,7 +377,7 @@ async def on_ready():
         await site.start()
         logger.info("WhatsApp internal server listening on 127.0.0.1:8101")
 
-    asyncio.create_task(_start_whatsapp_server())
+    _create_logged_task(_start_whatsapp_server())
     logger.info("WhatsApp incoming message routing registered (port 8101)")
 
     # Reprocess pending passive captures — every 6 hours
@@ -797,10 +832,10 @@ async def on_message(message):
 
             # Passive capture: fire-and-forget async task for URL/idea detection
             # This runs in background after response is sent
-            asyncio.create_task(_passive_capture_check(
+            _create_logged_task(_passive_capture_check(
                 message.content,
                 message.channel.name
-            ))
+            ), name="passive_capture")
 
         return
 

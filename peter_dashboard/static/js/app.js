@@ -373,6 +373,11 @@ const Router = {
         item.classList.toggle('active', item.dataset.route === path);
       });
 
+      // Cleanup previous view (e.g. stop live tail timers)
+      if (this.currentView && typeof this.currentView.destroy === 'function') {
+        this.currentView.destroy();
+      }
+
       // Render view
       const content = document.getElementById('main-content');
       if (content && typeof view.render === 'function') {
@@ -437,6 +442,7 @@ const Components = {
       up: 'running',
       down: 'error',
       running: 'running',
+      success: 'running',
       paused: 'paused',
       error: 'error',
       idle: 'idle',
@@ -817,6 +823,8 @@ const Modal = {
  * Detail Panel
  */
 const DetailPanel = {
+  _backdropHandler: null,
+
   open(content) {
     const panel = document.getElementById('detail-panel');
     const panelContent = document.getElementById('detail-panel-content');
@@ -825,6 +833,17 @@ const DetailPanel = {
       panelContent.innerHTML = content;
       panel.classList.add('open');
       State.set({ detailPanelOpen: true });
+
+      // Click outside to close (delayed to avoid immediate trigger)
+      if (this._backdropHandler) document.removeEventListener('mousedown', this._backdropHandler);
+      setTimeout(() => {
+        this._backdropHandler = (e) => {
+          if (!panel.contains(e.target)) {
+            this.close();
+          }
+        };
+        document.addEventListener('mousedown', this._backdropHandler);
+      }, 100);
     }
   },
 
@@ -833,6 +852,10 @@ const DetailPanel = {
     if (panel) {
       panel.classList.remove('open');
       State.set({ detailPanelOpen: false, selectedItem: null });
+    }
+    if (this._backdropHandler) {
+      document.removeEventListener('mousedown', this._backdropHandler);
+      this._backdropHandler = null;
     }
   },
 
@@ -913,7 +936,7 @@ const Icons = {
 // =============================================================================
 
 /**
- * Dashboard View - Overview and quick stats
+ * Dashboard View - Dense overview with live data
  */
 const DashboardView = {
   title: 'Dashboard',
@@ -921,46 +944,41 @@ const DashboardView = {
   async render(container) {
     container.innerHTML = `
       <div class="animate-fade-in">
-        <div class="grid grid-cols-4 gap-md mb-lg" id="stats-cards">
-          ${Components.skeleton('card')}
-          ${Components.skeleton('card')}
-          ${Components.skeleton('card')}
-          ${Components.skeleton('card')}
+        <div class="dash-services" id="dash-services">
+          <div class="dash-svc-pill skeleton" style="width:120px;height:28px"></div>
+          <div class="dash-svc-pill skeleton" style="width:120px;height:28px"></div>
+          <div class="dash-svc-pill skeleton" style="width:120px;height:28px"></div>
         </div>
 
-        <div class="grid grid-cols-3 gap-md mb-lg" id="services-grid">
-          ${Components.skeleton('card')}
-          ${Components.skeleton('card')}
-          ${Components.skeleton('card')}
+        <div class="dash-stats" id="dash-stats">
+          <div class="dash-stat skeleton" style="height:48px"></div>
+          <div class="dash-stat skeleton" style="height:48px"></div>
+          <div class="dash-stat skeleton" style="height:48px"></div>
+          <div class="dash-stat skeleton" style="height:48px"></div>
         </div>
 
-        <div class="card mb-lg">
-          <div class="card-header">
-            <h3 class="card-title">Recent Activity</h3>
-            <button class="btn btn-sm btn-secondary" onclick="DashboardView.refresh()">
+        <div class="dash-activity" id="dash-activity">
+          <div class="dash-activity-header">
+            <span class="dash-activity-title">Recent Activity</span>
+            <button class="btn btn-sm btn-ghost" onclick="DashboardView.refresh()">
               ${Icons.refresh} Refresh
             </button>
           </div>
-          <div class="card-body" id="recent-activity">
+          <div id="dash-activity-body">
             ${Components.skeleton('table', 5)}
           </div>
         </div>
 
-        <div class="grid grid-cols-2 gap-md">
-          <div class="card">
-            <div class="card-header">
-              <h3 class="card-title">Upcoming Jobs</h3>
-            </div>
-            <div class="card-body" id="upcoming-jobs">
-              ${Components.skeleton('text', 5)}
+        <div class="dash-bottom" id="dash-bottom">
+          <div class="dash-panel">
+            <div class="dash-panel-header">Upcoming Jobs</div>
+            <div class="dash-panel-body" id="dash-upcoming">
+              ${Components.skeleton('text', 4)}
             </div>
           </div>
-
-          <div class="card">
-            <div class="card-header">
-              <h3 class="card-title">Recent Errors</h3>
-            </div>
-            <div class="card-body" id="recent-errors">
+          <div class="dash-panel" id="dash-errors-panel">
+            <div class="dash-panel-header">Recent Errors</div>
+            <div class="dash-panel-body" id="dash-errors">
               ${Components.skeleton('text', 3)}
             </div>
           </div>
@@ -973,29 +991,32 @@ const DashboardView = {
 
   async loadData() {
     try {
-      // Load system status
-      const status = await API.get('/api/status');
-      this.renderStats(status);
-      this.renderServices(status.services);
+      // Fire all API calls in parallel
+      const [status, jobsData, statsData, execData] = await Promise.all([
+        API.get('/api/status').catch(() => null),
+        API.get('/api/jobs').catch(() => null),
+        API.get('/api/job-stats').catch(() => null),
+        API.get('/api/jobs/executions?limit=15').catch(() => null),
+      ]);
 
-      // Load jobs for activity
-      try {
-        const jobsData = await API.get('/api/jobs');
-        if (jobsData && jobsData.jobs) {
-          State.set({ jobs: jobsData.jobs });
-          this.renderActivity(jobsData.jobs);
-          this.renderUpcoming(jobsData.jobs);
-        }
-      } catch (error) {
-        console.log('Jobs API not available:', error);
-        document.getElementById('recent-activity').innerHTML = '<p class="text-muted p-md">Job data not available</p>';
-        document.getElementById('upcoming-jobs').innerHTML = '<p class="text-muted">Job data not available</p>';
+      if (status) {
+        this.renderServices(status.services || {});
       }
 
-      // Render recent errors placeholder
-      document.getElementById('recent-errors').innerHTML = `
-        <div class="text-muted text-center p-md">No recent errors</div>
-      `;
+      this.renderStats(status, statsData);
+
+      if (jobsData && jobsData.jobs) {
+        State.set({ jobs: jobsData.jobs });
+        this.renderUpcoming(jobsData.jobs);
+      }
+
+      if (execData && execData.executions) {
+        this.renderActivity(execData.executions);
+      } else if (jobsData && jobsData.jobs) {
+        this.renderActivityFromJobs(jobsData.jobs);
+      }
+
+      this.renderErrors(statsData);
 
     } catch (error) {
       console.error('Failed to load dashboard data:', error);
@@ -1003,112 +1024,176 @@ const DashboardView = {
     }
   },
 
-  renderStats(status) {
-    const services = status.services || {};
-    const runningServices = Object.values(services).filter(s => s.status === 'up').length;
-    const totalServices = Object.keys(services).length;
-
-    const statsHtml = `
-      ${Components.statsCard({
-        icon: Icons.activity,
-        value: `${runningServices}/${totalServices}`,
-        label: 'Services Running',
-        variant: runningServices === totalServices ? 'success' : 'warning'
-      })}
-      ${Components.statsCard({
-        icon: Icons.checkCircle,
-        value: '95.6%',
-        label: 'Success Rate (24h)',
-        trend: 2.3,
-        variant: 'success'
-      })}
-      ${Components.statsCard({
-        icon: Icons.alertCircle,
-        value: '0',
-        label: 'Errors Today',
-        variant: 'info'
-      })}
-      ${Components.statsCard({
-        icon: Icons.clock,
-        value: '99.9%',
-        label: 'Uptime',
-        variant: 'info'
-      })}
-    `;
-
-    document.getElementById('stats-cards').innerHTML = statsHtml;
-  },
-
   renderServices(services) {
-    const serviceCards = Object.entries(services).map(([key, svc]) => {
-      const details = [];
-      if (svc.port) details.push({ label: 'Port', value: svc.port });
-      if (svc.pid) details.push({ label: 'PID', value: svc.pid });
-      if (svc.latency_ms) details.push({ label: 'Latency', value: `${svc.latency_ms}ms` });
-      if (svc.last_restart) details.push({ label: 'Last Restart', value: Utils.formatRelativeTime(svc.last_restart) });
-
-      return Components.serviceCard({
-        name: Format.serviceName(key),
-        status: svc.status,
-        details,
-        actions: [
-          { label: 'Restart', onclick: `App.restartService('${key}')` },
-        ]
-      });
+    const html = Object.entries(services).map(([key, svc]) => {
+      const latency = svc.latency_ms ? `<span class="dash-svc-latency">${Math.round(svc.latency_ms)}ms</span>` : '';
+      const port = svc.port ? `<span class="dash-svc-port">:${svc.port}</span>` : '';
+      return `
+        <div class="dash-svc-pill" title="${Format.serviceName(key)}${svc.last_restart ? ' — restarted ' + Utils.formatRelativeTime(svc.last_restart) : ''}">
+          <span class="dash-svc-dot ${svc.status}"></span>
+          <span>${Format.serviceName(key)}</span>${port} ${latency}
+        </div>
+      `;
     }).join('');
 
-    document.getElementById('services-grid').innerHTML = serviceCards;
+    document.getElementById('dash-services').innerHTML = html;
   },
 
-  renderActivity(jobs) {
-    // Show recent runs (mock data for now since we don't have actual run history)
-    const recentRuns = jobs.slice(0, 5).map(job => ({
-      time: job.last_run || new Date().toISOString(),
-      name: job.name || job.id,
-      status: job.last_success !== false ? 'running' : 'error',
-      duration: job.last_duration_ms ? `${Math.round(job.last_duration_ms / 1000)}s` : '-'
-    }));
+  renderStats(status, statsData) {
+    const services = status ? status.services || {} : {};
+    const running = Object.values(services).filter(s => s.status === 'up').length;
+    const total = Object.keys(services).length;
+
+    const successRate = statsData ? statsData.success_rate_24h : '-';
+    const errors = statsData ? statsData.errors_24h : '-';
+    const avgDuration = statsData && statsData.avg_duration_ms
+      ? (statsData.avg_duration_ms / 1000).toFixed(1) + 's'
+      : '-';
+
+    const svcVariant = running === total ? 'success' : 'warning';
+    const errVariant = (errors === 0 || errors === '-') ? 'info' : 'error';
+    const rateVariant = (successRate >= 95) ? 'success' : (successRate >= 80) ? 'warning' : 'error';
 
     const html = `
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Job</th>
-            <th>Status</th>
-            <th>Duration</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${recentRuns.map(run => `
-            <tr>
-              <td>${Format.time(run.time)}</td>
-              <td>${run.name}</td>
-              <td>${Components.statusBadge(run.status === 'running' ? 'running' : 'error')}</td>
-              <td>${run.duration}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
+      <div class="dash-stat">
+        <div class="dash-stat-icon ${svcVariant}">${Icons.activity}</div>
+        <div>
+          <div class="dash-stat-value">${running}/${total}</div>
+          <div class="dash-stat-label">Services</div>
+        </div>
+      </div>
+      <div class="dash-stat">
+        <div class="dash-stat-icon ${rateVariant}">${Icons.checkCircle}</div>
+        <div>
+          <div class="dash-stat-value">${successRate}%</div>
+          <div class="dash-stat-label">Success (24h)</div>
+        </div>
+      </div>
+      <div class="dash-stat">
+        <div class="dash-stat-icon ${errVariant}">${Icons.alertCircle}</div>
+        <div>
+          <div class="dash-stat-value">${errors}</div>
+          <div class="dash-stat-label">Errors (24h)</div>
+        </div>
+      </div>
+      <div class="dash-stat">
+        <div class="dash-stat-icon info">${Icons.clock}</div>
+        <div>
+          <div class="dash-stat-value">${avgDuration}</div>
+          <div class="dash-stat-label">Avg Duration</div>
+        </div>
+      </div>
     `;
 
-    document.getElementById('recent-activity').innerHTML = html;
+    document.getElementById('dash-stats').innerHTML = html;
+  },
+
+  renderActivity(executions) {
+    const rows = executions.slice(0, 12).map(exec => {
+      const duration = exec.duration_ms ? `${(exec.duration_ms / 1000).toFixed(1)}s` : '-';
+      const statusBadge = Components.statusBadge(exec.status);
+      const jobName = (exec.job_id || '').replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      return `
+        <tr>
+          <td style="white-space:nowrap">${Format.time(exec.started_at)}</td>
+          <td>${Utils.escapeHtml(jobName)}</td>
+          <td>${statusBadge}</td>
+          <td style="font-family:var(--font-mono);font-size:var(--text-xs)">${duration}</td>
+        </tr>
+      `;
+    }).join('');
+
+    document.getElementById('dash-activity-body').innerHTML = `
+      <table class="dash-table">
+        <thead>
+          <tr>
+            <th style="width:80px">Time</th>
+            <th>Job</th>
+            <th style="width:80px">Status</th>
+            <th style="width:70px">Duration</th>
+          </tr>
+        </thead>
+        <tbody>${rows || '<tr><td colspan="4" class="dash-empty">No recent executions</td></tr>'}</tbody>
+      </table>
+    `;
+  },
+
+  renderActivityFromJobs(jobs) {
+    const recentJobs = jobs
+      .filter(j => j.last_run)
+      .sort((a, b) => new Date(b.last_run) - new Date(a.last_run))
+      .slice(0, 10);
+
+    const rows = recentJobs.map(job => {
+      const duration = job.last_duration_ms ? `${(job.last_duration_ms / 1000).toFixed(1)}s` : '-';
+      const status = job.last_success !== false ? 'running' : 'error';
+      return `
+        <tr>
+          <td style="white-space:nowrap">${Format.time(job.last_run)}</td>
+          <td>${Utils.escapeHtml(job.name || job.id)}</td>
+          <td>${Components.statusBadge(status)}</td>
+          <td style="font-family:var(--font-mono);font-size:var(--text-xs)">${duration}</td>
+        </tr>
+      `;
+    }).join('');
+
+    document.getElementById('dash-activity-body').innerHTML = `
+      <table class="dash-table">
+        <thead>
+          <tr>
+            <th style="width:80px">Time</th>
+            <th>Job</th>
+            <th style="width:80px">Status</th>
+            <th style="width:70px">Duration</th>
+          </tr>
+        </thead>
+        <tbody>${rows || '<tr><td colspan="4" class="dash-empty">No recent activity</td></tr>'}</tbody>
+      </table>
+    `;
   },
 
   renderUpcoming(jobs) {
     const upcoming = jobs
       .filter(j => j.next_run && j.enabled !== false)
       .sort((a, b) => new Date(a.next_run) - new Date(b.next_run))
-      .slice(0, 5);
+      .slice(0, 8);
 
-    const html = upcoming.length ? upcoming.map(job => `
-      <div class="flex justify-between items-center py-sm border-b">
-        <span>${job.name || job.id}</span>
-        <span class="text-muted text-sm">${Format.relativeTime(job.next_run)}</span>
-      </div>
-    `).join('') : '<p class="text-muted">No upcoming jobs</p>';
+    const html = upcoming.length
+      ? upcoming.map(job => `
+          <div class="dash-upcoming-item">
+            <span>${Utils.escapeHtml(job.name || job.id)}</span>
+            <span class="dash-upcoming-time">${Format.relativeTime(job.next_run)}</span>
+          </div>
+        `).join('')
+      : '<div class="dash-empty">No upcoming jobs</div>';
 
-    document.getElementById('upcoming-jobs').innerHTML = html;
+    document.getElementById('dash-upcoming').innerHTML = html;
+  },
+
+  renderErrors(statsData) {
+    const failures = statsData && statsData.recent_failures ? statsData.recent_failures : [];
+    const panel = document.getElementById('dash-errors-panel');
+
+    if (!failures.length) {
+      // Hide errors panel entirely, make upcoming full width
+      if (panel) panel.style.display = 'none';
+      const bottom = document.getElementById('dash-bottom');
+      if (bottom) bottom.style.gridTemplateColumns = '1fr';
+      return;
+    }
+
+    const html = failures.slice(0, 5).map(f => {
+      const jobName = (f.job_id || '').replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      return `
+        <div class="dash-error-item">
+          <div class="dash-error-job">${Utils.escapeHtml(jobName)}</div>
+          ${f.error ? `<div class="dash-error-msg" title="${Utils.escapeHtml(f.error)}">${Utils.escapeHtml(f.error)}</div>` : ''}
+          <div class="dash-error-time">${Format.relativeTime(f.timestamp)}</div>
+        </div>
+      `;
+    }).join('');
+
+    document.getElementById('dash-errors').innerHTML = html;
   },
 
   async refresh() {
@@ -2962,23 +3047,65 @@ const ServicesView = {
 const SkillsView = {
   title: 'Skills',
   skills: [],
+  filtered: [],
+  // Current filter state
+  _sourceFilter: 'all',
+  _typeFilter: 'all',
+  _projectFilter: 'all',
+  _categoryFilter: 'all',
+  _searchQuery: '',
+
+  // Source display names and CSS class suffixes
+  _sourceLabels: {
+    'peterbot': 'Peterbot',
+    'global-skill': 'Global Skill',
+    'project-command': 'Project Command',
+    'global-command': 'Global Command',
+  },
 
   async render(container) {
     container.innerHTML = `
       <div class="animate-fade-in">
         <div class="flex justify-between items-center mb-lg">
           <div>
-            <h2>Skills Browser</h2>
-            <p class="text-secondary">Browse available skills and their configurations</p>
+            <h2>Skills Directory</h2>
+            <p class="text-secondary">Browse skills and commands from all sources</p>
           </div>
           <div class="data-table-search">
             <span class="data-table-search-icon">${Icons.search}</span>
             <input type="text" placeholder="Search skills..."
-                   oninput="SkillsView.filter(this.value)">
+                   id="skills-search-input"
+                   oninput="SkillsView.onSearch(this.value)">
           </div>
         </div>
 
-        <div class="grid grid-cols-3 gap-md" id="skills-grid">
+        <div id="skills-stats-bar" class="stats-bar"></div>
+
+        <div class="filter-bar" id="skills-filter-bar">
+          <select class="form-select" id="skills-filter-source" onchange="SkillsView.onFilterChange()">
+            <option value="all">All Sources</option>
+            <option value="peterbot">Peterbot</option>
+            <option value="global-skill">Global Skills</option>
+            <option value="project-command">Project Commands</option>
+            <option value="global-command">Global Commands</option>
+          </select>
+          <select class="form-select" id="skills-filter-type" onchange="SkillsView.onFilterChange()">
+            <option value="all">All Types</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="triggered">Triggered</option>
+            <option value="conversational">Conversational</option>
+            <option value="command">Command</option>
+          </select>
+          <select class="form-select" id="skills-filter-project" onchange="SkillsView.onFilterChange()">
+            <option value="all">All Projects</option>
+          </select>
+          <select class="form-select" id="skills-filter-category" onchange="SkillsView.onFilterChange()">
+            <option value="all">All Categories</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-4 gap-md" id="skills-grid">
+          ${Components.skeleton('card')}
           ${Components.skeleton('card')}
           ${Components.skeleton('card')}
           ${Components.skeleton('card')}
@@ -2991,10 +3118,11 @@ const SkillsView = {
 
   async loadData() {
     try {
-      const data = await API.get('/api/skills');
-      this.skills = data.skills || data || [];
+      const data = await API.get('/api/skills/directory');
+      this.skills = data.skills || [];
       State.set({ skills: this.skills });
-      this.renderSkills(this.skills);
+      this._populateFilterDropdowns();
+      this.applyFilters();
     } catch (error) {
       console.error('Failed to load skills:', error);
       document.getElementById('skills-grid').innerHTML = `
@@ -3007,6 +3135,121 @@ const SkillsView = {
         </div>
       `;
     }
+  },
+
+  _populateFilterDropdowns() {
+    // Populate project dropdown from data
+    const projects = [...new Set(
+      this.skills
+        .filter(s => s.shared_with && s.shared_with.length > 0)
+        .flatMap(s => s.shared_with)
+    )].sort();
+    const projSelect = document.getElementById('skills-filter-project');
+    if (projSelect) {
+      projSelect.innerHTML = '<option value="all">All Projects</option>' +
+        projects.map(p => `<option value="${p}">${p}</option>`).join('');
+    }
+
+    // Populate category dropdown from data
+    const categories = [...new Set(
+      this.skills
+        .filter(s => s.category)
+        .map(s => s.category)
+    )].sort();
+    const catSelect = document.getElementById('skills-filter-category');
+    if (catSelect) {
+      catSelect.innerHTML = '<option value="all">All Categories</option>' +
+        categories.map(c => `<option value="${c}">${c}</option>`).join('');
+    }
+  },
+
+  onSearch(query) {
+    this._searchQuery = query;
+    this.applyFilters();
+  },
+
+  onFilterChange() {
+    this._sourceFilter = document.getElementById('skills-filter-source')?.value || 'all';
+    this._typeFilter = document.getElementById('skills-filter-type')?.value || 'all';
+    this._projectFilter = document.getElementById('skills-filter-project')?.value || 'all';
+    this._categoryFilter = document.getElementById('skills-filter-category')?.value || 'all';
+
+    // Disable/enable contextual filters (F11, F12)
+    const projSelect = document.getElementById('skills-filter-project');
+    const catSelect = document.getElementById('skills-filter-category');
+    if (projSelect) {
+      const showProject = this._sourceFilter === 'all' || this._sourceFilter === 'project-command';
+      projSelect.disabled = !showProject;
+      if (!showProject) { projSelect.value = 'all'; this._projectFilter = 'all'; }
+    }
+    if (catSelect) {
+      const showCategory = this._sourceFilter === 'all' || this._sourceFilter === 'peterbot';
+      catSelect.disabled = !showCategory;
+      if (!showCategory) { catSelect.value = 'all'; this._categoryFilter = 'all'; }
+    }
+
+    this.applyFilters();
+  },
+
+  applyFilters() {
+    const q = this._searchQuery.toLowerCase();
+    this.filtered = this.skills.filter(s => {
+      // Source filter (F9)
+      if (this._sourceFilter !== 'all' && s.source !== this._sourceFilter) return false;
+
+      // Type filter (F10) — match if type equals OR if skill has the property
+      if (this._typeFilter !== 'all') {
+        if (this._typeFilter === 'scheduled' && !s.scheduled) return false;
+        if (this._typeFilter === 'triggered' && (!s.triggers || s.triggers.length === 0)) return false;
+        if (this._typeFilter === 'conversational' && !s.conversational) return false;
+        if (this._typeFilter === 'command' && s.type !== 'command') return false;
+      }
+
+      // Project filter (F11) — match if project equals OR project is in shared_with
+      if (this._projectFilter !== 'all') {
+        const inShared = s.shared_with && s.shared_with.includes(this._projectFilter);
+        const isProject = s.project === this._projectFilter;
+        if (!inShared && !isProject) return false;
+      }
+
+      // Category filter (F12)
+      if (this._categoryFilter !== 'all' && s.category !== this._categoryFilter) return false;
+
+      // Search (F13)
+      if (q) {
+        const name = (s.name || '').toLowerCase();
+        const desc = (s.description || '').toLowerCase();
+        const triggers = (s.triggers || []).join(' ').toLowerCase();
+        if (!name.includes(q) && !desc.includes(q) && !triggers.includes(q)) return false;
+      }
+
+      return true;
+    });
+
+    this.renderStatsBar();
+    this.renderSkills(this.filtered);
+  },
+
+  renderStatsBar() {
+    const bar = document.getElementById('skills-stats-bar');
+    if (!bar) return;
+
+    const total = this.skills.length;
+    const shown = this.filtered.length;
+    const isFiltered = shown !== total;
+
+    const bySrc = {};
+    for (const s of this.filtered) {
+      bySrc[s.source] = (bySrc[s.source] || 0) + 1;
+    }
+
+    const countText = isFiltered ? `${shown} of ${total} skills` : `${total} skills`;
+    const chips = Object.entries(this._sourceLabels)
+      .filter(([key]) => bySrc[key])
+      .map(([key, label]) => `<span class="stats-chip stats-chip-${key}">${bySrc[key]} ${label}</span>`)
+      .join('<span class="stats-bar-sep">|</span>');
+
+    bar.innerHTML = `<span class="stats-bar-total">${countText}</span><span class="stats-bar-sep">&mdash;</span>${chips}`;
   },
 
   renderSkills(skills) {
@@ -3022,43 +3265,141 @@ const SkillsView = {
       return;
     }
 
-    const html = skills.map(skill => `
-      <div class="card cursor-pointer" onclick="SkillsView.select('${skill.name || skill}')">
-        <div class="card-body">
-          <h4 class="mb-sm">${skill.name || skill}</h4>
-          <p class="text-secondary text-sm mb-md">${skill.description || 'No description'}</p>
-          <div class="flex gap-sm">
-            ${skill.scheduled ? `<span class="status-badge idle">${Icons.clock} Scheduled</span>` : ''}
-            ${skill.triggers ? `<span class="status-badge pending">${Icons.messageCircle} Triggers</span>` : ''}
+    const html = skills.map(skill => {
+      const name = skill.name || 'unknown';
+      const desc = skill.description || 'No description';
+      const sourceLabel = this._sourceLabels[skill.source] || skill.source;
+      const sourceCls = `skill-badge-source-${skill.source}`;
+      const hasTriggers = skill.triggers && skill.triggers.length > 0;
+      const runsOnCls = skill.runs_on === 'wsl' ? 'skill-runs-on-wsl' : 'skill-runs-on-win';
+      const runsOnLabel = skill.runs_on === 'wsl' ? 'WSL' : 'Win';
+
+      // Project badge (F15)
+      let projectBadge = '';
+      if (skill.project_count > 1) {
+        projectBadge = `<span class="skill-badge skill-badge-project">${skill.project_count} projects</span>`;
+      } else if (skill.project_count === 1 && skill.shared_with && skill.shared_with.length === 1) {
+        projectBadge = `<span class="skill-badge skill-badge-project">${skill.shared_with[0]}</span>`;
+      }
+
+      // Escape single quotes in ID for onclick
+      const safeId = (skill.id || '').replace(/'/g, "\\'");
+
+      return `
+        <div class="skill-card" onclick="SkillsView.select('${safeId}')">
+          <div class="skill-card-header">
+            <div class="skill-card-name">${name}</div>
+            <span class="skill-runs-on ${runsOnCls}">${runsOnLabel}</span>
+          </div>
+          <div class="skill-card-desc">${desc}</div>
+          <div class="skill-card-badges">
+            <span class="skill-badge ${sourceCls}">${sourceLabel}</span>
+            ${skill.scheduled ? `<span class="skill-badge skill-badge-scheduled">${Icons.clock} Scheduled</span>` : ''}
+            ${hasTriggers ? `<span class="skill-badge skill-badge-trigger">${Icons.messageCircle} Triggers</span>` : ''}
+            ${skill.conversational ? `<span class="skill-badge skill-badge-conversational">${Icons.messageCircle} Chat</span>` : ''}
+            ${projectBadge}
           </div>
         </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
 
     document.getElementById('skills-grid').innerHTML = html;
   },
 
   filter(query) {
-    const filtered = this.skills.filter(s => {
-      const name = (s.name || s).toLowerCase();
-      const desc = (s.description || '').toLowerCase();
-      return name.includes(query.toLowerCase()) || desc.includes(query.toLowerCase());
-    });
-    this.renderSkills(filtered);
+    // Legacy compat — redirect to new search
+    this._searchQuery = query;
+    this.applyFilters();
   },
 
-  async select(skillName) {
+  async select(skillId) {
     try {
-      const response = await API.get(`/api/skill/${skillName}`);
+      const response = await API.get(`/api/skills/directory/${encodeURIComponent(skillId)}`);
 
-      // Handle API response: { exists: bool, content: string, error?: string }
       if (!response.exists) {
-        Toast.error('Error', response.error || 'Skill not found');
+        Toast.error('Error', 'Skill not found');
         return;
       }
 
+      // Find skill metadata from the loaded list
+      const skillMeta = this.skills.find(s => s.id === skillId) || {};
+      const hasTriggers = skillMeta.triggers && skillMeta.triggers.length > 0;
+      const sourceLabel = this._sourceLabels[skillMeta.source] || skillMeta.source || '';
+      const sourceCls = `skill-badge-source-${skillMeta.source || 'peterbot'}`;
+
+      // Strip frontmatter from content for cleaner display
+      let markdown = response.content || '';
+      markdown = markdown.replace(/^---[\s\S]*?---\s*/, '');
+
+      // Shared projects chips (F19)
+      let sharedHtml = '';
+      if (skillMeta.shared_with && skillMeta.shared_with.length > 0) {
+        sharedHtml = `
+          <div class="skill-detail-row">
+            <span class="skill-detail-label">Projects</span>
+            <span class="skill-detail-value">${skillMeta.shared_with.map(p => `<span class="skill-project-chip">${p}</span>`).join('')}</span>
+          </div>
+        `;
+      }
+
+      // Last modified
+      let modifiedHtml = '';
+      if (response.last_modified || skillMeta.last_modified) {
+        const dt = response.last_modified || skillMeta.last_modified;
+        const formatted = new Date(dt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        modifiedHtml = `
+          <div class="skill-detail-row">
+            <span class="skill-detail-label">Modified</span>
+            <span class="skill-detail-value">${formatted}</span>
+          </div>
+        `;
+      }
+
+      const runsOnCls = (skillMeta.runs_on === 'wsl') ? 'skill-runs-on-wsl' : 'skill-runs-on-win';
+      const runsOnLabel = (skillMeta.runs_on === 'wsl') ? 'WSL' : 'Windows';
+
       const content = `
-        <div class="markdown-preview">${Utils.renderMarkdown(response.content)}</div>
+        <div class="skill-detail-header">
+          <div class="skill-detail-title">${response.name || skillMeta.name || skillId}</div>
+          <div class="skill-detail-desc">${skillMeta.description || ''}</div>
+          <div class="skill-detail-meta">
+            <span class="skill-badge ${sourceCls}">${sourceLabel}</span>
+            ${skillMeta.scheduled ? `<span class="skill-badge skill-badge-scheduled">${Icons.clock} Scheduled</span>` : ''}
+            ${hasTriggers ? `<span class="skill-badge skill-badge-trigger">${Icons.messageCircle} Triggers</span>` : ''}
+            ${skillMeta.conversational ? `<span class="skill-badge skill-badge-conversational">${Icons.messageCircle} Chat</span>` : ''}
+          </div>
+          ${hasTriggers ? `
+            <div class="skill-detail-triggers">
+              <div class="skill-detail-triggers-label">Trigger phrases</div>
+              <div>${skillMeta.triggers.map(t => `<span class="skill-trigger-chip">${t}</span>`).join('')}</div>
+            </div>
+          ` : ''}
+        </div>
+        <div style="padding: var(--spacing-md) var(--spacing-lg);">
+          <div class="skill-detail-row">
+            <span class="skill-detail-label">Source</span>
+            <span class="skill-detail-value"><span class="skill-badge ${sourceCls}">${sourceLabel}</span></span>
+          </div>
+          <div class="skill-detail-row">
+            <span class="skill-detail-label">Runs on</span>
+            <span class="skill-detail-value"><span class="skill-runs-on ${runsOnCls}">${runsOnLabel}</span></span>
+          </div>
+          ${sharedHtml}
+          <div class="skill-detail-row">
+            <span class="skill-detail-label">Path</span>
+            <span class="skill-detail-value skill-detail-path">${response.path || skillMeta.path || ''}</span>
+          </div>
+          ${modifiedHtml}
+          ${skillMeta.category ? `
+            <div class="skill-detail-row">
+              <span class="skill-detail-label">Category</span>
+              <span class="skill-detail-value">${skillMeta.category}</span>
+            </div>
+          ` : ''}
+        </div>
+        <div style="padding: 0 var(--spacing-lg) var(--spacing-lg);">
+          <div class="markdown-preview">${Utils.renderMarkdown(markdown)}</div>
+        </div>
       `;
 
       DetailPanel.open(content);
@@ -3070,102 +3411,573 @@ const SkillsView = {
 
 
 /**
- * Logs View - Unified log viewer
+ * Logs View - Datadog-inspired observability log viewer (F1-F10)
  */
 const LogsView = {
   title: 'Logs',
   logs: [],
   allLogs: [],
   sources: [],
-  currentSource: 'all',
-  currentLevel: 'all',
+  facets: { sources: [], levels: [], top_patterns: [] },
+  histogram: [],
+
+  // Filter state
+  activeSources: new Set(),
+  activeLevels: new Set(),
   currentSearch: '',
+  parsedQuery: { qualifiers: {}, freeText: '' },
+
+  // UI state
+  groupEnabled: true,
+  hideNoise: true,
+  liveTail: false,
+  _liveTailInterval: null,
+  _lastTimestamp: null,
+  _userScrolledUp: false,
+  _activeView: 'All',
+
+  // Saved views (F8)
+  savedViews: [
+    { name: 'All', icon: '', filters: {} },
+    { name: 'Errors Only', icon: '', filters: { level: 'ERROR,CRITICAL' } },
+    { name: 'Warnings+', icon: '', filters: { level: 'WARNING,ERROR,CRITICAL' } },
+    { name: 'Startup', icon: '', filters: { search: 'Starting logging in connected to Gateway' } },
+    { name: 'Scheduler', icon: '', filters: { search: 'scheduler job cron', source: 'discord_bot' } },
+    { name: 'HTTP Requests', icon: '', filters: { source: 'hadley_api' } },
+    { name: 'No Health Checks', icon: '', filters: { excludeNoise: true } },
+  ],
 
   async render(container) {
+    // Load saved preferences from localStorage
+    const savedHideNoise = localStorage.getItem('peter_logs_hide_noise');
+    if (savedHideNoise !== null) this.hideNoise = savedHideNoise !== 'false';
+    const savedGroup = localStorage.getItem('peter_logs_group');
+    if (savedGroup !== null) this.groupEnabled = savedGroup !== 'false';
+
     container.innerHTML = `
-      <div class="animate-fade-in">
-        <div class="flex justify-between items-center mb-lg">
-          <div>
-            <h2>System Logs</h2>
-            <p class="text-secondary">View logs from all services</p>
+      <div class="animate-fade-in logs-page">
+        <!-- Saved View Pills (F8) -->
+        <div class="saved-view-pills" id="logs-saved-views"></div>
+
+        <!-- Toolbar -->
+        <div class="logs-toolbar">
+          <div class="logs-toolbar-left">
+            <div class="logs-search-container">
+              <span class="data-table-search-icon">${Icons.search}</span>
+              <input type="text" class="logs-search-input" placeholder="Search... (source:x level:y text)"
+                     id="logs-search-input" oninput="LogsView.onSearchInput(this.value)"
+                     onkeydown="LogsView.onSearchKeydown(event)">
+            </div>
+            <div class="query-chips" id="logs-query-chips"></div>
           </div>
-          <button class="btn btn-secondary" onclick="LogsView.refresh()">
-            ${Icons.refresh} Refresh
-          </button>
+          <div class="logs-toolbar-right">
+            <button class="btn btn-sm ${this.groupEnabled ? 'btn-primary' : 'btn-secondary'}"
+                    onclick="LogsView.toggleGroup()" id="logs-group-btn"
+                    title="Group similar consecutive entries">
+              Group
+            </button>
+            <button class="btn btn-sm ${this.hideNoise ? 'btn-primary' : 'btn-secondary'}"
+                    onclick="LogsView.toggleNoise()" id="logs-noise-btn"
+                    title="Hide known noise patterns">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/>
+                <line x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
+              Hide Noise
+            </button>
+            <button class="btn btn-sm ${this.liveTail ? 'btn-accent' : 'btn-secondary'}"
+                    onclick="LogsView.toggleLiveTail()" id="logs-live-btn"
+                    title="Auto-refresh logs every 2 seconds">
+              <span class="live-indicator ${this.liveTail ? 'active' : ''}" id="logs-live-dot"></span>
+              Live Tail
+            </button>
+            <button class="btn btn-sm btn-secondary" onclick="LogsView.refresh()">
+              ${Icons.refresh}
+            </button>
+          </div>
         </div>
 
-        <div class="card">
-          <div class="data-table-header">
-            <div class="data-table-search">
-              <span class="data-table-search-icon">${Icons.search}</span>
-              <input type="text" placeholder="Search logs..." id="logs-search-input"
-                     oninput="LogsView.search(this.value)">
+        <!-- Log Volume Timeline (F1) -->
+        <div class="logs-timeline card" id="logs-timeline">
+          <svg id="logs-timeline-svg" width="100%" height="80"></svg>
+        </div>
+
+        <!-- Main layout: facet sidebar + log list -->
+        <div class="logs-layout">
+          <!-- Faceted Sidebar (F3) -->
+          <aside class="logs-facets card" id="logs-facets">
+            <div class="facet-section" id="facet-sources">
+              <div class="facet-section-header" onclick="LogsView.toggleFacetSection('sources')">
+                <span>Sources</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </div>
+              <div class="facet-section-body" id="facet-sources-body"></div>
             </div>
-            <div class="data-table-filters">
-              <select class="form-select" id="logs-source-filter" onchange="LogsView.filterSource(this.value)">
-                <option value="all">All Sources</option>
-              </select>
-              <select class="form-select" id="logs-level-filter" onchange="LogsView.filterLevel(this.value)">
-                <option value="all">All Levels</option>
-                <option value="DEBUG">Debug</option>
-                <option value="INFO">Info</option>
-                <option value="WARNING">Warning</option>
-                <option value="ERROR">Error</option>
-              </select>
+            <div class="facet-section" id="facet-levels">
+              <div class="facet-section-header" onclick="LogsView.toggleFacetSection('levels')">
+                <span>Levels</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </div>
+              <div class="facet-section-body" id="facet-levels-body"></div>
             </div>
-          </div>
-          <div class="card-body p-0" id="logs-container" style="max-height: 600px; overflow-y: auto;">
-            ${Components.skeleton('text', 10)}
+            <div class="facet-section" id="facet-patterns">
+              <div class="facet-section-header" onclick="LogsView.toggleFacetSection('patterns')">
+                <span>Top Patterns</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </div>
+              <div class="facet-section-body" id="facet-patterns-body"></div>
+            </div>
+          </aside>
+
+          <!-- Log entries -->
+          <div class="logs-main">
+            <div class="logs-count-bar" id="logs-count-bar"></div>
+            <div class="card logs-list-card">
+              <div class="logs-list" id="logs-container">
+                ${Components.skeleton('text', 10)}
+              </div>
+            </div>
+            <!-- Jump to live pill (F5) -->
+            <div class="logs-jump-pill" id="logs-jump-pill" onclick="LogsView.jumpToLive()" style="display:none;">
+              Jump to live
+            </div>
           </div>
         </div>
       </div>
     `;
 
-    await this.loadSources();
-    await this.loadData();
+    this.renderSavedViews();
+    // Scroll detection for live tail
+    const logsContainer = document.getElementById('logs-container');
+    if (logsContainer) {
+      logsContainer.addEventListener('scroll', () => {
+        const el = logsContainer;
+        this._userScrolledUp = (el.scrollHeight - el.scrollTop - el.clientHeight) > 50;
+        const pill = document.getElementById('logs-jump-pill');
+        if (pill) pill.style.display = (this.liveTail && this._userScrolledUp) ? 'block' : 'none';
+      });
+    }
+
+    await Promise.all([this.loadSources(), this.loadHistogram(), this.loadFacets(), this.loadData()]);
   },
+
+  // =========================================================================
+  // Data loading
+  // =========================================================================
 
   async loadSources() {
     try {
       const data = await API.get('/api/logs/sources');
       this.sources = data.sources || [];
-      const select = document.getElementById('logs-source-filter');
-      if (select && this.sources.length > 0) {
-        select.innerHTML = '<option value="all">All Sources</option>' +
-          this.sources.map(s => `<option value="${s.name}">${s.display_name}</option>`).join('');
-      }
     } catch (error) {
       console.error('Failed to load log sources:', error);
     }
   },
 
+  _buildParams() {
+    const params = new URLSearchParams();
+    params.set('limit', '200');
+    params.set('group', this.groupEnabled ? 'true' : 'false');
+    params.set('suppress_noise', 'true');
+
+    // Source from facets or query
+    const sources = this.parsedQuery.qualifiers.source
+      ? [this.parsedQuery.qualifiers.source]
+      : (this.activeSources.size > 0 ? [...this.activeSources] : []);
+    if (sources.length === 1) params.set('source', sources[0]);
+
+    // Level from facets or query
+    const levels = this.parsedQuery.qualifiers.level
+      ? [this.parsedQuery.qualifiers.level.toUpperCase()]
+      : (this.activeLevels.size > 0 ? [...this.activeLevels] : []);
+    if (levels.length > 0) params.set('level', levels.join(','));
+
+    // Search text
+    const search = this.parsedQuery.freeText || '';
+    if (search) params.set('search', search);
+
+    // Time range from qualifiers
+    if (this.parsedQuery.qualifiers.since) params.set('since', this.parsedQuery.qualifiers.since);
+    if (this.parsedQuery.qualifiers.until) params.set('until', this.parsedQuery.qualifiers.until);
+
+    return params;
+  },
+
   async loadData() {
     try {
-      // Build query params
-      const params = new URLSearchParams();
-      params.set('limit', '100');
-      if (this.currentSource !== 'all') params.set('source', this.currentSource);
-      if (this.currentLevel !== 'all') params.set('level', this.currentLevel);
-      if (this.currentSearch) params.set('search', this.currentSearch);
-
+      const params = this._buildParams();
+      console.log('[LogsView] loadData URL:', `/api/logs/unified?${params.toString()}`);
       const data = await API.get(`/api/logs/unified?${params.toString()}`);
-      // API returns { logs: [...], total: N, has_more: bool }
+      console.log('[LogsView] Got', (data.logs || []).length, 'entries');
       this.allLogs = data.logs || [];
       this.logs = this.allLogs;
+      if (this.logs.length > 0 && this.logs[0].timestamp) {
+        this._lastTimestamp = this.logs[0].timestamp;
+      }
       this.renderLogs(this.logs);
+      this.updateCountBar(data.total);
     } catch (error) {
       console.error('Failed to load logs:', error);
-      document.getElementById('logs-container').innerHTML = `
-        <div class="empty-state">
-          <div class="empty-state-title">Failed to load logs</div>
-          <p class="text-secondary">${error.message}</p>
-        </div>
-      `;
+      const container = document.getElementById('logs-container');
+      if (container) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-title">Failed to load logs</div>
+            <p class="text-secondary">${error.message}</p>
+          </div>
+        `;
+      }
     }
+  },
+
+  async loadHistogram() {
+    try {
+      const params = new URLSearchParams({ hours: '6', buckets: '60' });
+      if (this.activeSources.size === 1) params.set('source', [...this.activeSources][0]);
+      const data = await API.get(`/api/logs/histogram?${params.toString()}`);
+      this.histogram = data.histogram || [];
+      this.renderTimeline();
+    } catch (error) {
+      console.error('Failed to load histogram:', error);
+    }
+  },
+
+  async loadFacets() {
+    try {
+      const params = new URLSearchParams({ hours: '6' });
+      const data = await API.get(`/api/logs/facets?${params.toString()}`);
+      this.facets = data;
+      this.renderFacets();
+    } catch (error) {
+      console.error('Failed to load facets:', error);
+    }
+  },
+
+  // =========================================================================
+  // Timeline (F1) - D3 stacked bar chart
+  // =========================================================================
+
+  renderTimeline() {
+    const svg = document.getElementById('logs-timeline-svg');
+    if (!svg || !this.histogram.length) return;
+
+    const container = document.getElementById('logs-timeline');
+    const width = container.clientWidth - 24;
+    const height = 70;
+    const margin = { top: 5, right: 10, bottom: 18, left: 10 };
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    svg.innerHTML = '';
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+    const data = this.histogram;
+    const barW = Math.max(2, Math.floor(innerW / data.length) - 1);
+
+    const maxTotal = Math.max(1, ...data.map(d =>
+      d.counts.DEBUG + d.counts.INFO + d.counts.WARNING + d.counts.ERROR
+    ));
+
+    const colors = {
+      DEBUG: 'var(--text-muted)',
+      INFO: 'var(--accent)',
+      WARNING: 'var(--status-paused)',
+      ERROR: 'var(--status-error)',
+    };
+    const order = ['DEBUG', 'INFO', 'WARNING', 'ERROR'];
+
+    let barsHtml = '';
+    data.forEach((bucket, i) => {
+      const x = margin.left + i * (barW + 1);
+      let y = innerH + margin.top;
+
+      order.forEach(level => {
+        const count = bucket.counts[level];
+        if (count === 0) return;
+        const h = Math.max(1, (count / maxTotal) * innerH);
+        y -= h;
+        barsHtml += `<rect x="${x}" y="${y}" width="${barW}" height="${h}"
+          fill="${colors[level]}" rx="1" opacity="0.85"
+          class="timeline-bar"
+          onmouseover="LogsView.showTimelineTip(event, ${i})"
+          onmouseout="LogsView.hideTimelineTip()"
+          onclick="LogsView.clickTimelineBucket(${i})" />`;
+      });
+    });
+
+    let labelsHtml = '';
+    const step = Math.max(1, Math.floor(data.length / 6));
+    for (let i = 0; i < data.length; i += step) {
+      const ts = new Date(data[i].timestamp);
+      const label = ts.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const x = margin.left + i * (barW + 1) + barW / 2;
+      labelsHtml += `<text x="${x}" y="${height - 2}" text-anchor="middle"
+        fill="var(--text-muted)" font-size="10" font-family="var(--font-sans)">${label}</text>`;
+    }
+
+    svg.innerHTML = barsHtml + labelsHtml +
+      `<g id="timeline-tooltip" style="display:none">
+        <rect rx="4" fill="var(--bg-sidebar)" opacity="0.95" id="tt-bg"/>
+        <text fill="var(--text-inverse)" font-size="11" font-family="var(--font-sans)" id="tt-text"/>
+      </g>`;
+  },
+
+  showTimelineTip(event, bucketIdx) {
+    const bucket = this.histogram[bucketIdx];
+    if (!bucket) return;
+    const ts = new Date(bucket.timestamp);
+    const label = ts.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const total = bucket.counts.DEBUG + bucket.counts.INFO + bucket.counts.WARNING + bucket.counts.ERROR;
+    const tip = `${label} - ${total} logs (E:${bucket.counts.ERROR} W:${bucket.counts.WARNING} I:${bucket.counts.INFO})`;
+
+    const svg = document.getElementById('logs-timeline-svg');
+    const tooltip = document.getElementById('timeline-tooltip');
+    const ttBg = document.getElementById('tt-bg');
+    const ttText = document.getElementById('tt-text');
+    if (!tooltip || !ttBg || !ttText) return;
+
+    const rect = svg.getBoundingClientRect();
+    const x = Math.min(Math.max(event.clientX - rect.left, 60), rect.width - 160);
+
+    ttText.textContent = tip;
+    ttText.setAttribute('x', x + 8);
+    ttText.setAttribute('y', 14);
+    ttBg.setAttribute('x', x);
+    ttBg.setAttribute('y', 1);
+    ttBg.setAttribute('width', tip.length * 6.5 + 16);
+    ttBg.setAttribute('height', 20);
+    tooltip.style.display = '';
+  },
+
+  hideTimelineTip() {
+    const tooltip = document.getElementById('timeline-tooltip');
+    if (tooltip) tooltip.style.display = 'none';
+  },
+
+  clickTimelineBucket(idx) {
+    const bucket = this.histogram[idx];
+    if (!bucket) return;
+    const bucketSeconds = this.histogram.length > 1
+      ? (new Date(this.histogram[1].timestamp) - new Date(this.histogram[0].timestamp)) / 1000
+      : 360;
+    const start = new Date(bucket.timestamp);
+    const end = new Date(start.getTime() + bucketSeconds * 1000);
+    this.addChip('since', start.toISOString());
+    this.addChip('until', end.toISOString());
+    this.applyFilters();
+  },
+
+  // =========================================================================
+  // Facets Sidebar (F3)
+  // =========================================================================
+
+  renderFacets() {
+    const sourcesBody = document.getElementById('facet-sources-body');
+    if (sourcesBody && this.facets.sources) {
+      sourcesBody.innerHTML = this.facets.sources.map(s => {
+        const active = this.activeSources.has(s.name);
+        return `<div class="facet-item ${active ? 'active' : ''}"
+                     onclick="LogsView.toggleFacet('source', '${s.name}')">
+          <span class="facet-item-name">${Utils.escapeHtml(s.display_name || s.name)}</span>
+          <span class="facet-item-count">${s.count}</span>
+        </div>`;
+      }).join('');
+    }
+
+    const levelsBody = document.getElementById('facet-levels-body');
+    if (levelsBody && this.facets.levels) {
+      const levelColors = { ERROR: 'var(--status-error)', WARNING: 'var(--status-paused)', INFO: 'var(--accent)', DEBUG: 'var(--text-muted)' };
+      levelsBody.innerHTML = this.facets.levels.map(l => {
+        const active = this.activeLevels.has(l.name);
+        const color = levelColors[l.name] || 'var(--text-muted)';
+        return `<div class="facet-item ${active ? 'active' : ''}"
+                     onclick="LogsView.toggleFacet('level', '${l.name}')">
+          <span class="facet-level-dot" style="background:${color}"></span>
+          <span class="facet-item-name">${l.name}</span>
+          <span class="facet-item-count">${l.count}</span>
+        </div>`;
+      }).join('');
+    }
+
+    const patternsBody = document.getElementById('facet-patterns-body');
+    if (patternsBody && this.facets.top_patterns) {
+      patternsBody.innerHTML = this.facets.top_patterns.slice(0, 8).map(p => {
+        const short = (p.pattern || '').slice(0, 50);
+        return `<div class="facet-item facet-pattern"
+                     onclick="LogsView.onSearchInput('${Utils.escapeHtml(p.sample.slice(0, 40).replace(/'/g, ''))}')"
+                     title="${Utils.escapeHtml(p.sample)}">
+          <span class="facet-item-name">${Utils.escapeHtml(short)}</span>
+          <span class="facet-item-count">${p.count}</span>
+        </div>`;
+      }).join('');
+    }
+  },
+
+  toggleFacetSection(section) {
+    const body = document.getElementById(`facet-${section}-body`);
+    if (body) body.classList.toggle('collapsed');
+  },
+
+  toggleFacet(type, value) {
+    const set = type === 'source' ? this.activeSources : this.activeLevels;
+    if (set.has(value)) {
+      set.delete(value);
+    } else {
+      set.add(value);
+    }
+    this.applyFilters();
+  },
+
+  // =========================================================================
+  // Search / Query Chips (F7)
+  // =========================================================================
+
+  _parseQuery(raw) {
+    const qualifiers = {};
+    const remainder = raw.replace(/(\w+):(\S+)/g, (match, key, val) => {
+      qualifiers[key.toLowerCase()] = val;
+      return '';
+    }).trim();
+    return { qualifiers, freeText: remainder };
+  },
+
+  onSearchInput(value) {
+    const input = document.getElementById('logs-search-input');
+    if (input && input.value !== value) input.value = value;
+    this.currentSearch = value;
+    this.parsedQuery = this._parseQuery(value);
+    this.renderChips();
+    clearTimeout(this._searchTimeout);
+    this._searchTimeout = setTimeout(() => this.applyFilters(), 300);
+  },
+
+  onSearchKeydown(event) {
+    if (event.key === 'Enter') {
+      clearTimeout(this._searchTimeout);
+      this.applyFilters();
+    }
+  },
+
+  addChip(key, value) {
+    this.parsedQuery.qualifiers[key] = value;
+    this._rebuildSearchFromQuery();
+    this.renderChips();
+  },
+
+  removeChip(key) {
+    delete this.parsedQuery.qualifiers[key];
+    if (key === 'source') this.activeSources.clear();
+    if (key === 'level') this.activeLevels.clear();
+    this._rebuildSearchFromQuery();
+    this.renderChips();
+    this.applyFilters();
+  },
+
+  _rebuildSearchFromQuery() {
+    const parts = [];
+    for (const [k, v] of Object.entries(this.parsedQuery.qualifiers)) {
+      parts.push(`${k}:${v}`);
+    }
+    if (this.parsedQuery.freeText) parts.push(this.parsedQuery.freeText);
+    const input = document.getElementById('logs-search-input');
+    if (input) input.value = parts.join(' ');
+    this.currentSearch = parts.join(' ');
+  },
+
+  renderChips() {
+    const container = document.getElementById('logs-query-chips');
+    if (!container) return;
+    const quals = this.parsedQuery.qualifiers;
+    if (Object.keys(quals).length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+    container.innerHTML = Object.entries(quals).map(([k, v]) => {
+      const displayVal = (k === 'since' || k === 'until')
+        ? new Date(v).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+        : v;
+      return `<span class="query-chip">
+        ${k}:${Utils.escapeHtml(displayVal)}
+        <span class="query-chip-remove" onclick="LogsView.removeChip('${k}')">&times;</span>
+      </span>`;
+    }).join('');
+  },
+
+  // =========================================================================
+  // Saved Views (F8)
+  // =========================================================================
+
+  renderSavedViews() {
+    const container = document.getElementById('logs-saved-views');
+    if (!container) return;
+    container.innerHTML = this.savedViews.map(v => {
+      const active = this._activeView === v.name;
+      return `<button class="saved-view-pill ${active ? 'active' : ''}"
+                      onclick="LogsView.applySavedView('${v.name}')">
+        ${v.name}
+      </button>`;
+    }).join('');
+  },
+
+  applySavedView(name) {
+    const view = this.savedViews.find(v => v.name === name);
+    if (!view) return;
+    this._activeView = name;
+
+    // Reset filters
+    this.activeSources.clear();
+    this.activeLevels.clear();
+    this.parsedQuery = { qualifiers: {}, freeText: '' };
+
+    const f = view.filters;
+    if (f.source) {
+      this.activeSources.add(f.source);
+      this.parsedQuery.qualifiers.source = f.source;
+    }
+    if (f.level) {
+      this.parsedQuery.qualifiers.level = f.level;
+    }
+    if (f.search) {
+      this.parsedQuery.freeText = f.search;
+    }
+    if (f.excludeNoise) {
+      this.hideNoise = true;
+      this._updateNoiseBtn();
+    }
+
+    this._rebuildSearchFromQuery();
+    this.renderChips();
+    this.renderSavedViews();
+    this.applyFilters();
+  },
+
+  // =========================================================================
+  // Filter application
+  // =========================================================================
+
+  applyFilters() {
+    this.loadData();
+    this.loadFacets();
+  },
+
+  // =========================================================================
+  // Log Rendering (F2, F4, F9, F10)
+  // =========================================================================
+
+  updateCountBar(total) {
+    const bar = document.getElementById('logs-count-bar');
+    if (!bar) return;
+    const noiseCount = this.logs.filter(l => l.noise).length;
+    const liveLabel = this.liveTail
+      ? ' <span class="live-indicator active"></span> <span style="color:var(--status-running)">live</span>'
+      : '';
+    bar.innerHTML = `Showing ${this.logs.length} logs${liveLabel}` +
+      (this.hideNoise && noiseCount > 0 ? ` <span class="log-noise-indicator">${noiseCount} noise lines hidden</span>` : '');
   },
 
   renderLogs(logs) {
     const container = document.getElementById('logs-container');
+    if (!container) return;
 
     if (!logs.length) {
       container.innerHTML = `
@@ -3178,46 +3990,330 @@ const LogsView = {
       return;
     }
 
-    container.innerHTML = logs.map(log => this.renderLogEntry(log)).join('');
+    let html = '';
+    let hiddenNoiseCount = 0;
+
+    for (const log of logs) {
+      if (this.hideNoise && log.noise) {
+        hiddenNoiseCount++;
+        continue;
+      }
+
+      // Flush hidden noise indicator
+      if (hiddenNoiseCount > 0) {
+        html += `<div class="log-noise-bar" onclick="this.classList.toggle('expanded')">
+          ${hiddenNoiseCount} noise line${hiddenNoiseCount > 1 ? 's' : ''} hidden
+        </div>`;
+        hiddenNoiseCount = 0;
+      }
+
+      html += this.renderLogEntry(log);
+    }
+
+    // Final noise indicator
+    if (hiddenNoiseCount > 0) {
+      html += `<div class="log-noise-bar">${hiddenNoiseCount} noise line${hiddenNoiseCount > 1 ? 's' : ''} hidden</div>`;
+    }
+
+    container.innerHTML = html;
   },
 
   renderLogEntry(log) {
-    const level = (log.level || 'INFO').toLowerCase();
+    const level = (log.level || 'INFO').toUpperCase();
+    const levelLower = level.toLowerCase();
     const source = log.source || 'unknown';
     const message = log.message || '';
-    const timestamp = log.timestamp ? Format.time(log.timestamp) : '';
+    const timestamp = log.timestamp ? Format.datetime(log.timestamp) : '';
+    const hasTraceback = log.extra_lines && log.extra_lines.length > 0;
+    const isGrouped = (log.group_count || 1) > 1;
+    const entryId = log.id;
+    const noiseClass = log.noise ? ' log-entry-noise' : '';
+
+    let tracebackHtml = '';
+    if (hasTraceback) {
+      const frameCount = log.traceback_frames || 0;
+      tracebackHtml = `
+        <div class="log-traceback-toggle" onclick="event.stopPropagation(); this.nextElementSibling.classList.toggle('expanded'); this.classList.toggle('open')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+          <span class="log-traceback-badge">${frameCount} frame${frameCount !== 1 ? 's' : ''}</span>
+        </div>
+        <div class="log-traceback">${log.extra_lines.map(l => Utils.escapeHtml(l)).join('\n')}</div>
+      `;
+    }
+
+    let groupHtml = '';
+    if (isGrouped) {
+      groupHtml = `<span class="log-group-count" onclick="event.stopPropagation(); LogsView.expandGroup('${entryId}')"
+                         title="Click to expand">&times;${log.group_count}</span>`;
+    }
+
+    let statusClass = '';
+    if (log.metadata && log.metadata.status) {
+      const s = log.metadata.status;
+      if (s >= 200 && s < 300) statusClass = 'http-2xx';
+      else if (s >= 400 && s < 500) statusClass = 'http-4xx';
+      else if (s >= 500) statusClass = 'http-5xx';
+    }
 
     return `
-      <div class="log-entry">
+      <div class="log-entry level-${levelLower}${isGrouped ? ' log-entry-grouped' : ''}${noiseClass}"
+           data-id="${entryId}" onclick="LogsView.openDetail(this)" data-log="${btoa(JSON.stringify(log))}">
         <span class="log-timestamp">${timestamp}</span>
-        <span class="log-level ${level}">[${(log.level || 'INFO').toUpperCase()}]</span>
-        <span class="log-source">[${source}]</span>
-        <span class="log-message">${Utils.escapeHtml(message)}</span>
+        <span class="log-level-badge level-${levelLower}">${level}</span>
+        <span class="log-source-badge">${source}</span>
+        <span class="log-message ${statusClass}">${Utils.escapeHtml(message)}</span>
+        ${groupHtml}
+        ${tracebackHtml}
       </div>
     `;
   },
 
-  search(query) {
-    this.currentSearch = query;
-    // Debounce the API call
-    clearTimeout(this._searchTimeout);
-    this._searchTimeout = setTimeout(() => this.loadData(), 300);
+  expandGroup(entryId) {
+    const log = this.logs.find(l => l.id === entryId);
+    if (!log || !log.group_entries) return;
+
+    const el = document.querySelector(`.log-entry[data-id="${entryId}"]`);
+    if (!el) return;
+
+    if (el.classList.contains('group-expanded')) {
+      el.classList.remove('group-expanded');
+      el.querySelectorAll('.log-group-expanded-entry').forEach(e => e.remove());
+      return;
+    }
+
+    el.classList.add('group-expanded');
+    const entries = log.group_entries;
+    let expandHtml = '';
+    for (const e of entries) {
+      const ts = e.timestamp ? Format.time(e.timestamp) : '';
+      expandHtml += `<div class="log-group-expanded-entry">
+        <span class="log-timestamp">${ts}</span>
+        <span class="log-message">${Utils.escapeHtml(e.message || '')}</span>
+      </div>`;
+    }
+    el.insertAdjacentHTML('beforeend', expandHtml);
   },
 
-  filterSource(source) {
-    this.currentSource = source;
+  // =========================================================================
+  // Detail Panel (F6)
+  // =========================================================================
+
+  openDetail(el) {
+    if (event.target.closest('.log-traceback-toggle, .log-group-count, .log-traceback')) return;
+
+    let log;
+    try {
+      log = JSON.parse(atob(el.dataset.log));
+    } catch { return; }
+
+    const level = (log.level || 'INFO').toUpperCase();
+    const levelLower = level.toLowerCase();
+    const ts = log.timestamp ? new Date(log.timestamp).toLocaleString('en-GB') : '-';
+
+    let metaHtml = '';
+    if (log.metadata && Object.keys(log.metadata).length > 0) {
+      metaHtml = `<table class="log-detail-meta">
+        ${Object.entries(log.metadata).map(([k, v]) => {
+          let valClass = '';
+          if (k === 'status') {
+            if (v >= 200 && v < 300) valClass = 'http-2xx';
+            else if (v >= 400 && v < 500) valClass = 'http-4xx';
+            else if (v >= 500) valClass = 'http-5xx';
+          }
+          return `<tr><td class="log-detail-meta-key">${Utils.escapeHtml(k)}</td>
+                      <td class="${valClass}">${Utils.escapeHtml(String(v))}</td></tr>`;
+        }).join('')}
+      </table>`;
+    }
+
+    let tracebackHtml = '';
+    if (log.extra_lines && log.extra_lines.length) {
+      tracebackHtml = `
+        <div class="log-detail-section">
+          <div class="log-detail-section-title">Traceback (${log.traceback_frames || 0} frames)</div>
+          <pre class="log-traceback expanded">${log.extra_lines.map(l => {
+            return Utils.escapeHtml(l).replace(
+              /File &quot;([^&]+)&quot;, line (\d+)/g,
+              '<span class="tb-file">File "$1", line $2</span>'
+            );
+          }).join('\n')}</pre>
+        </div>
+      `;
+    }
+
+    const content = `
+      <div class="log-detail-header">
+        <span class="log-level-badge level-${levelLower}">${level}</span>
+        <span class="log-detail-timestamp">${ts}</span>
+        <span class="log-source-badge">${log.source || 'unknown'}</span>
+      </div>
+      <div class="log-detail-section">
+        <div class="log-detail-section-title">Message</div>
+        <pre class="log-detail-message">${Utils.escapeHtml(log.message || '')}</pre>
+      </div>
+      ${metaHtml ? `<div class="log-detail-section"><div class="log-detail-section-title">Metadata</div>${metaHtml}</div>` : ''}
+      ${tracebackHtml}
+      ${log.noise ? '<div class="log-detail-noise-flag">This entry matches a noise pattern</div>' : ''}
+      <div class="log-detail-section">
+        <button class="btn btn-sm btn-secondary" onclick="LogsView.loadContext('${log.source}', '${log.timestamp}')">
+          Show surrounding logs
+        </button>
+      </div>
+      <div id="log-detail-context"></div>
+    `;
+
+    DetailPanel.open(content);
+  },
+
+  async loadContext(source, timestamp) {
+    try {
+      const data = await API.get(`/api/logs/context?source=${encodeURIComponent(source)}&timestamp=${encodeURIComponent(timestamp)}&lines=5`);
+      const contextEl = document.getElementById('log-detail-context');
+      if (!contextEl) return;
+
+      const renderCtx = (entries) => {
+        if (!entries || !entries.length) return '';
+        return entries.map(e => {
+          const ts = e.timestamp ? Format.time(e.timestamp) : '';
+          const lvl = (e.level || 'INFO').toLowerCase();
+          return `<div class="log-entry level-${lvl}" style="font-size:11px; padding:2px 8px;">
+            <span class="log-timestamp">${ts}</span>
+            <span class="log-level-badge level-${lvl}" style="font-size:9px">${(e.level || 'INFO').toUpperCase()}</span>
+            <span class="log-message">${Utils.escapeHtml(e.message || '')}</span>
+          </div>`;
+        }).join('');
+      };
+
+      contextEl.innerHTML = `
+        <div class="log-detail-section">
+          <div class="log-detail-section-title">Surrounding Logs</div>
+          <div class="log-detail-context-list">
+            ${renderCtx(data.before)}
+            <div class="log-detail-context-target">--- target entry ---</div>
+            ${renderCtx(data.after)}
+          </div>
+        </div>
+      `;
+    } catch (error) {
+      console.error('Failed to load context:', error);
+    }
+  },
+
+  // =========================================================================
+  // Live Tail (F5)
+  // =========================================================================
+
+  toggleLiveTail() {
+    this.liveTail = !this.liveTail;
+    const btn = document.getElementById('logs-live-btn');
+    const dot = document.getElementById('logs-live-dot');
+    if (btn) btn.className = `btn btn-sm ${this.liveTail ? 'btn-accent' : 'btn-secondary'}`;
+    if (dot) dot.className = `live-indicator ${this.liveTail ? 'active' : ''}`;
+
+    if (this.liveTail) {
+      this._startLiveTail();
+    } else {
+      this._stopLiveTail();
+    }
+    this.updateCountBar(this.logs.length);
+  },
+
+  _startLiveTail() {
+    this._stopLiveTail();
+    this._liveTailInterval = setInterval(() => this._pollNewLogs(), 2000);
+  },
+
+  _stopLiveTail() {
+    if (this._liveTailInterval) {
+      clearInterval(this._liveTailInterval);
+      this._liveTailInterval = null;
+    }
+  },
+
+  async _pollNewLogs() {
+    if (!this.liveTail) return;
+    if (document.hidden) return;
+
+    try {
+      const params = this._buildParams();
+      if (this._lastTimestamp) {
+        params.set('since', this._lastTimestamp);
+      }
+      params.set('limit', '50');
+
+      const data = await API.get(`/api/logs/unified?${params.toString()}`);
+      const newLogs = data.logs || [];
+
+      if (newLogs.length > 0) {
+        this._lastTimestamp = newLogs[0].timestamp;
+        this.allLogs = [...newLogs, ...this.allLogs].slice(0, 500);
+        this.logs = this.allLogs;
+        this.renderLogs(this.logs);
+        this.updateCountBar(this.logs.length);
+
+        // Flash new entries
+        const container = document.getElementById('logs-container');
+        if (container) {
+          const entries = container.querySelectorAll('.log-entry');
+          for (let i = 0; i < Math.min(newLogs.length, entries.length); i++) {
+            entries[i].classList.add('log-entry-flash');
+          }
+        }
+
+        if (!this._userScrolledUp && container) {
+          container.scrollTop = 0;
+        }
+      }
+    } catch (error) {
+      console.error('Live tail poll failed:', error);
+    }
+  },
+
+  jumpToLive() {
+    const container = document.getElementById('logs-container');
+    if (container) {
+      container.scrollTop = 0;
+      this._userScrolledUp = false;
+    }
+    const pill = document.getElementById('logs-jump-pill');
+    if (pill) pill.style.display = 'none';
+  },
+
+  // =========================================================================
+  // Toggle buttons
+  // =========================================================================
+
+  toggleGroup() {
+    this.groupEnabled = !this.groupEnabled;
+    localStorage.setItem('peter_logs_group', this.groupEnabled);
+    const btn = document.getElementById('logs-group-btn');
+    if (btn) btn.className = `btn btn-sm ${this.groupEnabled ? 'btn-primary' : 'btn-secondary'}`;
     this.loadData();
   },
 
-  filterLevel(level) {
-    this.currentLevel = level;
-    this.loadData();
+  toggleNoise() {
+    this.hideNoise = !this.hideNoise;
+    localStorage.setItem('peter_logs_hide_noise', this.hideNoise);
+    this._updateNoiseBtn();
+    this.renderLogs(this.logs);
+    this.updateCountBar(this.logs.length);
+  },
+
+  _updateNoiseBtn() {
+    const btn = document.getElementById('logs-noise-btn');
+    if (btn) btn.className = `btn btn-sm ${this.hideNoise ? 'btn-primary' : 'btn-secondary'}`;
   },
 
   async refresh() {
-    document.getElementById('logs-container').innerHTML = Components.skeleton('text', 10);
-    await this.loadData();
+    const container = document.getElementById('logs-container');
+    if (container) container.innerHTML = Components.skeleton('text', 10);
+    await Promise.all([this.loadData(), this.loadHistogram(), this.loadFacets()]);
     Toast.info('Refreshed', 'Logs updated');
+  },
+
+  // Cleanup on view change
+  destroy() {
+    this._stopLiveTail();
   },
 };
 
