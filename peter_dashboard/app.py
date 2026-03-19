@@ -1258,15 +1258,91 @@ async def get_cli_costs(days: int = 7):
         by_model[model]["cost_usd"] += e.get("cost_usd", 0)
         by_model[model]["cost_gbp"] += e.get("cost_gbp", 0)
 
-    # Per-day breakdown
+    # Per-day breakdown (with scheduled/conversation split)
     by_day = {}
     for e in entries:
         day = e.get("timestamp", "")[:10]
         if day not in by_day:
-            by_day[day] = {"calls": 0, "cost_usd": 0, "cost_gbp": 0}
+            by_day[day] = {"calls": 0, "cost_usd": 0, "cost_gbp": 0, "scheduled_gbp": 0, "conversation_gbp": 0}
         by_day[day]["calls"] += 1
         by_day[day]["cost_usd"] += e.get("cost_usd", 0)
         by_day[day]["cost_gbp"] += e.get("cost_gbp", 0)
+        src = e.get("source", "")
+        if src.startswith("scheduled"):
+            by_day[day]["scheduled_gbp"] += e.get("cost_gbp", 0)
+        else:
+            by_day[day]["conversation_gbp"] += e.get("cost_gbp", 0)
+
+    # Per-skill breakdown
+    by_skill = {}
+    for e in entries:
+        src = e.get("source", "conversation")
+        skill_name = src.replace("scheduled:", "") if src.startswith("scheduled:") else src
+        if skill_name not in by_skill:
+            by_skill[skill_name] = {"name": skill_name, "calls": 0, "cost_gbp": 0, "cost_usd": 0, "total_duration_ms": 0}
+        by_skill[skill_name]["calls"] += 1
+        by_skill[skill_name]["cost_gbp"] += e.get("cost_gbp", 0)
+        by_skill[skill_name]["cost_usd"] += e.get("cost_usd", 0)
+        by_skill[skill_name]["total_duration_ms"] += e.get("duration_ms", 0)
+
+    by_skill_list = []
+    for v in by_skill.values():
+        by_skill_list.append({
+            "name": v["name"],
+            "calls": v["calls"],
+            "cost_gbp": round(v["cost_gbp"], 4),
+            "cost_usd": round(v["cost_usd"], 4),
+            "avg_duration_ms": round(v["total_duration_ms"] / v["calls"], 0) if v["calls"] > 0 else 0,
+            "avg_cost_gbp": round(v["cost_gbp"] / v["calls"], 4) if v["calls"] > 0 else 0,
+        })
+    by_skill_list.sort(key=lambda x: x["cost_gbp"], reverse=True)
+
+    # By source type
+    sched_cost_gbp = sum(e.get("cost_gbp", 0) for e in entries if e.get("source", "").startswith("scheduled"))
+    conv_cost_gbp = sum(e.get("cost_gbp", 0) for e in entries if not e.get("source", "").startswith("scheduled"))
+    by_source_type = {
+        "scheduled": {"calls": sched_calls, "cost_gbp": round(sched_cost_gbp, 4)},
+        "conversation": {"calls": conv_calls, "cost_gbp": round(conv_cost_gbp, 4)},
+    }
+
+    # Daily budget pace
+    from datetime import timedelta
+    now = datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
+    today_entries = [e for e in entries if e.get("timestamp", "")[:10] == today_str]
+    today_gbp = sum(e.get("cost_gbp", 0) for e in today_entries)
+    today_calls = len(today_entries)
+    hours_elapsed = now.hour + now.minute / 60.0
+    projected_daily_gbp = (today_gbp / hours_elapsed * 24) if hours_elapsed > 0.5 else today_gbp
+    num_days = len(by_day) if len(by_day) > 0 else 1
+    avg_daily_gbp = total_gbp / num_days
+    daily_budget_pace = {
+        "today_gbp": round(today_gbp, 4),
+        "today_calls": today_calls,
+        "projected_daily_gbp": round(projected_daily_gbp, 4),
+        "avg_daily_gbp": round(avg_daily_gbp, 4),
+    }
+
+    # Percentiles
+    costs_gbp = sorted([e.get("cost_gbp", 0) for e in entries])
+    durations = sorted([e.get("duration_ms", 0) for e in entries])
+
+    def percentile(arr, p):
+        if not arr:
+            return 0
+        k = (len(arr) - 1) * (p / 100.0)
+        f = int(k)
+        c = min(f + 1, len(arr) - 1)
+        d = k - f
+        return arr[f] + d * (arr[c] - arr[f])
+
+    percentiles = {
+        "p50_cost_gbp": round(percentile(costs_gbp, 50), 4),
+        "p90_cost_gbp": round(percentile(costs_gbp, 90), 4),
+        "p99_cost_gbp": round(percentile(costs_gbp, 99), 4),
+        "max_cost_gbp": round(max(costs_gbp) if costs_gbp else 0, 4),
+        "p90_duration_ms": round(percentile(durations, 90), 0),
+    }
 
     summary = {
         "total_usd": round(total_usd, 4),
@@ -1277,6 +1353,10 @@ async def get_cli_costs(days: int = 7):
         "avg_duration_ms": round(avg_duration, 0),
         "by_model": {k: {kk: round(vv, 4) if isinstance(vv, float) else vv for kk, vv in v.items()} for k, v in by_model.items()},
         "by_day": {k: {kk: round(vv, 4) if isinstance(vv, float) else vv for kk, vv in v.items()} for k, v in sorted(by_day.items())},
+        "by_skill": by_skill_list,
+        "by_source_type": by_source_type,
+        "daily_budget_pace": daily_budget_pace,
+        "percentiles": percentiles,
     }
 
     # Channel ID to friendly name mapping

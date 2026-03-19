@@ -5607,6 +5607,11 @@ const CostsView = {
   title: 'CLI Costs',
   _data: null,
   _days: 7,
+  _showAllSkills: false,
+  _filterSkill: '',
+  _filterChannel: '',
+  _filterModel: '',
+  _searchText: '',
 
   async render(container) {
     container.innerHTML = `
@@ -5632,12 +5637,21 @@ const CostsView = {
           ${Components.skeleton('card')}
         </div>
 
+        <div class="card mb-lg" id="costs-trend-card">
+          <div class="card-header">
+            <h3 class="card-title">Cost Trend</h3>
+          </div>
+          <div class="cost-trend-chart" id="costs-trend-chart">
+            ${Components.skeleton('text', 4)}
+          </div>
+        </div>
+
         <div class="grid grid-cols-2 gap-md mb-lg">
           <div class="card">
             <div class="card-header">
-              <h3 class="card-title">Cost by Day</h3>
+              <h3 class="card-title">Cost by Skill</h3>
             </div>
-            <div class="card-body" id="costs-by-day">
+            <div class="card-body" id="costs-by-skill" style="padding: 0;">
               ${Components.skeleton('table', 5)}
             </div>
           </div>
@@ -5655,8 +5669,22 @@ const CostsView = {
         <div class="card">
           <div class="card-header">
             <h3 class="card-title">Call Log</h3>
+            <span class="text-sm text-muted" id="costs-log-count"></span>
           </div>
-          <div class="card-body" id="costs-table">
+          <div class="costs-filter-bar" id="costs-filter-bar">
+            <div class="costs-search-container">
+              <span class="data-table-search-icon">${Icons.search}</span>
+              <input type="text" class="costs-search-input" placeholder="Search skills, channels..."
+                     id="costs-search-input" oninput="CostsView.onSearchInput(this.value)">
+            </div>
+            <select class="form-input" style="width: auto; height: 32px; font-size: var(--text-sm); padding: 4px 8px;" id="costs-filter-skill">
+              <option value="">All Skills</option>
+            </select>
+            <select class="form-input" style="width: auto; height: 32px; font-size: var(--text-sm); padding: 4px 8px;" id="costs-filter-model">
+              <option value="">All Models</option>
+            </select>
+          </div>
+          <div id="costs-table" style="max-height: 600px; overflow-y: auto;">
             ${Components.skeleton('table', 10)}
           </div>
         </div>
@@ -5666,6 +5694,16 @@ const CostsView = {
     document.getElementById('costs-days-filter').addEventListener('change', (e) => {
       this._days = parseInt(e.target.value);
       this.refresh();
+    });
+
+    document.getElementById('costs-filter-skill').addEventListener('change', (e) => {
+      this._filterSkill = e.target.value;
+      this.renderTable(this._data?.entries || []);
+    });
+
+    document.getElementById('costs-filter-model').addEventListener('change', (e) => {
+      this._filterModel = e.target.value;
+      this.renderTable(this._data?.entries || []);
     });
 
     await this.loadData();
@@ -5681,8 +5719,10 @@ const CostsView = {
       this._data = data;
       this._channelMap = data.channel_map || {};
       this.renderStats(data.summary);
-      this.renderByDay(data.summary.by_day || {});
+      this.renderTrendChart(data.summary.by_day || {});
+      this.renderBySkill(data.summary.by_skill || []);
       this.renderByModel(data.summary.by_model || {});
+      this.populateFilters(data);
       this.renderTable(data.entries || []);
     } catch (error) {
       console.error('Failed to load cost data:', error);
@@ -5691,7 +5731,6 @@ const CostsView = {
   },
 
   _resolveChannel(raw) {
-    // "Channel 1465294449038069912" → "food-log" or "#api-costs" → "api-costs"
     if (!raw) return '-';
     const idMatch = raw.match(/(\d{17,20})/);
     if (idMatch && this._channelMap && this._channelMap[idMatch[1]]) {
@@ -5700,70 +5739,274 @@ const CostsView = {
     return raw.replace('Channel ', '#').replace(/^#peter-/, '').replace(/^#/, '');
   },
 
+  _extractSkill(source) {
+    if (!source) return '-';
+    return source.startsWith('scheduled:') ? source.replace('scheduled:', '') : source;
+  },
+
+  _costSeverity(gbp) {
+    if (gbp > 0.20) return 'high';
+    if (gbp >= 0.05) return 'medium';
+    return 'low';
+  },
+
   renderStats(summary) {
     const el = document.getElementById('costs-stats');
     if (!el) return;
 
+    const pace = summary.daily_budget_pace || {};
+    const pct = summary.percentiles || {};
+    const src = summary.by_source_type || {};
+    const numDays = Object.keys(summary.by_day || {}).length || 1;
+    const dailyAvg = (summary.total_gbp || 0) / numDays;
+
+    const paceColor = pace.projected_daily_gbp > dailyAvg ? 'error' : 'success';
+    const paceValue = pace.today_gbp !== undefined ? '\u00A3' + pace.today_gbp.toFixed(2) : '-';
+    const paceSubtitle = pace.projected_daily_gbp !== undefined
+      ? `Pace: \u00A3${pace.projected_daily_gbp.toFixed(2)}/day`
+      : '';
+
     el.innerHTML = `
-      ${Components.statsCard({
-        icon: Icons.activity,
-        value: '\u00A3' + (summary.total_gbp || 0).toFixed(2),
-        label: 'Total Cost (GBP)',
-        variant: 'info'
-      })}
-      ${Components.statsCard({
-        icon: Icons.checkCircle,
-        value: summary.total_calls || 0,
-        label: 'Total Calls',
-        variant: 'success'
-      })}
-      ${Components.statsCard({
-        icon: Icons.clock,
-        value: summary.avg_duration_ms ? (summary.avg_duration_ms / 1000).toFixed(1) + 's' : '-',
-        label: 'Avg Duration',
-        variant: 'info'
-      })}
-      ${Components.statsCard({
-        icon: Icons.alertCircle,
-        value: '$' + (summary.total_usd || 0).toFixed(2),
-        label: 'Total Cost (USD)',
-        variant: 'warning'
-      })}
+      <div class="stats-card">
+        <div class="stats-card-icon info">${Icons.activity}</div>
+        <div class="stats-card-content">
+          <div class="stats-card-value">\u00A3${(summary.total_gbp || 0).toFixed(2)}</div>
+          <div class="stats-card-label">Total Cost (GBP)</div>
+          <div class="stats-card-subtitle">Avg \u00A3${dailyAvg.toFixed(2)}/day</div>
+        </div>
+      </div>
+      <div class="stats-card">
+        <div class="stats-card-icon success">${Icons.checkCircle}</div>
+        <div class="stats-card-content">
+          <div class="stats-card-value">${summary.total_calls || 0}</div>
+          <div class="stats-card-label">Total Calls</div>
+          <div class="stats-card-subtitle">${src.scheduled?.calls || 0} sched / ${src.conversation?.calls || 0} conv</div>
+        </div>
+      </div>
+      <div class="stats-card">
+        <div class="stats-card-icon info">${Icons.clock}</div>
+        <div class="stats-card-content">
+          <div class="stats-card-value">${summary.avg_duration_ms ? (summary.avg_duration_ms / 1000).toFixed(1) + 's' : '-'}</div>
+          <div class="stats-card-label">Avg Duration</div>
+          <div class="stats-card-subtitle">p90: ${pct.p90_duration_ms ? (pct.p90_duration_ms / 1000).toFixed(1) + 's' : '-'}</div>
+        </div>
+      </div>
+      <div class="stats-card">
+        <div class="stats-card-icon ${paceColor}">${Icons.zap}</div>
+        <div class="stats-card-content">
+          <div class="stats-card-value">${paceValue}</div>
+          <div class="stats-card-label">Today's Spend</div>
+          <div class="stats-card-subtitle" style="color: var(--status-${paceColor === 'error' ? 'error' : 'running'});">${paceSubtitle}</div>
+        </div>
+      </div>
     `;
   },
 
-  renderByDay(byDay) {
-    const el = document.getElementById('costs-by-day');
+  renderTrendChart(byDay) {
+    const el = document.getElementById('costs-trend-chart');
     if (!el) return;
 
     const days = Object.entries(byDay);
-    if (days.length === 0) {
+    if (days.length < 2) {
+      el.innerHTML = '<p class="text-muted text-center p-md">Not enough data for chart</p>';
+      return;
+    }
+
+    el.innerHTML = '';
+
+    const margin = { top: 12, right: 20, bottom: 30, left: 50 };
+    const width = el.clientWidth - margin.left - margin.right;
+    const height = 180 - margin.top - margin.bottom;
+
+    const svg = d3.select(el)
+      .append('svg')
+      .attr('width', width + margin.left + margin.right)
+      .attr('height', height + margin.top + margin.bottom)
+      .append('g')
+      .attr('transform', `translate(${margin.left},${margin.top})`);
+
+    const data = days.map(([day, d]) => ({
+      date: new Date(day + 'T00:00:00'),
+      scheduled: d.scheduled_gbp || 0,
+      conversation: d.conversation_gbp || 0,
+      total: d.cost_gbp || 0
+    }));
+
+    const x = d3.scaleTime()
+      .domain(d3.extent(data, d => d.date))
+      .range([0, width]);
+
+    const maxY = d3.max(data, d => d.total) || 1;
+    const y = d3.scaleLinear()
+      .domain([0, maxY * 1.1])
+      .range([height, 0]);
+
+    // Grid lines
+    svg.append('g')
+      .attr('class', 'grid')
+      .call(d3.axisLeft(y).ticks(4).tickSize(-width).tickFormat(''));
+
+    // Stacked areas
+    const stack = d3.stack()
+      .keys(['scheduled', 'conversation'])
+      .order(d3.stackOrderNone)
+      .offset(d3.stackOffsetNone);
+
+    const series = stack(data);
+
+    const area = d3.area()
+      .x(d => x(d.data.date))
+      .y0(d => y(d[0]))
+      .y1(d => y(d[1]))
+      .curve(d3.curveMonotoneX);
+
+    const colors = ['#0d9488', '#3b82f6']; // teal for scheduled, blue for conversation
+
+    svg.selectAll('.area')
+      .data(series)
+      .join('path')
+      .attr('class', 'area')
+      .attr('d', area)
+      .attr('fill', (d, i) => colors[i])
+      .attr('fill-opacity', 0.3)
+      .attr('stroke', (d, i) => colors[i])
+      .attr('stroke-width', 1.5);
+
+    // X axis
+    const tickCount = data.length > 14 ? 7 : data.length;
+    svg.append('g')
+      .attr('class', 'axis')
+      .attr('transform', `translate(0,${height})`)
+      .call(d3.axisBottom(x).ticks(tickCount).tickFormat(d3.timeFormat('%-d %b')));
+
+    // Y axis
+    svg.append('g')
+      .attr('class', 'axis')
+      .call(d3.axisLeft(y).ticks(4).tickFormat(d => '\u00A3' + d.toFixed(2)));
+
+    // Tooltip hover
+    const tooltip = d3.select(el)
+      .append('div')
+      .attr('class', 'cost-trend-tooltip')
+      .style('opacity', 0);
+
+    const bisect = d3.bisector(d => d.date).left;
+
+    const hoverRect = svg.append('rect')
+      .attr('width', width)
+      .attr('height', height)
+      .attr('fill', 'none')
+      .attr('pointer-events', 'all');
+
+    const hoverLine = svg.append('line')
+      .attr('stroke', 'var(--text-muted)')
+      .attr('stroke-width', 1)
+      .attr('stroke-dasharray', '4,4')
+      .style('opacity', 0);
+
+    hoverRect.on('mousemove', function(event) {
+      const [mx] = d3.pointer(event);
+      const x0 = x.invert(mx);
+      const i = Math.min(bisect(data, x0, 1), data.length - 1);
+      const d = data[i];
+      if (!d) return;
+
+      hoverLine
+        .attr('x1', x(d.date)).attr('x2', x(d.date))
+        .attr('y1', 0).attr('y2', height)
+        .style('opacity', 1);
+
+      tooltip
+        .style('opacity', 1)
+        .html(`<strong>${d3.timeFormat('%-d %b')(d.date)}</strong><br>
+               Scheduled: \u00A3${d.scheduled.toFixed(3)}<br>
+               Conversation: \u00A3${d.conversation.toFixed(3)}<br>
+               Total: \u00A3${d.total.toFixed(3)}`)
+        .style('left', (x(d.date) + margin.left + 10) + 'px')
+        .style('top', '10px');
+    }).on('mouseleave', function() {
+      hoverLine.style('opacity', 0);
+      tooltip.style('opacity', 0);
+    });
+
+    // Legend
+    const legend = d3.select(el)
+      .append('div')
+      .style('display', 'flex')
+      .style('gap', '16px')
+      .style('justify-content', 'center')
+      .style('margin-top', '4px');
+
+    [{ label: 'Scheduled', color: colors[0] }, { label: 'Conversation', color: colors[1] }].forEach(item => {
+      legend.append('span')
+        .style('font-size', '11px')
+        .style('color', 'var(--text-secondary)')
+        .style('display', 'flex')
+        .style('align-items', 'center')
+        .style('gap', '4px')
+        .html(`<span style="width:12px;height:3px;background:${item.color};border-radius:2px;display:inline-block;"></span>${item.label}`);
+    });
+  },
+
+  renderBySkill(bySkill) {
+    const el = document.getElementById('costs-by-skill');
+    if (!el) return;
+
+    if (!bySkill || bySkill.length === 0) {
       el.innerHTML = '<p class="text-muted text-center p-md">No data</p>';
       return;
     }
 
-    const rows = days.map(([day, d]) => `
-      <tr>
-        <td class="font-mono text-sm">${day}</td>
-        <td class="text-right">${d.calls}</td>
-        <td class="text-right font-mono">\u00A3${d.cost_gbp.toFixed(2)}</td>
-        <td class="text-right font-mono text-muted">$${d.cost_usd.toFixed(2)}</td>
-      </tr>
-    `).join('');
+    const maxCost = bySkill[0]?.cost_gbp || 1;
+    const displayLimit = this._showAllSkills ? bySkill.length : 10;
+    const displayed = bySkill.slice(0, displayLimit);
+
+    const rows = displayed.map(s => {
+      const barWidth = Math.max(2, (s.cost_gbp / maxCost) * 60);
+      const severity = this._costSeverity(s.avg_cost_gbp);
+      const barClass = severity === 'high' ? 'high' : severity === 'medium' ? 'medium' : '';
+      return `
+        <tr>
+          <td>
+            <span class="cost-bar ${barClass}" style="width: ${barWidth}px;"></span>
+            <span class="font-medium text-sm">${Utils.escapeHtml(s.name)}</span>
+          </td>
+          <td class="text-right text-sm">${s.calls}</td>
+          <td class="text-right font-mono text-sm">\u00A3${s.avg_cost_gbp.toFixed(3)}</td>
+          <td class="text-right font-mono text-sm font-semibold">\u00A3${s.cost_gbp.toFixed(2)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    let showAllHtml = '';
+    if (bySkill.length > 10) {
+      const label = this._showAllSkills ? 'Show top 10' : `Show all ${bySkill.length}`;
+      showAllHtml = `<div class="costs-show-all"><button onclick="CostsView.toggleShowAllSkills()">${label}</button></div>`;
+    }
 
     el.innerHTML = `
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th class="text-right">Calls</th>
-            <th class="text-right">GBP</th>
-            <th class="text-right">USD</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div style="padding: var(--spacing-lg);">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Skill</th>
+              <th class="text-right">Calls</th>
+              <th class="text-right">Avg Cost</th>
+              <th class="text-right">Total GBP</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${showAllHtml}
     `;
+  },
+
+  toggleShowAllSkills() {
+    this._showAllSkills = !this._showAllSkills;
+    if (this._data) {
+      this.renderBySkill(this._data.summary.by_skill || []);
+    }
   },
 
   renderByModel(byModel) {
@@ -5803,69 +6046,175 @@ const CostsView = {
     `;
   },
 
+  populateFilters(data) {
+    // Populate skill filter
+    const skillSelect = document.getElementById('costs-filter-skill');
+    if (skillSelect && data.summary.by_skill) {
+      const skills = data.summary.by_skill.map(s => s.name).sort();
+      skillSelect.innerHTML = '<option value="">All Skills</option>' +
+        skills.map(s => `<option value="${Utils.escapeHtml(s)}">${Utils.escapeHtml(s)}</option>`).join('');
+    }
+
+    // Populate model filter
+    const modelSelect = document.getElementById('costs-filter-model');
+    if (modelSelect && data.summary.by_model) {
+      const models = Object.keys(data.summary.by_model).sort();
+      modelSelect.innerHTML = '<option value="">All Models</option>' +
+        models.map(m => {
+          const short = m.replace('claude-', '').replace(/-\d{8}$/, '');
+          return `<option value="${Utils.escapeHtml(m)}">${Utils.escapeHtml(short)}</option>`;
+        }).join('');
+    }
+  },
+
+  onSearchInput(value) {
+    this._searchText = value.toLowerCase();
+    this.renderTable(this._data?.entries || []);
+  },
+
+  _getFilteredEntries(entries) {
+    return entries.filter(e => {
+      if (this._filterSkill) {
+        const skill = this._extractSkill(e.source);
+        if (skill !== this._filterSkill) return false;
+      }
+      if (this._filterModel && e.model !== this._filterModel) return false;
+      if (this._searchText) {
+        const searchable = [
+          this._extractSkill(e.source),
+          this._resolveChannel(e.channel),
+          e.model || '',
+          e.message || '',
+          ...(e.tools_used || [])
+        ].join(' ').toLowerCase();
+        if (!searchable.includes(this._searchText)) return false;
+      }
+      return true;
+    });
+  },
+
   renderTable(entries) {
     const el = document.getElementById('costs-table');
     if (!el) return;
 
-    if (entries.length === 0) {
+    const filtered = this._getFilteredEntries(entries);
+    const countEl = document.getElementById('costs-log-count');
+    if (countEl) {
+      countEl.textContent = filtered.length === entries.length
+        ? `${entries.length} calls`
+        : `${filtered.length} of ${entries.length} calls`;
+    }
+
+    if (filtered.length === 0) {
       el.innerHTML = '<p class="text-muted text-center p-md">No cost data recorded yet</p>';
       return;
     }
 
-    const rows = entries.map(e => {
+    const rows = filtered.map((e, idx) => {
       const time = Format.datetime(e.timestamp);
-      const source = e.source || '-';
-      // Shorten "scheduled:balance-monitor" → "sched:balance"
-      const sourceShort = source.startsWith('scheduled:')
-        ? source.replace('scheduled:', 'sched:').replace('-monitor', '')
-        : source;
-      const sourceClass = source === 'conversation' ? 'status-running' : 'status-pending';
+      const skill = this._extractSkill(e.source);
+      const isScheduled = (e.source || '').startsWith('scheduled');
       const channel = this._resolveChannel(e.channel);
       const model = (e.model || 'unknown').replace('claude-', '').replace(/-\d{8,}$/, '');
       const duration = e.duration_ms ? (e.duration_ms / 1000).toFixed(1) + 's' : '-';
-      const tools = (e.tools_used || []);
-      const uniqueTools = [...new Set(tools)];
-      const toolStr = uniqueTools.length > 0
-        ? uniqueTools.slice(0, 3).join(', ') + (uniqueTools.length > 3 ? ` +${uniqueTools.length - 3}` : '')
+      const tools = [...new Set(e.tools_used || [])];
+      const toolStr = tools.length > 0
+        ? tools.slice(0, 3).join(', ') + (tools.length > 3 ? ` +${tools.length - 3}` : '')
         : '-';
-      const msg = Utils.escapeHtml((e.message || '').substring(0, 40));
-      const costUsd = (e.cost_usd || 0);
-      const costGbp = (e.cost_gbp || 0);
-      const costClass = costUsd === 0 ? 'text-muted' : costUsd > 0.20 ? 'text-warning' : '';
+      const costGbp = e.cost_gbp || 0;
+      const severity = this._costSeverity(costGbp);
 
       return `
-        <tr>
-          <td class="text-sm text-muted" style="white-space: nowrap;">${time}</td>
-          <td class="text-sm"><span class="status ${sourceClass}">${Utils.escapeHtml(sourceShort)}</span></td>
-          <td class="text-sm">${Utils.escapeHtml(channel)}</td>
-          <td class="text-sm font-mono">${Utils.escapeHtml(model)}</td>
-          <td class="text-right font-mono ${costClass}" style="padding-right: 12px;">\u00A3${costGbp.toFixed(3)}</td>
-          <td class="text-right text-sm text-muted" style="padding-left: 12px;">${duration}</td>
-          <td class="text-sm text-muted">${toolStr}</td>
-          <td class="text-sm text-muted" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${Utils.escapeHtml(e.message || '')}">${msg}</td>
-        </tr>
+        <div class="cost-entry cost-${severity}" onclick="CostsView.openDetail(${idx})" data-idx="${idx}">
+          <span class="cost-entry-time">${time}</span>
+          <span class="cost-entry-skill">${isScheduled ? '<span class="status status-pending" style="font-size:10px;padding:1px 5px;">sched</span> ' : ''}${Utils.escapeHtml(skill)}</span>
+          <span class="cost-entry-channel">${Utils.escapeHtml(channel)}</span>
+          <span class="cost-entry-model">${Utils.escapeHtml(model)}</span>
+          <span class="cost-entry-cost">\u00A3${costGbp.toFixed(3)}</span>
+          <span class="cost-entry-duration">${duration}</span>
+          <span class="cost-entry-tools">${Utils.escapeHtml(toolStr)}</span>
+        </div>
       `;
     }).join('');
 
-    el.innerHTML = `
-      <div style="overflow-x: auto;">
-        <table class="table" style="table-layout: auto; width: 100%;">
-          <thead>
-            <tr>
-              <th style="white-space: nowrap;">Time</th>
-              <th>Source</th>
-              <th>Channel</th>
-              <th>Model</th>
-              <th class="text-right" style="padding-right: 12px;">Cost</th>
-              <th class="text-right" style="padding-left: 12px;">Duration</th>
-              <th>Tools</th>
-              <th>Message</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
+    el.innerHTML = rows;
+  },
+
+  openDetail(idx) {
+    const entries = this._getFilteredEntries(this._data?.entries || []);
+    const e = entries[idx];
+    if (!e) return;
+
+    const skill = this._extractSkill(e.source);
+    const channel = this._resolveChannel(e.channel);
+    const model = (e.model || 'unknown').replace('claude-', '').replace(/-\d{8,}$/, '');
+    const tools = [...new Set(e.tools_used || [])];
+    const severity = this._costSeverity(e.cost_gbp || 0);
+    const severityLabel = severity === 'high' ? 'High Cost' : severity === 'medium' ? 'Medium Cost' : 'Low Cost';
+    const severityColor = severity === 'high' ? 'var(--status-error)' : severity === 'medium' ? 'var(--status-paused)' : 'var(--status-running)';
+
+    const content = `
+      <div style="margin-bottom: var(--spacing-md);">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+          <span style="font-size: var(--text-lg); font-weight: var(--font-semibold);">${Utils.escapeHtml(skill)}</span>
+          <span class="status-badge" style="background: ${severity === 'high' ? 'var(--status-error-bg)' : severity === 'medium' ? 'var(--status-paused-bg)' : 'var(--status-running-bg)'}; color: ${severityColor}; font-size: 10px; padding: 2px 8px; border-radius: 999px;">${severityLabel}</span>
+        </div>
+        <div style="font-size: var(--text-xs); color: var(--text-muted);">${Format.datetime(e.timestamp)}</div>
       </div>
+
+      <div class="cost-detail-grid">
+        <div class="cost-detail-item">
+          <div class="cost-detail-item-label">Cost (GBP)</div>
+          <div class="cost-detail-item-value">\u00A3${(e.cost_gbp || 0).toFixed(4)}</div>
+        </div>
+        <div class="cost-detail-item">
+          <div class="cost-detail-item-label">Cost (USD)</div>
+          <div class="cost-detail-item-value">$${(e.cost_usd || 0).toFixed(4)}</div>
+        </div>
+        <div class="cost-detail-item">
+          <div class="cost-detail-item-label">Duration</div>
+          <div class="cost-detail-item-value">${e.duration_ms ? (e.duration_ms / 1000).toFixed(1) + 's' : '-'}</div>
+        </div>
+        <div class="cost-detail-item">
+          <div class="cost-detail-item-label">Turns</div>
+          <div class="cost-detail-item-value">${e.num_turns || '-'}</div>
+        </div>
+        <div class="cost-detail-item">
+          <div class="cost-detail-item-label">Model</div>
+          <div class="cost-detail-item-value">${Utils.escapeHtml(model)}</div>
+        </div>
+        <div class="cost-detail-item">
+          <div class="cost-detail-item-label">Channel</div>
+          <div class="cost-detail-item-value">${Utils.escapeHtml(channel)}</div>
+        </div>
+        <div class="cost-detail-item">
+          <div class="cost-detail-item-label">Source</div>
+          <div class="cost-detail-item-value">${Utils.escapeHtml(e.source || '-')}</div>
+        </div>
+        <div class="cost-detail-item">
+          <div class="cost-detail-item-label">Response Chars</div>
+          <div class="cost-detail-item-value">${e.response_chars != null ? e.response_chars.toLocaleString() : '-'}</div>
+        </div>
+      </div>
+
+      ${tools.length > 0 ? `
+        <div style="margin-bottom: var(--spacing-sm);">
+          <div style="font-size: var(--text-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Tools Used</div>
+          <div class="cost-detail-tools">
+            ${tools.map(t => `<span class="cost-detail-tool-chip">${Utils.escapeHtml(t)}</span>`).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      ${e.message ? `
+        <div>
+          <div style="font-size: var(--text-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Message</div>
+          <div class="cost-detail-message">${Utils.escapeHtml(e.message)}</div>
+        </div>
+      ` : ''}
     `;
+
+    DetailPanel.open(content);
   },
 };
 

@@ -4163,3 +4163,291 @@ h4 { font-size: var(--text-base); }
   color: #6366f1;
   margin: 2px 4px 2px 0;
 }
+
+/* =============================================================================
+   COSTS VIEW
+   ============================================================================= */
+
+/* Stats card subtitle text */
+.stats-card-subtitle {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-top: 2px;
+  font-weight: var(--font-normal);
+}
+
+/* Cost trend chart */
+.cost-trend-chart {
+  padding: var(--spacing-md) var(--spacing-lg);
+  min-height: 200px;
+}
+
+.cost-trend-chart svg {
+  display: block;
+}
+
+.cost-trend-chart .axis text {
+  font-size: 11px;
+  fill: var(--text-muted);
+  font-family: var(--font-sans);
+}
+
+.cost-trend-chart .axis line,
+.cost-trend-chart .axis path {
+  stroke: var(--border);
+}
+
+.cost-trend-chart .grid line {
+  stroke: var(--border-light);
+}
+
+.cost-trend-chart .grid path {
+  stroke: none;
+}
+
+.cost-trend-tooltip {
+  position: absolute;
+  padding: 8px 12px;
+  background: var(--bg-sidebar);
+  color: var(--text-inverse);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+}
+
+/* Cost entry row with severity border */
+.cost-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 8px var(--spacing-md);
+  border-bottom: 1px solid var(--border-light);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-size: var(--text-sm);
+}
+
+.cost-entry:last-child {
+  border-bottom: none;
+}
+
+.cost-entry:hover {
+  background-color: var(--bg-hover);
+}
+
+.cost-entry.cost-low {
+  border-left-color: var(--status-running);
+}
+
+.cost-entry.cost-medium {
+  border-left-color: var(--status-paused);
+}
+
+.cost-entry.cost-high {
+  border-left-color: var(--status-error);
+  background: rgba(var(--status-error-rgb), 0.02);
+}
+
+.cost-entry-time {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 90px;
+}
+
+.cost-entry-skill {
+  font-weight: var(--font-medium);
+  min-width: 120px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cost-entry-channel {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  min-width: 80px;
+}
+
+.cost-entry-model {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  min-width: 80px;
+}
+
+.cost-entry-cost {
+  font-family: var(--font-mono);
+  font-weight: var(--font-semibold);
+  text-align: right;
+  min-width: 70px;
+  flex-shrink: 0;
+}
+
+.cost-entry-duration {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-align: right;
+  min-width: 50px;
+  flex-shrink: 0;
+}
+
+.cost-entry-tools {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Skill table cost bar */
+.cost-bar {
+  display: inline-block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  min-width: 2px;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+
+.cost-bar.high {
+  background: var(--status-error);
+}
+
+.cost-bar.medium {
+  background: var(--status-paused);
+}
+
+/* Filter bar for call log */
+.costs-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border);
+}
+
+.costs-filter-bar .form-input {
+  font-size: var(--text-sm);
+  padding: 4px 8px;
+  height: 32px;
+}
+
+.costs-search-input {
+  flex: 1;
+  max-width: 300px;
+  font-size: var(--text-sm);
+  padding: 4px 8px 4px 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  transition: border-color 0.15s;
+}
+
+.costs-search-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.costs-search-container {
+  position: relative;
+  flex: 1;
+  max-width: 300px;
+}
+
+.costs-search-container .data-table-search-icon {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* Show all toggle */
+.costs-show-all {
+  padding: 6px var(--spacing-md);
+  text-align: center;
+  border-top: 1px solid var(--border-light);
+}
+
+.costs-show-all button {
+  font-size: var(--text-xs);
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-weight: var(--font-medium);
+}
+
+.costs-show-all button:hover {
+  text-decoration: underline;
+}
+
+/* Detail panel cost-specific */
+.cost-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+.cost-detail-item {
+  padding: var(--spacing-sm);
+  background: var(--bg-hover);
+  border-radius: var(--radius-md);
+}
+
+.cost-detail-item-label {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 2px;
+}
+
+.cost-detail-item-value {
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+}
+
+.cost-detail-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: var(--spacing-sm);
+}
+
+.cost-detail-tool-chip {
+  display: inline-block;
+  font-size: var(--text-xs);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.cost-detail-message {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-sm);
+  background: var(--bg-code);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
