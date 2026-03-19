@@ -3550,6 +3550,213 @@ async def get_pocket_money_weekly_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
+async def get_financial_summary_data() -> dict[str, Any]:
+    """Fetch comprehensive financial position data for shareable summary.
+
+    Combines net worth, budget, savings rate, FIRE status, and business P&L.
+    """
+    from collections import defaultdict
+    from datetime import date
+
+    try:
+        from mcp_servers.financial_data.supabase_client import (
+            finance_query, finance_rpc, public_rpc,
+        )
+        from mcp_servers.financial_data.config import get_date_range
+    except ImportError:
+        return {"error": "Financial data modules not available"}
+
+    now = datetime.now(UK_TZ)
+    today = date.today()
+    month_label = now.strftime("%B %Y")
+
+    result: dict[str, Any] = {"month_label": month_label}
+
+    # --- Net Worth ---
+    try:
+        accounts = await finance_query("accounts", {
+            "is_active": "eq.true",
+            "select": "id,name,type,include_in_net_worth",
+        }, paginate=True)
+
+        account_ids = [a["id"] for a in accounts]
+        balances = await finance_rpc("get_account_balances_with_snapshots", {
+            "account_ids": account_ids,
+        })
+
+        balance_map = {b["account_id"]: float(b.get("current_balance") or 0) for b in balances}
+
+        by_type: dict[str, float] = defaultdict(float)
+        total = 0.0
+        top_accounts = []
+
+        for acc in accounts:
+            if not acc.get("include_in_net_worth", True):
+                continue
+            bal = balance_map.get(acc["id"], 0.0)
+            by_type[acc.get("type", "other")] += bal
+            total += bal
+            top_accounts.append({"name": acc["name"], "type": acc.get("type", "other"), "balance": bal})
+
+        top_accounts.sort(key=lambda a: abs(a["balance"]), reverse=True)
+
+        # Previous month snapshot
+        prev_m = today.month - 1 if today.month > 1 else 12
+        prev_y = today.year if today.month > 1 else today.year - 1
+        prev_end = date(prev_y, prev_m, 1).isoformat()
+
+        snapshots = await finance_query("wealth_snapshots", {
+            "date": f"lte.{prev_end}",
+            "order": "date.desc,account_id",
+            "limit": "500",
+        })
+
+        seen: set[str] = set()
+        prev_total = 0.0
+        for s in snapshots:
+            aid = s["account_id"]
+            if aid not in seen:
+                seen.add(aid)
+                matching = [a for a in accounts if a["id"] == aid and a.get("include_in_net_worth", True)]
+                if matching:
+                    prev_total += float(s.get("balance") or 0)
+
+        result["net_worth"] = {
+            "total": total,
+            "prev_total": prev_total,
+            "by_type": dict(by_type),
+            "top_accounts": top_accounts[:10],
+        }
+    except Exception as e:
+        logger.error(f"Financial summary - net worth error: {e}")
+        result["net_worth"] = {"error": str(e)}
+
+    # --- Budget ---
+    try:
+        rows = await finance_rpc("get_budget_vs_actual", {
+            "p_year": today.year,
+            "p_month": today.month,
+        })
+
+        income_rows = [r for r in rows if r.get("is_income")]
+        expense_rows = [r for r in rows if not r.get("is_income")]
+
+        income_budget = sum(float(r.get("budget_amount") or 0) for r in income_rows)
+        income_actual = sum(float(r.get("actual_amount") or 0) for r in income_rows)
+        expense_budget = sum(float(r.get("budget_amount") or 0) for r in expense_rows)
+        expense_actual = sum(float(r.get("actual_amount") or 0) for r in expense_rows)
+
+        over = [
+            {"category": r["category_name"], "amount": abs(float(r.get("variance") or 0))}
+            for r in expense_rows if float(r.get("variance") or 0) < 0
+        ]
+        under = [
+            {"category": r["category_name"], "amount": float(r.get("variance") or 0)}
+            for r in expense_rows if float(r.get("variance") or 0) > 0
+        ]
+
+        over.sort(key=lambda x: x["amount"], reverse=True)
+        under.sort(key=lambda x: x["amount"], reverse=True)
+
+        result["budget"] = {
+            "income_budget": income_budget,
+            "income_actual": income_actual,
+            "expense_budget": expense_budget,
+            "expense_actual": expense_actual,
+            "net_position": income_actual - expense_actual,
+            "over_budget": over[:5],
+            "under_budget": under[:5],
+        }
+    except Exception as e:
+        logger.error(f"Financial summary - budget error: {e}")
+        result["budget"] = {"error": str(e)}
+
+    # --- Savings Rate ---
+    try:
+        sav_rows = await finance_rpc("get_savings_rate", {
+            "p_year": today.year,
+            "p_month": today.month,
+        })
+
+        if sav_rows:
+            r = sav_rows[0]
+            result["savings"] = {
+                "rate_actual": float(r.get("savings_rate_actual") or 0),
+                "rate_budget": float(r.get("savings_rate_budget") or 0),
+                "savings_actual": float(r.get("savings_actual") or 0),
+            }
+        else:
+            result["savings"] = {"error": "No savings data"}
+    except Exception as e:
+        logger.error(f"Financial summary - savings error: {e}")
+        result["savings"] = {"error": str(e)}
+
+    # --- FIRE Status ---
+    try:
+        inputs = await finance_query("fire_inputs", {"limit": "1", "order": "updated_at.desc"})
+        if inputs:
+            fi = inputs[0]
+            annual_expenses = float(fi.get("annual_expenses") or 0)
+            swr = float(fi.get("safe_withdrawal_rate", 4)) / 100
+            target = annual_expenses / swr if swr else 0
+
+            inv_ids = [a["id"] for a in accounts if a.get("type") in ("investment", "isa", "pension") and a.get("include_in_net_worth", True)]
+            portfolio = 0.0
+            if inv_ids:
+                inv_balances = await finance_rpc("get_account_balances_with_snapshots", {"account_ids": inv_ids})
+                portfolio = sum(float(b.get("current_balance") or 0) for b in inv_balances)
+
+            progress = (portfolio / target * 100) if target else 0
+
+            current_age = float(fi.get("current_age", 42))
+            retirement_age = float(fi.get("retirement_age", 60))
+            growth_rate = float(fi.get("real_return_rate", 5)) / 100
+            years_to_retire = retirement_age - current_age
+
+            coast_fi = target / ((1 + growth_rate) ** years_to_retire) if years_to_retire > 0 and growth_rate > 0 else 0
+
+            monthly_savings = float(fi.get("monthly_savings", 0))
+            annual_savings = monthly_savings * 12
+            years_to_fi = 0
+            if annual_savings > 0 and growth_rate > 0:
+                bal = portfolio
+                while bal < target and years_to_fi < 100:
+                    bal = bal * (1 + growth_rate) + annual_savings
+                    years_to_fi += 1
+
+            result["fire"] = {
+                "portfolio": portfolio,
+                "target": target,
+                "progress_pct": progress,
+                "years_to_fi": years_to_fi if years_to_fi < 100 else None,
+                "coast_fi": coast_fi,
+                "coast_fi_reached": portfolio >= coast_fi if coast_fi > 0 else False,
+            }
+        else:
+            result["fire"] = {"error": "No FIRE inputs configured"}
+    except Exception as e:
+        logger.error(f"Financial summary - FIRE error: {e}")
+        result["fire"] = {"error": str(e)}
+
+    # --- Business P&L (current month) ---
+    try:
+        pnl = await _hb_request("/api/reports/profit-loss", params={"preset": "this_month"})
+        if "error" not in pnl:
+            result["business"] = {
+                "revenue": float(pnl.get("revenue") or pnl.get("total_revenue") or 0),
+                "profit": float(pnl.get("profit") or pnl.get("net_profit") or 0),
+                "margin": float(pnl.get("margin") or pnl.get("profit_margin") or 0),
+                "sales_count": int(pnl.get("sales_count") or pnl.get("total_orders") or 0),
+            }
+        else:
+            result["business"] = {"error": pnl.get("error", "P&L fetch failed")}
+    except Exception as e:
+        logger.error(f"Financial summary - business error: {e}")
+        result["business"] = {"error": str(e)}
+
+    return result
+
+
 # Map skill names to their data fetchers
 # Skills not in this dict use web search (news, etc.)
 SKILL_DATA_FETCHERS = {
@@ -3624,6 +3831,8 @@ SKILL_DATA_FETCHERS = {
     "github-weekly": get_github_weekly_data,
     # Subscriptions
     "subscription-monitor": get_subscription_monitor_data,
+    # Financial summary
+    "financial-summary": get_financial_summary_data,
     # Amazon purchases
     "amazon-purchases": get_amazon_purchases_data,
     # Cooking reminders

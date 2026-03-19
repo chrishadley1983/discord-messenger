@@ -98,6 +98,20 @@
     "description": "Sends end-of-day email digest of captured thoughts throughout the day",
     "channel": null
   },
+  "financial-summary": {
+    "triggers": [
+      "financial summary",
+      "financial position",
+      "share my finances",
+      "money summary",
+      "how am I doing financially",
+      "financial overview"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Shareable financial position summary - net worth, savings, FIRE progress, budget, and business P&L",
+    "channel": null
+  },
   "football-scores": {
     "triggers": [
       "football scores",
