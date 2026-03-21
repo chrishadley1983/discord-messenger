@@ -765,3 +765,98 @@ async def send_alerts_now():
     from domains.peterbot.japan_alerts import check_and_send_alerts
     alerts = await check_and_send_alerts(dry_run=False)
     return {"sent": len(alerts), "alerts": alerts}
+
+
+# ============================================================
+# Expense Tracking
+# ============================================================
+
+@router.post("/expenses")
+async def add_expense(request: Request):
+    """Add an expense to japan_expenses table.
+
+    Body: {
+        "amount": 3200,
+        "currency": "JPY",
+        "category": "food",
+        "description": "Kushikatsu Daruma lunch",
+        "payment_method": "cash",
+        "day_date": "2026-04-07"  (optional, defaults to today JST)
+    }
+
+    Categories: food, transport, attraction, shopping, accommodation, cash_withdrawal, other
+    Payment methods: card, cash, ic_card
+    """
+    body = await request.json()
+    amount = body.get("amount")
+    if not amount or float(amount) <= 0:
+        raise HTTPException(status_code=400, detail="amount is required and must be > 0")
+
+    # Default date to today JST
+    day_date = body.get("day_date")
+    if not day_date:
+        day_date = datetime.now(JAPAN_TZ).strftime("%Y-%m-%d")
+
+    expense = {
+        "day_date": day_date,
+        "amount": float(amount),
+        "currency": body.get("currency", "JPY"),
+        "category": body.get("category", "other"),
+        "description": body.get("description", ""),
+        "payment_method": body.get("payment_method", "cash"),
+    }
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/japan_expenses",
+            headers={**_supabase_headers(method="POST"), "Prefer": "return=representation"},
+            json=expense,
+        )
+
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    gbp = round(expense["amount"] / 200) if expense["currency"] == "JPY" else expense["amount"]
+    return {
+        "status": "logged",
+        "amount": expense["amount"],
+        "currency": expense["currency"],
+        "gbp_approx": gbp,
+        "category": expense["category"],
+        "description": expense["description"],
+        "day_date": day_date,
+    }
+
+
+@router.get("/expenses/today")
+async def get_today_expenses():
+    """Get today's expenses and running total."""
+    today = datetime.now(JAPAN_TZ).strftime("%Y-%m-%d")
+
+    # Check sim date
+    sim_file = Path(__file__).parent.parent / "data" / "japan_sim_date.txt"
+    if sim_file.exists():
+        sim = sim_file.read_text().strip()
+        if sim:
+            today = sim
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/japan_expenses",
+            headers=_supabase_headers(),
+            params={"select": "*", "day_date": f"eq.{today}", "order": "created_at.asc"},
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    expenses = resp.json()
+    total_jpy = sum(e["amount"] if e["currency"] == "JPY" else e["amount"] * 200 for e in expenses)
+
+    return {
+        "date": today,
+        "count": len(expenses),
+        "total_jpy": total_jpy,
+        "total_gbp": round(total_jpy / 200),
+        "expenses": expenses,
+    }

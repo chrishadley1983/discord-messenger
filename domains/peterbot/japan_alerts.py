@@ -51,6 +51,26 @@ CHECKOUT_TIMES = {
     "Nezu Apartment": "11:00",
 }
 
+FESTIVALS = {
+    "04-03": "Arrival day!",
+    "04-04": "Tohoku Food Festival near accommodation",
+    "04-05": "Tohoku Food Festival (last day). Chidorigafuchi Illuminations (6-10pm)",
+    "04-06": "Travel to Osaka",
+    "04-07": "USJ Cool Japan 2026 running",
+    "04-08": "Nara day trip. Hana Matsuri at temples",
+    "04-09": "Watch mint.go.jp for Mint Bureau announcement",
+    "04-10": "HIRANO SHRINE OKA-SAI (Procession 1pm, Illuminations 6-9pm)",
+    "04-11": "Consider Miyako Odori evening show",
+    "04-12": "Kyoto exploring",
+    "04-13": "teamLab 9am + Yasurai Festival noon — Can do BOTH!",
+    "04-14": "Travel to Tokyo 2",
+    "04-15": "DisneySea 25th Sparkling Jubilee LAUNCHES",
+    "04-16": "Nezu Shrine azaleas (steps from stay)",
+    "04-17": "Craft Sake Week opens. Nezu Shrine continues",
+    "04-18": "Tohoku Food Festival! Craft Sake Week. LAST FULL DAY.",
+    "04-19": "Red-eye departure 01:30",
+}
+
 # Food picks that need cash warnings
 CASH_ONLY_KEYWORDS = ["cash only", "cash", "bring yen", "bring cash"]
 
@@ -235,15 +255,68 @@ async def check_and_send_alerts(dry_run: bool = False) -> list[str]:
         alert_id = "morning"
         if not _is_sent(dedup, date_str, alert_id):
             booked_count = sum(1 for i in items if i.get("booked"))
-            highlights = [i.get("title", "") for i in items if i.get("booked")][:3]
-            highlights_str = ", ".join(highlights) if highlights else "no bookings"
+            day_fmt = today.strftime('%A, %B %-d' if os.name != 'nt' else '%A, %B %#d')
+
+            # Build rich schedule summary
+            schedule_lines = []
+            for item in items:
+                time_str = item.get("time", "")
+                title = item.get("title", "")
+                emoji = item.get("emoji", "")
+                booked = " ✅" if item.get("booked") else ""
+                schedule_lines.append(f"  {time_str} {emoji} {title}{booked}")
+
+            schedule_text = "\n".join(schedule_lines[:12])  # max 12 items
+            if len(items) > 12:
+                schedule_text += f"\n  ... +{len(items) - 12} more"
+
+            # Food picks for today
+            food_lines = []
+            for pick in today_picks:
+                status = pick.get("status", "").upper()
+                food_lines.append(f"  🍽️ {pick.get('meal', '').title()}: {pick.get('restaurant', '')} [{status}]")
+            food_text = "\n".join(food_lines) if food_lines else ""
+
+            # Festival
+            festival_text = ""
+            festival_str = FESTIVALS.get(date_str[5:], "")
+            if festival_str:
+                festival_text = f"\n🎌 {festival_str}\n"
+
+            # Fetch weather
+            weather_text = ""
+            try:
+                import httpx
+                base_city = city.split("→")[0].strip().split(",")[0].strip()
+                city_coords = {"Tokyo": (35.6762, 139.6503), "Osaka": (34.6937, 135.5023), "Kyoto": (35.0116, 135.7681), "Himeji": (34.8394, 134.6939)}
+                coords = city_coords.get(base_city)
+                if coords:
+                    w_resp = httpx.get(
+                        "https://api.open-meteo.com/v1/forecast",
+                        params={"latitude": coords[0], "longitude": coords[1], "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weathercode", "timezone": "Asia/Tokyo", "start_date": date_str, "end_date": date_str},
+                        timeout=8,
+                    )
+                    if w_resp.status_code == 200:
+                        w_data = w_resp.json().get("daily", {})
+                        w_code = w_data.get("weathercode", [None])[0]
+                        w_max = w_data.get("temperature_2m_max", [None])[0]
+                        w_min = w_data.get("temperature_2m_min", [None])[0]
+                        w_rain = w_data.get("precipitation_probability_max", [0])[0]
+                        w_emojis = {0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️", 51: "🌦️", 61: "🌧️", 80: "🌦️", 95: "⛈️"}
+                        w_emoji = w_emojis.get(w_code, "🌤️")
+                        rain_warn = " ☂️ Bring umbrella!" if w_rain and w_rain >= 50 else ""
+                        weather_text = f"\n{w_emoji} {w_max:.0f}°/{w_min:.0f}° · Rain {w_rain}%{rain_warn}\n"
+            except Exception:
+                pass
 
             msg = (
                 f"🌅 *Good morning from {city}!*\n"
-                f"Day {trip_day} of 17 · {today.strftime('%A, %B %-d' if os.name != 'nt' else '%A, %B %#d')}\n\n"
-                f"📋 {len(items)} activities today"
-                + (f" · {booked_count} booked ({highlights_str})" if booked_count else "")
-                + f"\n\n📱 Full guide: hadley-japan-2026.surge.sh/day-{trip_day}.html"
+                f"Day {trip_day} of 17 · {day_fmt}\n"
+                f"{weather_text}"
+                f"{festival_text}"
+                f"\n📋 *Today's Schedule:*\n{schedule_text}\n"
+                + (f"\n🍽️ *Planned Food:*\n{food_text}\n" if food_text else "")
+                + f"\n📱 hadley-japan-2026.surge.sh/day-{trip_day}.html"
             )
             alerts_to_send.append(("morning", alert_id, msg))
 
