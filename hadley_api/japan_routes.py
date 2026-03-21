@@ -809,7 +809,12 @@ async def add_expense(request: Request):
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{SUPABASE_URL}/rest/v1/japan_expenses",
-            headers={**_supabase_headers(method="POST"), "Prefer": "return=representation"},
+            headers={
+                **_supabase_headers(),
+                "Content-Profile": "japan",
+                "Accept-Profile": "japan",
+                "Prefer": "return=representation",
+            },
             json=expense,
         )
 
@@ -843,7 +848,7 @@ async def get_today_expenses():
     async with httpx.AsyncClient() as client:
         resp = await client.get(
             f"{SUPABASE_URL}/rest/v1/japan_expenses",
-            headers=_supabase_headers(),
+            headers={**_supabase_headers(), "Accept-Profile": "japan"},
             params={"select": "*", "day_date": f"eq.{today}", "order": "created_at.asc"},
         )
 
