@@ -302,6 +302,57 @@ async def _handle_message(body: dict):
             )
             return
 
+        # Check for location message (Feature #3: Location-Aware Food Finder)
+        location_msg = message_content.get("locationMessage")
+        if location_msg:
+            lat = location_msg.get("degreesLatitude")
+            lng = location_msg.get("degreesLongitude")
+            if lat and lng:
+                logger.info(f"WhatsApp location from {sender_name}: {lat}, {lng}")
+                text = f"[Location shared: {lat}, {lng}] Find me the nearest food options from my current location. I'm at coordinates {lat}, {lng}."
+                await _enqueue_message(
+                    sender_name=sender_name,
+                    sender_number=sender_number,
+                    reply_to=reply_to,
+                    is_group=is_group,
+                    text=text,
+                )
+                return
+
+        # Check for image message (Feature #6: Photo Journal)
+        image_msg = message_content.get("imageMessage")
+        if image_msg:
+            caption = image_msg.get("caption", "")
+            logger.info(f"WhatsApp image from {sender_name}: caption='{caption[:50]}'")
+            try:
+                # Download image via Evolution API
+                base64_data = image_msg.get("base64")
+                if not base64_data:
+                    dl_resp = await _download_media(message_id)
+                    base64_data = dl_resp
+                if base64_data:
+                    # Save to temp file for Peter to read
+                    import base64 as b64
+                    from pathlib import Path
+                    import uuid
+                    img_dir = Path(__file__).parent.parent / "data" / "tmp" / "whatsapp_images"
+                    img_dir.mkdir(parents=True, exist_ok=True)
+                    ext = "jpg" if "jpeg" in image_msg.get("mimetype", "jpeg") else "png"
+                    img_path = img_dir / f"{uuid.uuid4().hex[:12]}.{ext}"
+                    img_path.write_bytes(b64.b64decode(base64_data))
+
+                    text = f"[Photo shared{': ' + caption if caption else ''}] I've shared a photo from our Japan trip. The image is saved at {img_path}. Please describe what you see in this photo, identify the location if possible, and save it to our trip journal by calling: curl -s -X POST http://172.19.64.1:8100/japan/photos -H 'Content-Type: application/json' -d '{{\"description\": \"YOUR_DESCRIPTION\", \"location\": \"IDENTIFIED_LOCATION\", \"lat\": LAT, \"lng\": LNG, \"image_path\": \"{img_path}\"}}'"
+                    await _enqueue_message(
+                        sender_name=sender_name,
+                        sender_number=sender_number,
+                        reply_to=reply_to,
+                        is_group=is_group,
+                        text=text,
+                    )
+                    return
+            except Exception as e:
+                logger.error(f"WhatsApp image handling failed: {e}")
+
         text = (
             message_content.get("conversation")
             or message_content.get("extendedTextMessage", {}).get("text")

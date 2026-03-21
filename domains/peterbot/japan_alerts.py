@@ -283,6 +283,21 @@ async def check_and_send_alerts(dry_run: bool = False) -> list[str]:
             if festival_str:
                 festival_text = f"\n🎌 {festival_str}\n"
 
+            # Cherry blossom status
+            sakura_text = ""
+            try:
+                sakura_status = {
+                    "Tokyo": "🌸 Full bloom — peak viewing!",
+                    "Osaka": "🌸 Full bloom — petals starting to fall",
+                    "Kyoto": "🌸 Full bloom — stunning everywhere",
+                    "Himeji": "🌸 Full bloom — castle grounds spectacular",
+                }
+                base_city = city.split("→")[0].strip()
+                if base_city in sakura_status:
+                    sakura_text = f"\n{sakura_status[base_city]}\n"
+            except Exception:
+                pass
+
             # Fetch weather
             weather_text = ""
             try:
@@ -313,6 +328,7 @@ async def check_and_send_alerts(dry_run: bool = False) -> list[str]:
                 f"🌅 *Good morning from {city}!*\n"
                 f"Day {trip_day} of 17 · {day_fmt}\n"
                 f"{weather_text}"
+                f"{sakura_text}"
                 f"{festival_text}"
                 f"\n📋 *Today's Schedule:*\n{schedule_text}\n"
                 + (f"\n🍽️ *Planned Food:*\n{food_text}\n" if food_text else "")

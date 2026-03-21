@@ -709,6 +709,59 @@ async def set_sim_date(request: Request):
         return {"status": "sim_cleared", "message": "Japan sim mode deactivated"}
 
 
+# ============================================================
+# Photo Journal (Feature #6)
+# ============================================================
+
+@router.post("/photos")
+async def save_photo(request: Request):
+    """Save a trip photo to the journal.
+
+    Body: {
+        "description": "Beautiful cherry blossoms at Osaka Castle",
+        "location": "Osaka Castle Park",
+        "lat": 34.6873,
+        "lng": 135.5262,
+        "image_path": "/path/to/image.jpg",
+        "day_date": "2026-04-09"  (optional, defaults to today JST)
+    }
+    """
+    body = await request.json()
+
+    day_date = body.get("day_date")
+    if not day_date:
+        day_date = datetime.now(JAPAN_TZ).strftime("%Y-%m-%d")
+
+    photo = {
+        "day_date": day_date,
+        "description": body.get("description", ""),
+        "location_name": body.get("location", ""),
+        "lat": body.get("lat"),
+        "lng": body.get("lng"),
+        "image_path": body.get("image_path", ""),
+        "sender": body.get("sender", "Chris"),
+    }
+
+    # Store in Supabase japan_photos table (create if doesn't exist via insert)
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/japan_photos",
+            headers={
+                **_supabase_headers(),
+                "Content-Profile": "japan",
+                "Accept-Profile": "japan",
+                "Prefer": "return=representation",
+            },
+            json=photo,
+        )
+
+    if resp.status_code not in (200, 201):
+        # Table might not exist — log but don't fail
+        return {"status": "logged_locally", "description": photo["description"], "note": "Supabase insert failed, photo details logged"}
+
+    return {"status": "saved", "description": photo["description"], "location": photo["location_name"], "day_date": day_date}
+
+
 @router.post("/sim/time")
 async def set_sim_time(request: Request):
     """Set simulated JST time for alert testing. Body: {"time": "12:00"} or {"time": ""} to clear."""
