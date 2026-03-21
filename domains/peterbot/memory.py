@@ -97,6 +97,7 @@ def build_full_context(
     channel_name: str = "",
     knowledge_context: str = "",
     attachment_urls: list[dict] | None = None,
+    sender_number: str | None = None,
 ) -> str:
     """Build full context combining knowledge, recent buffer, and current message.
 
@@ -106,6 +107,7 @@ def build_full_context(
         channel_name: Discord channel name (e.g., "#food-log")
         knowledge_context: Optional additional knowledge context
         attachment_urls: Optional list of attachment dicts with url, filename, content_type, size
+        sender_number: Optional WhatsApp sender number (for pending action injection)
 
     Returns:
         Combined context string
@@ -126,6 +128,35 @@ def build_full_context(
     parts.append(f"## Current Time")
     parts.append(f"{now.strftime('%A, %B %d, %Y at %H:%M')} (UK)")
     parts.append("")
+
+    # Inject Japan trip context for WhatsApp messages during the trip (Apr 3-19, 2026)
+    WHATSAPP_VIRTUAL_CHANNEL_ID = 9999999999
+    if channel_id == WHATSAPP_VIRTUAL_CHANNEL_ID:
+        try:
+            from domains.peterbot.japan_context import get_japan_context
+            japan_ctx = get_japan_context()
+            if japan_ctx:
+                parts.append(japan_ctx)
+                parts.append("")
+        except Exception as e:
+            logger.debug(f"Japan context injection failed: {e}")
+
+    # Inject pending actions for WhatsApp messages
+    if channel_id == WHATSAPP_VIRTUAL_CHANNEL_ID and sender_number:
+        try:
+            from domains.peterbot.pending_actions import get_pending_for_sender
+            pending = get_pending_for_sender(str(sender_number))
+            if pending:
+                parts.append("## PENDING CONFIRMATION")
+                parts.append("The user has a pending action awaiting their response:")
+                for p in pending:
+                    parts.append(f"- **{p['description']}** (ID: `{p['id']}`)")
+                parts.append("")
+                parts.append("If user says yes/confirm/go ahead → `curl -s -X POST http://172.19.64.1:8100/schedule/pending-actions/{id}/confirm`")
+                parts.append("If user says no/cancel/never mind → `curl -s -X POST http://172.19.64.1:8100/schedule/pending-actions/{id}/cancel`")
+                parts.append("")
+        except Exception:
+            pass
 
     # Add additional knowledge context if available
     if knowledge_context and knowledge_context.strip():

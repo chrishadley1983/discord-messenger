@@ -668,3 +668,42 @@ async def send_digest(request: Request):
         "weather": weather is not None,
         "festivals": festivals is not None,
     }
+
+
+# ============================================================
+# Japan Sim Mode (for testing concierge from UK)
+# ============================================================
+
+SIM_FILE = Path(__file__).parent.parent / "data" / "japan_sim_date.txt"
+
+
+@router.get("/sim")
+async def get_sim_date():
+    """Get current Japan sim date."""
+    if SIM_FILE.exists():
+        val = SIM_FILE.read_text().strip()
+        return {"sim_date": val if val else None, "active": bool(val)}
+    return {"sim_date": None, "active": False}
+
+
+@router.post("/sim")
+async def set_sim_date(request: Request):
+    """Set Japan sim date for testing. Body: {"date": "2026-04-09"} or {"date": ""} to clear.
+
+    This makes Peter's WhatsApp responses include Japan trip context for the given date.
+    """
+    body = await request.json()
+    date_val = body.get("date", "")
+
+    if date_val:
+        try:
+            datetime.strptime(date_val, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format, use YYYY-MM-DD")
+
+    SIM_FILE.write_text(date_val)
+
+    if date_val:
+        return {"status": "sim_active", "date": date_val, "message": f"Peter will now respond as if it's {date_val} in Japan"}
+    else:
+        return {"status": "sim_cleared", "message": "Japan sim mode deactivated"}
