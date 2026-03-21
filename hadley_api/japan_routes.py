@@ -707,3 +707,61 @@ async def set_sim_date(request: Request):
         return {"status": "sim_active", "date": date_val, "message": f"Peter will now respond as if it's {date_val} in Japan"}
     else:
         return {"status": "sim_cleared", "message": "Japan sim mode deactivated"}
+
+
+@router.post("/sim/time")
+async def set_sim_time(request: Request):
+    """Set simulated JST time for alert testing. Body: {"time": "12:00"} or {"time": ""} to clear."""
+    body = await request.json()
+    time_val = body.get("time", "")
+    time_file = Path(__file__).parent.parent / "data" / "japan_sim_time.txt"
+    time_file.write_text(time_val)
+    if time_val:
+        return {"status": "sim_time_active", "time": time_val}
+    return {"status": "sim_time_cleared"}
+
+
+@router.post("/alerts/test")
+async def test_alerts(request: Request):
+    """Dry-run alert check. Shows what alerts would fire without sending.
+
+    Body: {"date": "2026-04-09", "time": "12:00"} (optional overrides)
+    """
+    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    date_val = body.get("date", "")
+    time_val = body.get("time", "")
+
+    # Temporarily set sim files
+    sim_file = Path(__file__).parent.parent / "data" / "japan_sim_date.txt"
+    time_file = Path(__file__).parent.parent / "data" / "japan_sim_time.txt"
+
+    old_date = sim_file.read_text().strip() if sim_file.exists() else ""
+    old_time = time_file.read_text().strip() if time_file.exists() else ""
+
+    try:
+        if date_val:
+            sim_file.write_text(date_val)
+        if time_val:
+            time_file.write_text(time_val)
+
+        from domains.peterbot.japan_alerts import check_and_send_alerts
+        alerts = await check_and_send_alerts(dry_run=True)
+
+        return {
+            "sim_date": date_val or old_date or "real",
+            "sim_time": time_val or old_time or "real",
+            "alerts_count": len(alerts),
+            "alerts": alerts,
+        }
+    finally:
+        # Restore original sim state
+        sim_file.write_text(old_date)
+        time_file.write_text(old_time)
+
+
+@router.post("/alerts/send")
+async def send_alerts_now():
+    """Manually trigger alert check and send any pending alerts."""
+    from domains.peterbot.japan_alerts import check_and_send_alerts
+    alerts = await check_and_send_alerts(dry_run=False)
+    return {"sent": len(alerts), "alerts": alerts}

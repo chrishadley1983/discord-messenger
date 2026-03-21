@@ -240,6 +240,7 @@ async def on_ready():
         logger.info(f"Peterbot scheduler loaded {job_count} jobs from SCHEDULE.md")
         # Watch for API-triggered reloads (Hadley API writes trigger file)
         peterbot_scheduler.start_reload_watcher()
+        peterbot_scheduler.start_nag_checker()
     else:
         # Legacy: Register standalone jobs (remove after Phase 7b migration)
         register_balance_monitor(scheduler, bot)
@@ -296,6 +297,17 @@ async def on_ready():
     _wa_mod.register_whatsapp_sync(scheduler, bot=bot)
     logger.info("WhatsApp sync jobs registered (daily 10:00 AM + weekly Sunday 9:00 AM UK)")
 
+    # Japan trip — proactive WhatsApp alerts every 15 min (active Apr 3-19 only)
+    from domains.peterbot.japan_alerts import check_and_send_alerts as _japan_alerts
+    scheduler.add_job(
+        _japan_alerts,
+        'interval', minutes=15,
+        id='japan_trip_alerts',
+        name='Japan Trip WhatsApp Alerts',
+        replace_existing=True,
+    )
+    logger.info("Japan trip alerts registered (every 15 min, active during trip only)")
+
     # WhatsApp incoming messages — internal HTTP server for HadleyAPI to forward to
     from aiohttp import web as aio_web
     from integrations.whatsapp import send_text, send_audio
@@ -316,6 +328,31 @@ async def on_ready():
 
             if not text.strip() or not sender_number:
                 return aio_web.json_response({"status": "ignored"})
+
+            # Check for nag acknowledgement before routing to Peter
+            ack_patterns = {"done", "finished", "completed", "stop", "yes done", "stop nagging", "all done"}
+            if text.strip().lower() in ack_patterns and not is_group:
+                try:
+                    import httpx as _httpx
+                    # Map sender number to delivery target name
+                    _wa_contacts = {"447855620978": "chris", "447856182831": "abby"}
+                    _target_name = _wa_contacts.get(sender_number, sender_number)
+                    async with _httpx.AsyncClient(timeout=5.0) as _client:
+                        _nag_resp = await _client.get(
+                            f"http://127.0.0.1:8100/reminders/active-nags?delivery=whatsapp:{_target_name}"
+                        )
+                        if _nag_resp.status_code == 200:
+                            _active_nags = _nag_resp.json()
+                            if _active_nags:
+                                # Acknowledge the first active nag
+                                _nag_id = _active_nags[0]["id"]
+                                await _client.post(f"http://127.0.0.1:8100/reminders/{_nag_id}/acknowledge")
+                                _task_name = _active_nags[0].get("task", "your task")
+                                await send_text(reply_to, f"Nice one, ticked off for today ✅\n*{_task_name}* — no more reminders.")
+                                logger.info(f"Nag {_nag_id} acknowledged by {sender_name} via WhatsApp")
+                                return aio_web.json_response({"status": "ok", "replied": True})
+                except Exception as _e:
+                    logger.debug(f"Nag ack check failed: {_e}")
 
             source = "group" if is_group else "DM"
             voice_tag = " voice" if is_voice else ""
