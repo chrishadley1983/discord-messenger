@@ -7102,10 +7102,6 @@ async def meal_plan_import_sheets(
             else:
                 continue
 
-            # Determine meal_slot (1 or 2 for same-date meals)
-            existing_slots = [i['meal_slot'] for i in items if i['date'] == parsed_date.isoformat()]
-            meal_slot = len(existing_slots) + 1
-
             # Detect source_tag from Activities column (or adults meal as fallback)
             source_tag = None
             activities = row[activities_col].strip().lower() if activities_col is not None and len(row) > activities_col else ''
@@ -7114,6 +7110,18 @@ async def meal_plan_import_sheets(
                 source_tag = 'gousto'
             elif 'out' in activities or 'chris out' in adults_lower:
                 source_tag = 'chris_out'
+
+            # Determine meal_slot using semantic mapping (consistent with POST /meal-plan)
+            # MEAL_SLOT_MAP: breakfast=0, lunch=1, dinner=2, snack=3
+            existing_slots = [i['meal_slot'] for i in items if i['date'] == parsed_date.isoformat()]
+            if not existing_slots:
+                # First meal for this date — default to dinner (slot 2)
+                meal_slot = 2
+            else:
+                # Multiple meals on same day — assign remaining slots
+                # If dinner (2) is taken, next is lunch (1), then breakfast (0)
+                slot_priority = [2, 1, 0, 3]  # dinner, lunch, breakfast, snack
+                meal_slot = next((s for s in slot_priority if s not in existing_slots), max(existing_slots) + 1)
 
             items.append({
                 "date": parsed_date.isoformat(),
@@ -7266,14 +7274,22 @@ async def meal_plan_import_csv(req: MealPlanCSVImport):
             else:
                 continue
 
-            existing_slots = [i['meal_slot'] for i in items if i['date'] == parsed_date.isoformat()]
-            meal_slot = len(existing_slots) + 1
-
             source_tag = None
             if 'gousto' in adults.lower():
                 source_tag = 'gousto'
             elif 'chris out' in adults.lower() or 'out' == adults.lower():
                 source_tag = 'chris_out'
+
+            # Determine meal_slot using semantic mapping (consistent with POST /meal-plan)
+            # MEAL_SLOT_MAP: breakfast=0, lunch=1, dinner=2, snack=3
+            existing_slots = [i['meal_slot'] for i in items if i['date'] == parsed_date.isoformat()]
+            if not existing_slots:
+                # First meal for this date — default to dinner (slot 2)
+                meal_slot = 2
+            else:
+                # Multiple meals on same day — assign remaining slots
+                slot_priority = [2, 1, 0, 3]  # dinner, lunch, breakfast, snack
+                meal_slot = next((s for s in slot_priority if s not in existing_slots), max(existing_slots) + 1)
 
             items.append({
                 "date": parsed_date.isoformat(),

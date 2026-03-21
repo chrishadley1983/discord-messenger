@@ -237,6 +237,9 @@ async def delete_meal_plan(plan_id: str) -> dict:
 async def upsert_meal_plan_items(plan_id: str, items: list[dict]) -> list:
     """Upsert meal plan items for a plan.
 
+    Replaces all existing items for the plan: deletes stale items not in the
+    new data, then upserts the new items.
+
     Each item should have: date, meal_slot, adults_meal, kids_meal, source_tag, recipe_url
 
     Args:
@@ -253,10 +256,41 @@ async def upsert_meal_plan_items(plan_id: str, items: list[dict]) -> list:
     for item in items:
         item["plan_id"] = plan_id
 
-    headers = _get_headers()
-    headers["Prefer"] = "return=representation,resolution=merge-duplicates"
+    # Build set of (date, meal_slot) pairs in the new data
+    new_keys = {(item["date"], item["meal_slot"]) for item in items}
 
     async with httpx.AsyncClient() as client:
+        # Fetch existing items for this plan to detect stale entries
+        existing_resp = await client.get(
+            f"{_get_rest_url()}/meal_plan_items",
+            headers=_get_headers(),
+            params={
+                "plan_id": f"eq.{plan_id}",
+                "select": "id,date,meal_slot"
+            },
+            timeout=30
+        )
+        existing_resp.raise_for_status()
+        existing_items = existing_resp.json()
+
+        # Delete stale items (exist in DB but not in new data)
+        stale_ids = [
+            ei["id"] for ei in existing_items
+            if (ei["date"], ei["meal_slot"]) not in new_keys
+        ]
+        if stale_ids:
+            for stale_id in stale_ids:
+                await client.delete(
+                    f"{_get_rest_url()}/meal_plan_items?id=eq.{stale_id}",
+                    headers=_get_headers(),
+                    timeout=30
+                )
+            logger.info(f"Deleted {len(stale_ids)} stale meal plan items for plan {plan_id}")
+
+        # Upsert new items
+        headers = _get_headers()
+        headers["Prefer"] = "return=representation,resolution=merge-duplicates"
+
         response = await client.post(
             f"{_get_rest_url()}/meal_plan_items",
             headers=headers,
