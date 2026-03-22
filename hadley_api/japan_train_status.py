@@ -15,11 +15,23 @@ SCRIPT_PATH = Path("C:/Users/Chris Hadley/claude-projects/japan-family-guide/scr
 async def _run_scraper(region: str) -> dict:
     """Run the train status scraper script."""
     try:
+        import subprocess, sys
+        IS_WINDOWS = sys.platform == "win32"
+        startupinfo = None
+        creationflags = 0
+        if IS_WINDOWS:
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            creationflags = subprocess.CREATE_NO_WINDOW
+
         proc = await asyncio.create_subprocess_exec(
             "node", str(SCRIPT_PATH), region,
             cwd=str(SCRIPT_PATH.parent),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            startupinfo=startupinfo,
+            creationflags=creationflags,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=25)
         output = stdout.decode("utf-8").strip()
