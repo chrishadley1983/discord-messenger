@@ -344,7 +344,7 @@ def get_japan_context(sim_date: str | None = None) -> str:
     parts.append("### Train Delays")
     parts.append("If asked about train delays or disruptions, CHECK LIVE STATUS by running:")
     parts.append("```bash")
-    parts.append('curl -s "http://172.19.64.1:8100/japan/trains/status?city=CITY"')
+    parts.append('curl -s "http://172.19.64.1:8100/japan/trains?city=CITY"')
     parts.append("```")
     parts.append("Replace CITY with: tokyo, osaka, kyoto, or all")
     parts.append("This scrapes JR West/East live status pages and returns JSON with per-line status.")
