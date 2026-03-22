@@ -15,13 +15,12 @@ def _run_scraper_sync(region: str) -> dict:
     """Run train status scraper synchronously."""
     try:
         kwargs = {
-            "capture_output": True,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
             "text": True,
             "timeout": 25,
             "cwd": str(SCRIPT_PATH.parent),
         }
-        if IS_WINDOWS:
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
         result = subprocess.run(
             ["node", str(SCRIPT_PATH), region],
