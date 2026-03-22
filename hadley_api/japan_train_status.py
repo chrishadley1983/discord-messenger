@@ -1,39 +1,58 @@
-"""Japan Train Status Checker — uses sync subprocess wrapped in asyncio.to_thread."""
+"""Japan Train Status Checker — uses temp file for Windows service compatibility."""
 
 import asyncio
 import json
 import subprocess
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 
 SCRIPT_PATH = Path("C:/Users/Chris Hadley/claude-projects/japan-family-guide/scrape-train-status.js")
 
-IS_WINDOWS = sys.platform == "win32"
-
 
 def _run_scraper_sync(region: str) -> dict:
-    """Run train status scraper synchronously."""
-    try:
-        kwargs = {
-            "stdout": subprocess.PIPE,
-            "stderr": subprocess.PIPE,
-            "text": True,
-            "timeout": 25,
-            "cwd": str(SCRIPT_PATH.parent),
-        }
+    """Run train status scraper — writes output to temp file to avoid Windows PIPE issues."""
+    tmp_path = Path(tempfile.gettempdir()) / f"train_status_{uuid.uuid4().hex[:8]}.json"
 
-        result = subprocess.run(
-            ["node", str(SCRIPT_PATH), region],
-            **kwargs,
+    # Wrap the script to write output to file instead of stdout
+    wrapper = f'''
+    const fs = require('fs');
+    const orig = console.log;
+    let output = '';
+    console.log = (s) => {{ output += s; }};
+    require('{SCRIPT_PATH.as_posix()}');
+    // The script uses console.log in an async IIFE, so wait for it
+    setTimeout(() => {{
+        fs.writeFileSync('{tmp_path.as_posix()}', output || '{{}}');
+        process.exit(0);
+    }}, 20000);
+    '''
+
+    # Actually, simpler: just redirect stdout to file via shell
+    try:
+        cmd = f'node "{SCRIPT_PATH}" {region} > "{tmp_path}"'
+        subprocess.run(
+            cmd,
+            shell=True,
+            timeout=25,
+            cwd=str(SCRIPT_PATH.parent),
         )
-        if result.stdout.strip():
-            return json.loads(result.stdout.strip())
-        return {"error": f"No output. rc={result.returncode}. stderr={result.stderr[:200]}"}
+
+        if tmp_path.exists():
+            content = tmp_path.read_text(encoding="utf-8").strip()
+            tmp_path.unlink(missing_ok=True)
+            if content:
+                return json.loads(content)
+        return {"error": "No output file created"}
     except subprocess.TimeoutExpired:
+        tmp_path.unlink(missing_ok=True)
         return {"error": "Timeout (25s)"}
     except json.JSONDecodeError as e:
-        return {"error": f"Bad JSON: {e}. stdout={result.stdout[:100]}"}
+        tmp_path.unlink(missing_ok=True)
+        return {"error": f"Bad JSON: {e}"}
     except Exception as e:
+        tmp_path.unlink(missing_ok=True)
         return {"error": str(e)}
 
 
