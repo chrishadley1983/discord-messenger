@@ -812,6 +812,16 @@ async def test_alerts(request: Request):
         time_file.write_text(old_time)
 
 
+@router.get("/trains/status")
+async def train_status(city: str = "all"):
+    """Check live train status for Japanese rail networks.
+
+    Query params: ?city=tokyo|osaka|kyoto|all
+    """
+    from hadley_api.japan_train_status import get_train_status
+    return await get_train_status(city)
+
+
 @router.post("/alerts/send")
 async def send_alerts_now():
     """Manually trigger alert check and send any pending alerts."""
