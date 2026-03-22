@@ -15,6 +15,10 @@ from pathlib import Path
 # Playwright is installed in the japan-family-guide project
 PLAYWRIGHT_NODE = "node"
 JAPAN_GUIDE_DIR = Path("C:/Users/Chris Hadley/claude-projects/japan-family-guide")
+# Ensure node_modules/.bin is on PATH for Playwright
+import os
+NODE_ENV = os.environ.copy()
+NODE_ENV["PATH"] = str(JAPAN_GUIDE_DIR / "node_modules" / ".bin") + os.pathsep + NODE_ENV.get("PATH", "")
 
 
 async def check_jr_west_kinki() -> dict:
@@ -72,6 +76,7 @@ async def check_jr_west_kinki() -> dict:
             cwd=str(JAPAN_GUIDE_DIR),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=NODE_ENV,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
         output = stdout.decode("utf-8").strip()
@@ -131,6 +136,7 @@ async def check_jr_east() -> dict:
             cwd=str(JAPAN_GUIDE_DIR),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=NODE_ENV,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
         output = stdout.decode("utf-8").strip()
