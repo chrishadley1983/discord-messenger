@@ -1,51 +1,39 @@
-"""Japan Train Status Checker.
-
-Calls a standalone Node.js script that uses Playwright to scrape train status pages.
-Returns structured status data for Peter to report.
-"""
+"""Japan Train Status Checker — uses sync subprocess wrapped in asyncio.to_thread."""
 
 import asyncio
 import json
-import os
+import subprocess
+import sys
 from pathlib import Path
 
 SCRIPT_PATH = Path("C:/Users/Chris Hadley/claude-projects/japan-family-guide/scrape-train-status.js")
 
+IS_WINDOWS = sys.platform == "win32"
 
-async def _run_scraper(region: str) -> dict:
-    """Run the train status scraper script."""
+
+def _run_scraper_sync(region: str) -> dict:
+    """Run train status scraper synchronously."""
     try:
-        import subprocess, sys
-        IS_WINDOWS = sys.platform == "win32"
-        startupinfo = None
-        creationflags = 0
+        kwargs = {
+            "capture_output": True,
+            "text": True,
+            "timeout": 25,
+            "cwd": str(SCRIPT_PATH.parent),
+        }
         if IS_WINDOWS:
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-            creationflags = subprocess.CREATE_NO_WINDOW
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-        proc = await asyncio.create_subprocess_exec(
-            "node", str(SCRIPT_PATH), region,
-            cwd=str(SCRIPT_PATH.parent),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            startupinfo=startupinfo,
-            creationflags=creationflags,
+        result = subprocess.run(
+            ["node", str(SCRIPT_PATH), region],
+            **kwargs,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=25)
-        output = stdout.decode("utf-8").strip()
-        err_output = stderr.decode("utf-8", "ignore").strip()
-        if output:
-            try:
-                return json.loads(output)
-            except json.JSONDecodeError:
-                return {"error": f"Bad JSON: {output[:200]}", "stderr": err_output[:200]}
-        return {"error": f"No stdout. stderr: {err_output[:300]}", "returncode": proc.returncode}
-    except asyncio.TimeoutError:
+        if result.stdout.strip():
+            return json.loads(result.stdout.strip())
+        return {"error": f"No output. rc={result.returncode}. stderr={result.stderr[:200]}"}
+    except subprocess.TimeoutExpired:
         return {"error": "Timeout (25s)"}
-    except json.JSONDecodeError:
-        return {"error": f"Invalid JSON: {output[:100]}"}
+    except json.JSONDecodeError as e:
+        return {"error": f"Bad JSON: {e}. stdout={result.stdout[:100]}"}
     except Exception as e:
         return {"error": str(e)}
 
@@ -55,22 +43,20 @@ async def get_train_status(city: str = "all") -> dict:
     results = {}
 
     if city in ("osaka", "kyoto", "all", "kinki"):
-        results["jr_west"] = await _run_scraper("kinki")
+        results["jr_west"] = await asyncio.to_thread(_run_scraper_sync, "kinki")
 
     if city in ("tokyo", "all"):
-        results["jr_east"] = await _run_scraper("east")
+        results["jr_east"] = await asyncio.to_thread(_run_scraper_sync, "east")
 
-    # Build summary
     all_normal = True
     for r in results.values():
         if r.get("error"):
             all_normal = False
             continue
         areas = r.get("areas", [])
-        if areas:
-            if any(a.get("status") != "Normal" for a in areas):
-                all_normal = False
-        elif r.get("status") != "Normal":
+        if areas and any(a.get("status") != "Normal" for a in areas):
+            all_normal = False
+        elif not areas and r.get("status") != "Normal":
             all_normal = False
 
     return {
