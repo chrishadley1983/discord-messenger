@@ -35,9 +35,13 @@ async def _run_scraper(region: str) -> dict:
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=25)
         output = stdout.decode("utf-8").strip()
+        err_output = stderr.decode("utf-8", "ignore").strip()
         if output:
-            return json.loads(output)
-        return {"error": f"No output. stderr: {stderr.decode('utf-8','ignore')[:200]}"}
+            try:
+                return json.loads(output)
+            except json.JSONDecodeError:
+                return {"error": f"Bad JSON: {output[:200]}", "stderr": err_output[:200]}
+        return {"error": f"No stdout. stderr: {err_output[:300]}", "returncode": proc.returncode}
     except asyncio.TimeoutError:
         return {"error": "Timeout (25s)"}
     except json.JSONDecodeError:
