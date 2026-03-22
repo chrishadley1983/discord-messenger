@@ -45,11 +45,12 @@ app.include_router(spelling_router)
 from hadley_api.japan_routes import router as japan_router
 app.include_router(japan_router)
 
-# Train status endpoint (direct on app to avoid router caching issues)
+# Train status endpoint
+from hadley_api.japan_train_status import get_train_status as _get_train_status
+
 @app.get("/japan/trains")
 async def train_status_direct(city: str = "all"):
-    from hadley_api.japan_train_status import get_train_status
-    return await get_train_status(city)
+    return await _get_train_status(city)
 
 
 @app.get("/gcp/usage")
