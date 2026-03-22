@@ -355,12 +355,22 @@ async def check_and_send_alerts(dry_run: bool = False) -> list[str]:
             location = item.get("location", "")
             notes = str(item.get("notes", ""))
 
-            # Find matching booking for ref number
+            # Find matching booking for ref number + links
             ref = ""
+            booking_links = ""
             for b in bookings:
                 if b.get("activity_title", "").lower() in title.lower() or title.lower() in b.get("activity_title", "").lower():
                     if b.get("confirmation_ref"):
                         ref = f"\n📋 Ref: {b['confirmation_ref']}"
+                    links = []
+                    if b.get("booking_url"):
+                        links.append(f"🎫 {b['booking_url']}")
+                    if b.get("email_url"):
+                        links.append(f"📧 {b['email_url']}")
+                    if b.get("qr_url"):
+                        links.append(f"📱 {b['qr_url']}")
+                    if links:
+                        booking_links = "\n" + "\n".join(links)
                     break
 
             # Check for QR code mentions
@@ -377,7 +387,7 @@ async def check_and_send_alerts(dry_run: bool = False) -> list[str]:
                 f"⏰ *{title}* in 30 minutes!\n"
                 + (f"📍 {location}\n" if location else "")
                 + (f"🕐 Entry: {item.get('time', '')}" + (f"–{item.get('end_time', '')}" if item.get("end_time") else ""))
-                + ref + qr_note + cash_note
+                + ref + qr_note + cash_note + booking_links
             )
             alerts_to_send.append(("booking", alert_id, msg))
 
