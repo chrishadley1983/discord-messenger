@@ -7,6 +7,14 @@ from typing import Optional
 from uuid import UUID
 
 
+def _safe_enum(enum_cls, value, default):
+    """Parse an enum value, falling back to default for unknown values."""
+    try:
+        return enum_cls(value)
+    except (ValueError, KeyError):
+        return default
+
+
 class CaptureType(str, Enum):
     """How the knowledge item was captured."""
     EXPLICIT = "explicit"   # User !save command (base_priority 1.0)
@@ -43,6 +51,7 @@ class ContentType(str, Enum):
     VIEWING_HISTORY = "viewing_history"
     HEALTH_ACTIVITY = "health_activity"
     TRAVEL_BOOKING = "travel_booking"
+    REFERENCE = "reference"
 
 
 class ConnectionType(str, Enum):
@@ -126,8 +135,8 @@ class KnowledgeItem:
 
         return cls(
             id=str(row["id"]) if row.get("id") else "",
-            content_type=ContentType(row["content_type"]),
-            capture_type=CaptureType(row["capture_type"]),
+            content_type=_safe_enum(ContentType, row["content_type"], ContentType.NOTE),
+            capture_type=_safe_enum(CaptureType, row["capture_type"], CaptureType.SEED),
             title=row.get("title"),
             source=source,
             full_text=row.get("full_text"),
@@ -139,7 +148,7 @@ class KnowledgeItem:
             last_accessed=last_accessed,
             created_at=created_at,
             updated_at=updated_at,
-            status=ItemStatus(row.get("status", "active")),
+            status=_safe_enum(ItemStatus, row.get("status", "active"), ItemStatus.ACTIVE),
             user_note=row.get("user_note"),
             site_name=row.get("site_name"),
             word_count=row.get("word_count", 0),
@@ -194,7 +203,7 @@ class KnowledgeConnection:
             id=UUID(row["id"]) if isinstance(row["id"], str) else row["id"],
             item_a_id=UUID(row["item_a_id"]) if isinstance(row["item_a_id"], str) else row["item_a_id"],
             item_b_id=UUID(row["item_b_id"]) if isinstance(row["item_b_id"], str) else row["item_b_id"],
-            connection_type=ConnectionType(row["connection_type"]),
+            connection_type=_safe_enum(ConnectionType, row["connection_type"], ConnectionType.TOPIC_OVERLAP),
             description=row.get("description"),
             similarity_score=row.get("similarity_score"),
             surfaced=row.get("surfaced", False),

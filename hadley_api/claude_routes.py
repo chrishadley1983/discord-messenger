@@ -1,23 +1,28 @@
-"""Claude CLI extraction routes.
+"""Claude extraction routes.
 
-Provides a local Claude extraction endpoint that uses `claude -p` (CLI print mode)
-instead of the Anthropic API. This avoids needing an API key — it uses the local
-Claude Code OAuth subscription instead.
+Provides a local Claude extraction endpoint. Tries the `claude -p` CLI first
+(uses OAuth subscription — no API cost), then falls back to the Anthropic API
+if the CLI returns empty (common on Windows due to async PIPE issues).
 
 Used by Second Brain seed adapters for summarisation, tagging, and structured
 data extraction from emails.
 """
 
 import asyncio
+import logging
 import os
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/claude", tags=["claude"])
 
 CLAUDE_CLI = os.path.expanduser("~/.local/bin/claude")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 
 class ExtractRequest(BaseModel):
@@ -33,29 +38,39 @@ class ExtractResponse(BaseModel):
 
 @router.post("/extract", response_model=ExtractResponse)
 async def claude_extract(req: ExtractRequest):
-    """Run a Claude extraction via the local CLI.
+    """Run a Claude extraction via CLI, with Anthropic API fallback.
 
-    Uses `claude -p` (print mode) which reads from stdin and writes to stdout.
-    No API key needed — uses the local Claude Code OAuth subscription.
+    1. Try `claude -p` (free, uses OAuth subscription)
+    2. If CLI returns empty, fall back to Anthropic API (uses API credits)
     """
+    # Try CLI first
     try:
         result = await _run_claude_cli(req.prompt, req.max_tokens, req.model)
-        if result is None:
-            return ExtractResponse(error="Claude CLI returned no output")
-        return ExtractResponse(result=result)
+        if result:
+            return ExtractResponse(result=result)
+        logger.warning("Claude CLI returned empty, trying API fallback")
     except asyncio.TimeoutError:
-        return ExtractResponse(error="Claude CLI timed out (60s)")
+        logger.warning("Claude CLI timed out, trying API fallback")
     except Exception as e:
-        return ExtractResponse(error=str(e))
+        logger.warning(f"Claude CLI failed ({e}), trying API fallback")
+
+    # Fallback to Anthropic API
+    if ANTHROPIC_API_KEY:
+        try:
+            result = await _call_anthropic_api(
+                req.prompt, req.max_tokens, req.model or "claude-haiku-4-5-20251001"
+            )
+            if result:
+                return ExtractResponse(result=result)
+            return ExtractResponse(error="Anthropic API returned empty")
+        except Exception as e:
+            return ExtractResponse(error=f"Both CLI and API failed: {e}")
+
+    return ExtractResponse(error="Claude CLI returned no output and no API key configured")
 
 
 async def _run_claude_cli(prompt: str, max_tokens: int = 1500, model: str = "") -> Optional[str]:
-    """Execute claude -p and return the text response.
-
-    Clears ANTHROPIC_API_KEY and CLAUDECODE from the subprocess env to ensure
-    the CLI uses OAuth credentials from ~/.claude/.credentials.json rather
-    than a potentially stale API key from .env.
-    """
+    """Execute claude -p and return the text response."""
     cli = CLAUDE_CLI if os.path.exists(CLAUDE_CLI) else "claude"
     cmd = [cli, "-p", "--output-format", "text", "--max-turns", "1"]
     if model:
@@ -97,3 +112,34 @@ async def _run_claude_cli(prompt: str, max_tokens: int = 1500, model: str = "") 
         )
 
     return stdout.decode("utf-8", errors="ignore").strip() or None
+
+
+async def _call_anthropic_api(
+    prompt: str,
+    max_tokens: int = 1500,
+    model: str = "claude-haiku-4-5-20251001",
+) -> Optional[str]:
+    """Call the Anthropic Messages API directly as a fallback."""
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+        )
+        if response.status_code == 401:
+            raise RuntimeError("Anthropic API key is invalid or expired — regenerate at console.anthropic.com")
+        response.raise_for_status()
+        data = response.json()
+
+        # Extract text from response content blocks
+        content = data.get("content", [])
+        texts = [block["text"] for block in content if block.get("type") == "text"]
+        return "\n".join(texts).strip() or None

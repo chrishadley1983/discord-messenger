@@ -141,7 +141,7 @@ async def incremental_seed_import(bot=None):
     - Bookmarks: 50 items (from Chrome's live file — dedup handles repeats)
     - Email Links: 10 items (Gousto recipes, Airbnb bookings scraped from email links)
     """
-    from domains.second_brain.seed.runner import run_seed_import, get_available_adapters
+    from domains.second_brain.seed.runner import run_seed_import, run_seed_import_batched, get_available_adapters
 
     # Import adapters to register them
     from domains.second_brain.seed.adapters import (
@@ -252,7 +252,11 @@ async def incremental_seed_import(bot=None):
                 outcomes.append(_AdapterOutcome(label=label, validated=False, validate_error=val_err))
                 continue
 
-            result = await run_seed_import(adapter, limit=limit, skip_validate=True)
+            # Use batched import for adapters with many items (saves embedding API calls)
+            if limit > 10:
+                result = await run_seed_import_batched(adapter, limit=limit, skip_validate=True)
+            else:
+                result = await run_seed_import(adapter, limit=limit, skip_validate=True)
 
             results.append(result)
             total_imported += result.items_imported
