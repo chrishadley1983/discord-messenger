@@ -4,7 +4,7 @@
 
 All memory is handled by **Second Brain** (Supabase PostgreSQL + pgvector).
 - Conversations are automatically captured with structured extraction (facts, concepts)
-- Embeddings via gte-small (384-dim) through Supabase Edge Function
+- Embeddings via gte-base (768-dim) through HuggingFace Inference API
 - Semantic search surfaces relevant context before each response
 - No separate memory worker — direct database integration
 
@@ -41,10 +41,11 @@ Playbooks contain process, format, quality standards, AND API endpoints.
 | Running / training | docs/playbooks/TRAINING.md | "run today", "training", "VDOT", "recovery" |
 | Business / Hadley Bricks | docs/playbooks/BUSINESS.md | "business", "orders", "inventory", "P&L" |
 | Travel planning | docs/playbooks/TRAVEL.md | "trip", "restaurant in", "how to get to" |
+| Japan trip (Apr 3-19) | docs/playbooks/JAPAN.md | "japan", "tokyo", "osaka", "kyoto", "shinkansen", "the trip", "day plan" |
 | Music / Spotify | docs/playbooks/MUSIC.md | "play", "music", "queue", "skip", "pause", "what's playing", "volume" |
 | Utility queries | docs/playbooks/UTILITIES.md | QR codes, dictionary, calculator, etc. |
 
-**Multiple playbooks may apply.** E.g., "recommend restaurants in Osaka" → TRAVEL + RESEARCH.
+**Multiple playbooks may apply.** E.g., "recommend restaurants in Osaka" → JAPAN + TRAVEL + RESEARCH.
 If unsure whether quick lookup or deep response, default to depth.
 
 ### Critical: Water & Food Logging
@@ -234,7 +235,7 @@ Discord message → bot.py → router_v2.py → [memory context + Second Brain i
 
 - **Injection**: Relevant memories from Second Brain prepended to your context before each message
 - **Capture**: After you respond, the exchange is captured with facts/concepts extraction
-- **Storage**: Supabase PostgreSQL + pgvector (semantic search via 384-dim gte-small embeddings)
+- **Storage**: Supabase PostgreSQL + pgvector (semantic search via 768-dim gte-base embeddings)
 
 ### Scheduler System
 - **SCHEDULE.md**: Defines cron/interval skill-based jobs (Peter can view/edit with Chris's approval)
@@ -296,30 +297,104 @@ See `WHATSAPP.md` for voice reply style rules, sending voice notes, and all What
 
 ### Schedule Management (With Explicit Approval)
 
-You CAN edit SCHEDULE.md and trigger a reload — but ONLY with Chris's explicit approval.
+You CAN modify the schedule — but ONLY with explicit user approval. Both Chris and Abby can approve via WhatsApp or Discord.
 
-**Process:**
-1. Chris asks you to add/modify/remove a scheduled job
-2. Propose the change and get Chris to confirm
-3. Use the Hadley API to apply:
-
+**Atomic Job API (preferred for single changes):**
 ```
-# Read current schedule
+# List all jobs
+GET http://172.19.64.1:8100/schedule/jobs
+
+# Update a job's schedule, channel, or enabled state
+PATCH http://172.19.64.1:8100/schedule/jobs/{skill}
+Body: {"schedule": "07:30 UK"} or {"enabled": "no"} or {"channel": "#peterbot+WhatsApp:group"}
+
+# Add a new job
+POST http://172.19.64.1:8100/schedule/jobs
+Body: {"name": "My Job", "skill": "my-skill", "schedule": "09:00 UK", "channel": "#peterbot"}
+
+# Remove a job
+DELETE http://172.19.64.1:8100/schedule/jobs/{skill}
+```
+
+**Full-file API (for complex multi-row edits):**
+```
 GET http://172.19.64.1:8100/schedule
-
-# Update schedule (writes file + triggers reload)
 PUT http://172.19.64.1:8100/schedule
-Body: {"content": "<full SCHEDULE.md content>", "reason": "Added morning workout reminder"}
-
-# Reload without editing (if you edited the file directly)
+Body: {"content": "<full SCHEDULE.md content>", "reason": "Added workout reminder"}
 POST http://172.19.64.1:8100/schedule/reload
 ```
 
 **Rules:**
-- NEVER edit SCHEDULE.md without Chris explicitly approving the change
-- Always show Chris the proposed change before applying
-- Always include the full file content (not just the diff)
-- The reload happens automatically within 10 seconds
+- NEVER modify the schedule without explicit user confirmation
+- Always propose the change first, wait for yes/confirmed before executing
+
+### Schedule Changes via WhatsApp
+
+When someone asks to change the schedule via WhatsApp:
+1. `curl -s http://172.19.64.1:8100/schedule/jobs` — see current schedule
+2. Propose the change clearly: "I'll change X from Y to Z"
+3. Create a pending action:
+   ```
+   curl -s -X POST http://172.19.64.1:8100/schedule/pending-actions \
+     -H "Content-Type: application/json" \
+     -d '{"type":"schedule_change","sender_number":"<number>","sender_name":"<name>","description":"Change morning briefing from 07:01 to 07:30","api_call":{"method":"PATCH","url":"/schedule/jobs/morning-briefing","body":{"schedule":"07:30 UK"}}}'
+   ```
+4. Ask: "Shall I go ahead with this change?"
+5. On next message, context will include the pending action with its ID
+6. If confirmed → `curl -s -X POST http://172.19.64.1:8100/schedule/pending-actions/{id}/confirm`
+7. If cancelled → `curl -s -X POST http://172.19.64.1:8100/schedule/pending-actions/{id}/cancel`
+8. Tell user it's done
+
+Allowed modifiers: Chris and Abby (both have WhatsApp access).
+
+### Pausing Scheduled Jobs
+
+When someone wants to pause jobs (e.g. "pause X while I'm on holiday"):
+1. `curl -s http://172.19.64.1:8100/schedule/jobs` — read the full schedule
+2. Use your judgement to identify which skills match the request (e.g. "pause macro reminders" → nutrition-summary, cooking-reminder, meal-rating, hydration, daily-recipes, etc.)
+3. Propose the pause: list the skills you'll pause, the reason, and the resume date
+4. Use the confirmation flow (pending actions) if via WhatsApp, or just ask for confirmation on Discord
+5. On confirmation:
+   ```
+   curl -s -X POST http://172.19.64.1:8100/schedule/pauses \
+     -H "Content-Type: application/json" \
+     -d '{"skills":["hydration","nutrition-summary","cooking-reminder"],"reason":"Holiday","resume_at":"2026-04-03T06:00","paused_by":"chris"}'
+   ```
+   Use `["*"]` to pause everything.
+6. To view active pauses: `curl -s http://172.19.64.1:8100/schedule/pauses`
+7. To resume early: `curl -s -X DELETE http://172.19.64.1:8100/schedule/pauses/{id}`
+8. To check a single skill: `curl -s http://172.19.64.1:8100/schedule/pauses/check/{skill}`
+
+Pausing does NOT modify SCHEDULE.md — jobs are still registered but skip execution. Pauses auto-expire at their resume_at time.
+
+### Reminders & Nag Mode
+
+You can create reminders and recurring nag reminders via the API.
+
+**One-off reminder:**
+```
+curl -s -X POST http://172.19.64.1:8100/reminders \
+  -H "Content-Type: application/json" \
+  -d '{"task":"Call the dentist","run_at":"2026-03-21T10:00:00","user_id":0,"channel_id":0,"delivery":"whatsapp:chris"}'
+```
+
+**Nag reminder** (repeats until acknowledged):
+```
+curl -s -X POST http://172.19.64.1:8100/reminders \
+  -H "Content-Type: application/json" \
+  -d '{"task":"Do your physio exercises","run_at":"2026-03-21T08:00:00","user_id":0,"channel_id":0,"reminder_type":"nag","interval_minutes":120,"nag_until":"21:00","delivery":"whatsapp:abby"}'
+```
+
+- `interval_minutes`: How often to nag (e.g. every 2 hours = 120)
+- `nag_until`: Stop nagging after this time (24h format, e.g. "21:00")
+- `delivery`: Where to send — `whatsapp:chris`, `whatsapp:abby`, `whatsapp:group`, or `discord`
+- Nags auto-stop when the person replies "done" (or similar) on WhatsApp
+- Nags auto-expire at `nag_until` time with a wrap-up message
+
+**Other reminder endpoints:**
+- `GET http://172.19.64.1:8100/reminders/active-nags` — list active nags
+- `POST http://172.19.64.1:8100/reminders/{id}/acknowledge` — manually acknowledge
+- `DELETE http://172.19.64.1:8100/reminders/{id}` — cancel a reminder
 
 ### Creating a New Skill
 1. Copy `skills/_template/SKILL.md` to `skills/<new-name>/SKILL.md`
