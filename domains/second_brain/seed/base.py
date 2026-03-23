@@ -20,6 +20,7 @@ class SeedItem:
     topics: list[str] = field(default_factory=list)
     created_at: Optional[datetime] = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    content_type: Optional[str] = None  # ContentType value override (e.g. "email", "health_activity")
 
 
 @dataclass

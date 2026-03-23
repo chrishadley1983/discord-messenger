@@ -36,7 +36,7 @@ def chunk_text(text: str) -> list[TextChunk]:
     words = text.split()
     total_words = len(words)
 
-    if total_words <= CHUNK_SIZE:
+    if total_words <= CHUNK_SIZE + CHUNK_OVERLAP:
         # Single chunk - no splitting needed
         return [TextChunk(
             text=text.strip(),

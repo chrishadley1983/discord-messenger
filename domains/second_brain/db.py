@@ -16,6 +16,8 @@ from .config import (
     MAX_CHUNKS_PER_SEARCH,
     SEARCH_MIN_DECAY,
     CONNECTION_THRESHOLD,
+    MMR_LAMBDA,
+    MMR_ENABLED,
 )
 from .types import (
     KnowledgeItem,
@@ -67,7 +69,7 @@ def _get_rest_url() -> str:
 # =============================================================================
 # EMBEDDING GENERATION
 # =============================================================================
-# Embeddings handled by embed module via HuggingFace Inference API (gte-small).
+# Embeddings handled by embed module via HuggingFace Inference API (gte-base).
 # Raises EmbeddingError on failure — no zero-vector fallback.
 
 from .embed import generate_embedding, generate_embeddings_batch, EmbeddingError
@@ -489,6 +491,68 @@ async def keyword_search(
 
 
 # =============================================================================
+# MMR (Maximal Marginal Relevance) for search diversity
+# =============================================================================
+
+def _topic_jaccard(topics_a: list[str], topics_b: list[str]) -> float:
+    """Jaccard similarity between two topic lists."""
+    if not topics_a or not topics_b:
+        return 0.0
+    set_a, set_b = set(topics_a), set(topics_b)
+    intersection = len(set_a & set_b)
+    union = len(set_a | set_b)
+    return intersection / union if union > 0 else 0.0
+
+
+def _apply_mmr(
+    results: list[SearchResult],
+    lambda_param: float = MMR_LAMBDA,
+    limit: int = MAX_SEARCH_RESULTS,
+) -> list[SearchResult]:
+    """Re-rank results using Maximal Marginal Relevance.
+
+    Balances relevance (similarity score) with diversity (topic overlap
+    with already-selected results). Uses Jaccard similarity of topic arrays.
+
+    score = lambda * similarity - (1-lambda) * max_topic_overlap_with_selected
+    """
+    if len(results) <= 1:
+        return results
+
+    selected: list[SearchResult] = []
+    remaining = list(results)
+
+    # Always pick the best result first
+    remaining.sort(key=lambda r: r.best_similarity, reverse=True)
+    selected.append(remaining.pop(0))
+
+    while remaining and len(selected) < limit:
+        best_score = -float('inf')
+        best_idx = 0
+
+        for i, candidate in enumerate(remaining):
+            # Relevance component
+            relevance = candidate.best_similarity
+
+            # Diversity component: max topic overlap with any selected result
+            max_overlap = max(
+                _topic_jaccard(candidate.item.topics, sel.item.topics)
+                for sel in selected
+            )
+
+            # MMR score
+            mmr_score = lambda_param * relevance - (1 - lambda_param) * max_overlap
+
+            if mmr_score > best_score:
+                best_score = mmr_score
+                best_idx = i
+
+        selected.append(remaining.pop(best_idx))
+
+    return selected
+
+
+# =============================================================================
 # HYBRID SEARCH (vector + keyword fallback)
 # =============================================================================
 
@@ -543,6 +607,10 @@ async def hybrid_search(
             f"Hybrid search: {len(results)} total "
             f"(vector triggered keyword fallback)"
         )
+
+    # Apply MMR for topic diversity
+    if MMR_ENABLED and len(results) > 1:
+        results = _apply_mmr(results, lambda_param=MMR_LAMBDA, limit=limit)
 
     return results[:limit]
 

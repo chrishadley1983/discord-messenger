@@ -97,6 +97,7 @@ class BookmarksAdapter(SeedAdapter):
                     source_id=node.get("id"),
                     topics=self._topics_from_folder(folder_path),
                     created_at=self._parse_chrome_timestamp(node.get("date_added")),
+                    content_type="bookmark",
                 ))
 
         # Handle folders (explicit type or root nodes with children)
@@ -124,6 +125,7 @@ class BookmarksAdapter(SeedAdapter):
                         content=f"Bookmark: {title}\nURL: {url}",
                         source_url=url,
                         topics=["bookmark"],
+                        content_type="bookmark",
                     ))
 
         except Exception as e:

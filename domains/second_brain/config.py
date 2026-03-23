@@ -14,8 +14,8 @@ MIN_CONTENT_WORDS: Final[int] = 10     # Reject trivially short content
 MAX_CONTENT_WORDS: Final[int] = 10_000 # Truncate with note
 
 # Embedding configuration
-EMBEDDING_MODEL: Final[str] = "gte-small"
-EMBEDDING_DIMENSIONS: Final[int] = 384  # gte-small produces 384-dim vectors
+EMBEDDING_MODEL: Final[str] = "gte-base"
+EMBEDDING_DIMENSIONS: Final[int] = 768  # gte-base produces 768-dim vectors
 EMBEDDING_TEXT_LIMIT: Final[int] = 8000  # Max chars before truncation
 EMBEDDING_SINGLE_TIMEOUT: Final[int] = 60  # Seconds for single embedding request
 EMBEDDING_BATCH_TIMEOUT: Final[int] = 120  # Seconds for batch embedding request
@@ -41,6 +41,10 @@ PRIORITY_PASSIVE: Final[float] = 0.3           # Auto-detected
 MAX_SEARCH_RESULTS: Final[int] = 10
 MAX_CHUNKS_PER_SEARCH: Final[int] = 20
 MAX_CONTEXT_ITEMS: Final[int] = 3              # Max items injected per response
+
+# MMR (Maximal Marginal Relevance) for search diversity
+MMR_LAMBDA: Final[float] = 0.7       # 70% relevance, 30% diversity
+MMR_ENABLED: Final[bool] = True       # Toggle MMR on/off
 
 # Passive capture signals — must be deliberate, not casual conversation
 IDEA_SIGNAL_PHRASES: Final[list[str]] = [
@@ -76,22 +80,25 @@ EXCLUDE_PATTERNS: Final[list[str]] = [
     "?",  # Questions
 ]
 
-# Known domain tags for tagging prompt
+# Known domain tags — grouped by category for tagging prompt
+KNOWN_DOMAIN_TAG_GROUPS: Final[dict[str, list[str]]] = {
+    "business": ["hadley-bricks", "ebay", "bricklink", "brick-owl", "amazon", "bricqer", "shopify"],
+    "lego": ["lego", "lego-investing", "retired-sets", "minifigures", "lego-sorting"],
+    "fitness": ["running", "marathon", "training", "nutrition", "garmin", "parkrun", "race"],
+    "family": ["family", "max", "emmie", "abby", "parenting"],
+    "travel": ["japan-trip", "travel", "flight", "accommodation", "holiday"],
+    "tech": ["tech", "development", "peterbot", "familyfuel", "second-brain", "automation"],
+    "finance": ["finance", "tax", "self-employment", "budget", "net-worth", "investing"],
+    "health": ["health", "medical", "nhs", "dental", "withings", "sleep"],
+    "school": ["school", "stocks-green", "homework", "term-dates", "parents-evening"],
+    "home": ["home", "property", "maintenance", "garden", "car"],
+    "entertainment": ["spotify", "music", "netflix", "tv", "film", "podcast"],
+    "food": ["recipe", "cooking", "meal-planning", "restaurant"],
+}
+
+# Flat list of all known tags (derived from groups)
 KNOWN_DOMAIN_TAGS: Final[list[str]] = [
-    # Business
-    "hadley-bricks", "ebay", "bricklink", "brick-owl", "amazon",
-    # LEGO
-    "lego", "lego-investing", "retired-sets", "minifigures",
-    # Running/Fitness
-    "running", "marathon", "training", "nutrition", "garmin",
-    # Family
-    "family", "max", "emmie", "abby", "japan-trip",
-    # Tech
-    "tech", "development", "peterbot", "familyfuel",
-    # Entertainment
-    "spotify", "music", "netflix", "travel", "flight", "accommodation",
-    # Finance
-    "finance", "tax", "self-employment",
+    tag for tags in KNOWN_DOMAIN_TAG_GROUPS.values() for tag in tags
 ]
 
 # Source systems for seed imports
@@ -110,6 +117,12 @@ SOURCE_FAMILYFUEL: Final[str] = "seed:familyfuel"
 SOURCE_SPOTIFY: Final[str] = "seed:spotify"
 SOURCE_NETFLIX: Final[str] = "seed:netflix"
 SOURCE_TRAVEL: Final[str] = "seed:travel"
+SOURCE_GARMIN_HEALTH: Final[str] = "seed:garmin-health"
+SOURCE_WITHINGS: Final[str] = "seed:withings"
+SOURCE_REDDIT: Final[str] = "seed:reddit"
+SOURCE_PETER: Final[str] = "seed:peter"
+SOURCE_SCHOOL: Final[str] = "seed:school"
+SOURCE_CLAUDE_CODE: Final[str] = "seed:claude-code"
 
 # Health monitoring thresholds
 HEALTH_PENDING_WARN: Final[int] = 0          # Warn if pending items > this
@@ -119,7 +132,7 @@ HEALTH_EMBED_FAIL_RATE: Final[float] = 10    # Warn if >10% embedding failure ra
 
 # Structured extraction limits
 STRUCTURED_EXTRACTION_TIMEOUT: Final[int] = 30  # seconds
-MAX_FACTS_PER_ITEM: Final[int] = 8
+MAX_FACTS_PER_ITEM: Final[int] = 12
 MAX_CONCEPTS_PER_ITEM: Final[int] = 5
 
 async def call_claude(prompt: str, max_tokens: int = 200, timeout: int = 30) -> str | None:

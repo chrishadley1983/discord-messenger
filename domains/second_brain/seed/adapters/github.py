@@ -49,7 +49,7 @@ class GitHubProjectsAdapter(SeedAdapter):
         return True, ""
 
     async def fetch(self, limit: int = 500) -> list[SeedItem]:
-        """Fetch README and recent commits from each repo."""
+        """Fetch README, commits, PRs, and issues from repos."""
         items = []
 
         headers = {
@@ -58,7 +58,15 @@ class GitHubProjectsAdapter(SeedAdapter):
         }
 
         async with httpx.AsyncClient(timeout=30) as client:
-            for repo_full_name in self.repos:
+            # Auto-discover repos if not using explicit list
+            repos_to_fetch = self.repos
+            if self.config.get("auto_discover", False):
+                discovered = await self._discover_repos(client, headers)
+                if discovered:
+                    repos_to_fetch = discovered
+                    logger.info(f"Auto-discovered {len(discovered)} repos")
+
+            for repo_full_name in repos_to_fetch:
                 logger.info(f"Fetching from {repo_full_name}...")
 
                 try:
@@ -83,6 +91,14 @@ class GitHubProjectsAdapter(SeedAdapter):
                     commits = await self._fetch_commits(client, headers, repo_full_name, repo)
                     items.extend(commits)
 
+                    # Import PRs (if days_back set, only recent)
+                    prs = await self._fetch_prs(client, headers, repo_full_name, repo)
+                    items.extend(prs)
+
+                    # Import issues (if days_back set, only recent)
+                    issues = await self._fetch_issues(client, headers, repo_full_name, repo)
+                    items.extend(issues)
+
                     if len(items) >= limit:
                         break
 
@@ -91,6 +107,25 @@ class GitHubProjectsAdapter(SeedAdapter):
 
         logger.info(f"Returning {len(items)} GitHub items for import")
         return items[:limit]
+
+    async def _discover_repos(
+        self,
+        client: httpx.AsyncClient,
+        headers: dict,
+    ) -> list[str]:
+        """Auto-discover repos by fetching user's recently pushed repos."""
+        try:
+            response = await client.get(
+                "https://api.github.com/user/repos",
+                headers=headers,
+                params={"sort": "pushed", "per_page": 100, "type": "owner"},
+            )
+            if response.status_code == 200:
+                repos = response.json()
+                return [r["full_name"] for r in repos if not r.get("fork")]
+        except Exception as e:
+            logger.warning(f"Repo auto-discovery failed: {e}")
+        return DEFAULT_REPOS
 
     async def _fetch_readme(
         self,
@@ -135,6 +170,7 @@ class GitHubProjectsAdapter(SeedAdapter):
                                     "repo": repo_full_name,
                                     "language": repo.get("language"),
                                 },
+                                content_type="code",
                             )
                     break
 
@@ -211,10 +247,156 @@ class GitHubProjectsAdapter(SeedAdapter):
                         "repo": repo_full_name,
                         "sha": commit.get("sha"),
                     },
+                    content_type="commit",
                 ))
 
         except Exception as e:
             logger.warning(f"Failed to fetch commits for {repo_full_name}: {e}")
+
+        return items
+
+    async def _fetch_prs(
+        self,
+        client: httpx.AsyncClient,
+        headers: dict,
+        repo_full_name: str,
+        repo: dict,
+    ) -> list[SeedItem]:
+        """Fetch pull requests from repo."""
+        items = []
+        try:
+            params = {"state": "all", "sort": "updated", "per_page": 30, "direction": "desc"}
+            response = await client.get(
+                f"https://api.github.com/repos/{repo_full_name}/pulls",
+                headers=headers,
+                params=params,
+            )
+            if response.status_code != 200:
+                return items
+
+            prs = response.json()
+            cutoff = None
+            if self.days_back > 0:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=self.days_back)
+
+            for pr in prs:
+                updated_str = pr.get("updated_at", "")
+                if updated_str:
+                    updated_at = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+                    if cutoff and updated_at < cutoff:
+                        continue
+                else:
+                    updated_at = None
+
+                title = pr.get("title", "")
+                body = pr.get("body") or ""
+                state = pr.get("state", "open")
+                merged = pr.get("merged_at") is not None
+                number = pr.get("number")
+
+                status_label = "merged" if merged else state
+                content = f"""# PR #{number}: {title}
+
+**Repository:** {repo['name']}
+**Status:** {status_label}
+**Author:** {pr.get('user', {}).get('login', 'Unknown')}
+**Created:** {pr.get('created_at', '')[:10]}
+**Updated:** {updated_str[:10] if updated_str else 'Unknown'}
+
+{body[:3000]}
+"""
+                items.append(SeedItem(
+                    title=f"PR [{repo['name']}] #{number}: {title[:50]}",
+                    content=content,
+                    source_url=pr.get("html_url"),
+                    source_id=f"pr-{repo_full_name}-{number}",
+                    topics=self._extract_topics(repo) + ["pull-request"],
+                    created_at=updated_at,
+                    metadata={
+                        "type": "pull_request",
+                        "repo": repo_full_name,
+                        "number": number,
+                        "state": status_label,
+                    },
+                    content_type="code",
+                ))
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch PRs for {repo_full_name}: {e}")
+
+        return items
+
+    async def _fetch_issues(
+        self,
+        client: httpx.AsyncClient,
+        headers: dict,
+        repo_full_name: str,
+        repo: dict,
+    ) -> list[SeedItem]:
+        """Fetch issues (excluding PRs) from repo."""
+        items = []
+        try:
+            params = {"state": "all", "sort": "updated", "per_page": 30, "direction": "desc"}
+            response = await client.get(
+                f"https://api.github.com/repos/{repo_full_name}/issues",
+                headers=headers,
+                params=params,
+            )
+            if response.status_code != 200:
+                return items
+
+            issues = response.json()
+            cutoff = None
+            if self.days_back > 0:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=self.days_back)
+
+            for issue in issues:
+                # Skip pull requests (GitHub returns PRs in issues endpoint)
+                if issue.get("pull_request"):
+                    continue
+
+                updated_str = issue.get("updated_at", "")
+                if updated_str:
+                    updated_at = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+                    if cutoff and updated_at < cutoff:
+                        continue
+                else:
+                    updated_at = None
+
+                title = issue.get("title", "")
+                body = issue.get("body") or ""
+                state = issue.get("state", "open")
+                number = issue.get("number")
+                labels = [l.get("name", "") for l in issue.get("labels", [])]
+
+                content = f"""# Issue #{number}: {title}
+
+**Repository:** {repo['name']}
+**Status:** {state}
+**Labels:** {', '.join(labels) if labels else 'none'}
+**Author:** {issue.get('user', {}).get('login', 'Unknown')}
+**Created:** {issue.get('created_at', '')[:10]}
+
+{body[:3000]}
+"""
+                items.append(SeedItem(
+                    title=f"Issue [{repo['name']}] #{number}: {title[:50]}",
+                    content=content,
+                    source_url=issue.get("html_url"),
+                    source_id=f"issue-{repo_full_name}-{number}",
+                    topics=self._extract_topics(repo) + ["issue"],
+                    created_at=updated_at,
+                    metadata={
+                        "type": "issue",
+                        "repo": repo_full_name,
+                        "number": number,
+                        "state": state,
+                    },
+                    content_type="code",
+                ))
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch issues for {repo_full_name}: {e}")
 
         return items
 

@@ -1,6 +1,6 @@
 """Embedding generation for Second Brain.
 
-Primary: HuggingFace Inference API (gte-small via router.huggingface.co)
+Primary: HuggingFace Inference API (gte-base via router.huggingface.co)
 Note: Supabase Edge Function was planned but never deployed — skipped entirely.
 
 Raises EmbeddingError on failure — callers decide how to handle.
@@ -28,7 +28,7 @@ from .config import (
 
 
 # HuggingFace Inference API (primary)
-HF_INFERENCE_URL = "https://router.huggingface.co/hf-inference/models/thenlper/gte-small/pipeline/feature-extraction"
+HF_INFERENCE_URL = "https://router.huggingface.co/hf-inference/models/thenlper/gte-base/pipeline/feature-extraction"
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Rate limiting semaphore for concurrent requests

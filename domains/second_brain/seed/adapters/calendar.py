@@ -160,6 +160,7 @@ class CalendarEventsAdapter(SeedAdapter):
                     "location": location or None,
                     "is_all_day": is_all_day,
                 },
+                content_type="calendar_event",
             )
 
         except Exception as e:

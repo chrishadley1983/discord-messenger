@@ -216,6 +216,7 @@ class GarminActivitiesAdapter(SeedAdapter):
                     "avg_hr": avg_hr,
                     "calories": calories,
                 },
+                content_type="health_activity",
             )
 
         except Exception as e:

@@ -124,8 +124,8 @@ class FinanceSummaryAdapter(SeedAdapter):
                 metadata={
                     "year": year,
                     "month": month,
-                    "content_type": "note",
                 },
+                content_type="financial_report",
             )
         ]
 

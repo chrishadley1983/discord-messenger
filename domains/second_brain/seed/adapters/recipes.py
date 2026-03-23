@@ -354,6 +354,7 @@ class RecipeAdapter(SeedAdapter):
                     "calories": recipe.get("caloriesPerServing"),
                     "protein": recipe.get("proteinPerServing"),
                 },
+                content_type="recipe",
             )
 
         except Exception as e:

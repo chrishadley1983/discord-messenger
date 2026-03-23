@@ -164,6 +164,7 @@ class SpotifyListeningAdapter(SeedAdapter):
                         "unique_artists": len(artists_seen),
                         "artists": list(artists_seen)[:10],
                     },
+                    content_type="listening_history",
                 ))
 
         except Exception as e:
@@ -238,6 +239,7 @@ class SpotifyListeningAdapter(SeedAdapter):
                     "top_track_count": len(top_tracks.get("items", [])),
                     "top_artist_count": len(top_artists.get("items", [])),
                 },
+                content_type="listening_history",
             ))
 
         except Exception as e:
