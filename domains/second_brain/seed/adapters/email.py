@@ -357,6 +357,7 @@ class EmailImportAdapter(SeedAdapter):
                     "date": date_str,
                     "category": category_name,
                 },
+                content_type="email",
             )
 
         except Exception as e:

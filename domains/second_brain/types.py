@@ -36,6 +36,13 @@ class ContentType(str, Enum):
     SOCIAL = "social"
     RECIPE = "recipe"
     FITNESS = "fitness"
+    EMAIL = "email"
+    FINANCIAL_REPORT = "financial_report"
+    COMMIT = "commit"
+    LISTENING_HISTORY = "listening_history"
+    VIEWING_HISTORY = "viewing_history"
+    HEALTH_ACTIVITY = "health_activity"
+    TRAVEL_BOOKING = "travel_booking"
 
 
 class ConnectionType(str, Enum):

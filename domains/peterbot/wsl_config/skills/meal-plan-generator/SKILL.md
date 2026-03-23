@@ -170,18 +170,23 @@ Once Chris approves:
 #### 4a. Save to database (MANDATORY)
 
 Call `POST /meal-plan` with the full plan. This powers reminders, "what's for dinner?", and meal ratings.
+
+**Important**: `week_start` is optional — it will be derived from the earliest item date. Each date+meal_slot combination is globally unique across all plans, so you never get overlapping meals. Use `check_overlaps: true` to detect conflicts before overwriting.
+
 ```json
 POST http://172.19.64.1:8100/meal-plan
 {
-  "week_start": "2026-03-14",
   "source": "generated",
   "notes": "Batch cook ricotta pasta Tuesday for Tue-Wed lunches",
+  "check_overlaps": true,
   "items": [
     {"date": "2026-03-14", "meal_slot": "dinner", "adults_meal": "Sausages, Mash & Veg", "source_tag": "family_fuel", "recipe_id": "abc-123", "cook_time_mins": 45, "servings": 4},
     {"date": "2026-03-15", "meal_slot": "dinner", "adults_meal": "Chicken Katsu Curry", "source_tag": "gousto", "recipe_id": "def-456", "cook_time_mins": 35, "servings": 2}
   ]
 }
 ```
+
+If `check_overlaps` returns conflicts, present them to Chris and ask whether to overwrite (re-call with `check_overlaps: false`).
 
 #### 4b. Log meal history
 Call `POST /meal-plan/history` (without ratings — those come later)
@@ -330,10 +335,11 @@ When a Family Fuel recipe is used in a plan, call `PATCH /recipes/{id}/usage` to
 
 ## Hadley API Endpoints
 
-- `POST /meal-plan` — Save generated plan with items (MUST call — powers reminders, ratings, "what's for dinner?")
+- `POST /meal-plan` — Save generated plan with items (MUST call — powers reminders, ratings, "what's for dinner?"). `week_start` is optional (derived from items). Use `check_overlaps: true` to detect date+slot clashes with existing plans.
 - `GET /meal-plan/templates/default` — Default template
 - `GET /meal-plan/preferences` — Food preferences
-- `GET /meal-plan/current` — Current plan (for Gousto lock-ins)
+- `GET /meal-plan/current` — Current week's meals (queries by date range, not week_start)
+- `GET /meal-plan/meals?start=YYYY-MM-DD&end=YYYY-MM-DD` — Get meals for any date range
 - `GET /meal-plan/history?days=21` — Recent history
 - `GET /meal-plan/staples/due` — Due staples
 - `GET /calendar/meal-context` — Calendar meal context (pre-computed overrides)

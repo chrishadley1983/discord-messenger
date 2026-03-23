@@ -58,6 +58,7 @@ This markdown file stores all previously used jokes and quotes. Simple, human-re
 1. Append each joke and the quote to `HISTORY.md` with today's date
 2. Prune entries older than 6 months
 3. Save the file
+4. **Push today's jokes to the IHD dashboard** — call `POST http://192.168.0.110:3000/api/kids/jokes` with `{"jokes": [{"text": "joke 1"}, {"text": "joke 2"}, {"text": "joke 3"}]}`. This replaces the previous day's jokes so the kids see fresh ones each morning.
 
 **History format (HISTORY.md):**
 ```markdown

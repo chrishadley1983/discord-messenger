@@ -4,6 +4,10 @@ A modular Discord bot with AI coaching/assistance via Claude API.
 Routes messages to domain handlers based on channel.
 """
 
+# Suppress RequestsDependencyWarning spam before any requests import
+import warnings
+warnings.filterwarnings("ignore", message="urllib3.*or chardet.*doesn't match")
+
 import asyncio
 import io
 import os
@@ -98,6 +102,26 @@ MESSAGE_DEDUP_SECONDS = 5
 USE_PETERBOT_SCHEDULER = True  # Phase 7b complete - skills created
 peterbot_scheduler = None  # Initialized in on_ready
 _ready_initialized = False  # Guard against multiple on_ready calls
+
+
+def _create_logged_task(coro, name: str = None):
+    """Create an asyncio task with exception logging.
+
+    Replaces bare asyncio.create_task() to ensure background task exceptions
+    are logged instead of silently swallowed.
+    """
+    task = asyncio.create_task(coro, name=name)
+
+    def _on_done(t):
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc:
+            logger.error(f"Background task {name or 'unnamed'} failed: {exc}", exc_info=exc)
+
+    task.add_done_callback(_on_done)
+    return task
+
 
 def _tracked_job(job_id: str, func):
     """Wrap a legacy async job function with execution tracking and failure alerting.
@@ -216,6 +240,7 @@ async def on_ready():
         logger.info(f"Peterbot scheduler loaded {job_count} jobs from SCHEDULE.md")
         # Watch for API-triggered reloads (Hadley API writes trigger file)
         peterbot_scheduler.start_reload_watcher()
+        peterbot_scheduler.start_nag_checker()
     else:
         # Legacy: Register standalone jobs (remove after Phase 7b migration)
         register_balance_monitor(scheduler, bot)
@@ -272,6 +297,17 @@ async def on_ready():
     _wa_mod.register_whatsapp_sync(scheduler, bot=bot)
     logger.info("WhatsApp sync jobs registered (daily 10:00 AM + weekly Sunday 9:00 AM UK)")
 
+    # Japan trip — proactive WhatsApp alerts every 15 min (active Apr 3-19 only)
+    from domains.peterbot.japan_alerts import check_and_send_alerts as _japan_alerts
+    scheduler.add_job(
+        _japan_alerts,
+        'interval', minutes=15,
+        id='japan_trip_alerts',
+        name='Japan Trip WhatsApp Alerts',
+        replace_existing=True,
+    )
+    logger.info("Japan trip alerts registered (every 15 min, active during trip only)")
+
     # WhatsApp incoming messages — internal HTTP server for HadleyAPI to forward to
     from aiohttp import web as aio_web
     from integrations.whatsapp import send_text, send_audio
@@ -292,6 +328,31 @@ async def on_ready():
 
             if not text.strip() or not sender_number:
                 return aio_web.json_response({"status": "ignored"})
+
+            # Check for nag acknowledgement before routing to Peter
+            ack_patterns = {"done", "finished", "completed", "stop", "yes done", "stop nagging", "all done"}
+            if text.strip().lower() in ack_patterns and not is_group:
+                try:
+                    import httpx as _httpx
+                    # Map sender number to delivery target name
+                    _wa_contacts = {"447855620978": "chris", "447856182831": "abby"}
+                    _target_name = _wa_contacts.get(sender_number, sender_number)
+                    async with _httpx.AsyncClient(timeout=5.0) as _client:
+                        _nag_resp = await _client.get(
+                            f"http://127.0.0.1:8100/reminders/active-nags?delivery=whatsapp:{_target_name}"
+                        )
+                        if _nag_resp.status_code == 200:
+                            _active_nags = _nag_resp.json()
+                            if _active_nags:
+                                # Acknowledge the first active nag
+                                _nag_id = _active_nags[0]["id"]
+                                await _client.post(f"http://127.0.0.1:8100/reminders/{_nag_id}/acknowledge")
+                                _task_name = _active_nags[0].get("task", "your task")
+                                await send_text(reply_to, f"Nice one, ticked off for today ✅\n*{_task_name}* — no more reminders.")
+                                logger.info(f"Nag {_nag_id} acknowledged by {sender_name} via WhatsApp")
+                                return aio_web.json_response({"status": "ok", "replied": True})
+                except Exception as _e:
+                    logger.debug(f"Nag ack check failed: {_e}")
 
             source = "group" if is_group else "DM"
             voice_tag = " voice" if is_voice else ""
@@ -334,6 +395,17 @@ async def on_ready():
             return aio_web.json_response({"error": str(e)}, status=500)
 
     async def _start_whatsapp_server():
+        # Pre-check port availability before attempting to bind
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(("127.0.0.1", 8101))
+            sock.close()
+        except OSError:
+            logger.warning("WhatsApp port 8101 already in use — skipping server start")
+            sock.close()
+            return
+
         app = aio_web.Application()
         app.router.add_post("/whatsapp/message", _whatsapp_handler)
         runner = aio_web.AppRunner(app)
@@ -342,7 +414,7 @@ async def on_ready():
         await site.start()
         logger.info("WhatsApp internal server listening on 127.0.0.1:8101")
 
-    asyncio.create_task(_start_whatsapp_server())
+    _create_logged_task(_start_whatsapp_server())
     logger.info("WhatsApp incoming message routing registered (port 8101)")
 
     # Reprocess pending passive captures — every 6 hours
@@ -797,10 +869,10 @@ async def on_message(message):
 
             # Passive capture: fire-and-forget async task for URL/idea detection
             # This runs in background after response is sent
-            asyncio.create_task(_passive_capture_check(
+            _create_logged_task(_passive_capture_check(
                 message.content,
                 message.channel.name
-            ))
+            ), name="passive_capture")
 
         return
 

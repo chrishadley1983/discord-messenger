@@ -114,6 +114,23 @@ Based on your targets: 2,100 cal | 160g protein
 - **MUST include at least 2 UK-based sources** (BBC Good Food, Tesco, Gousto, Joe Wicks, Mob Kitchen, Jamie Oliver)
 - Never recommend the same recipe two days in a row (check recent posts if possible)
 
+## Save Flow
+
+When Chris says "save 2" or "save 1 and 3" after seeing recipe recommendations:
+
+1. **Match numbers to recipe positions** from your most recent list
+   - "Save 2" → save recipe at position 2
+   - "Save 1 and 3" → save recipes at positions 1 and 3
+   - "Save all" → save all 5 recipes
+   - "Save the tuna one" → match by name
+
+2. **Extract and save** via:
+   `POST http://172.19.64.1:8100/recipes/extract` with `{"url": "<recipe_url>", "auto_save": true}`
+
+3. **Confirm**: "Saved **Tuna Pasta Bake** to Family Fuel ✓"
+
+**IMPORTANT:** Track recipe URLs from your recommendations. If Chris says "save 2" but you lack context, ask which recipe they mean.
+
 ## Conversational Use
 
 When triggered conversationally ("what should I cook tonight?"):

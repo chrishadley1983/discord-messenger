@@ -14,12 +14,35 @@ If you output plain text (e.g. "Please log in" or "I need your credentials"), th
 
 **This is the #1 cause of broken browser flows.** Never forget it.
 
-## ⛔ ABSOLUTE RULE: Always Use Playwright MCP Tools
+## Two Browser Options: Playwright MCP vs Chrome CDP
 
-**NEVER try to connect to Chrome via CDP (port 9222), Chrome DevTools Protocol, or any other browser automation method.**
-Your browser is the Playwright MCP — use `browser_navigate`, `browser_click`, etc. directly.
-The Playwright browser window is visible on Chris's desktop via WSLg.
-Do NOT waste turns searching for running Chrome instances or trying to connect to existing browsers.
+You have TWO browser automation methods. Use the right one for the task:
+
+### Chrome CDP (via `node.exe` — DEFAULT for all browser tasks)
+
+Connects to Chris's **real Chrome** (logged in, cookies intact) on Windows port 9222. Fast, lightweight, no Playwright dependency. Uses the `chrome-cdp` skill — read `skills/chrome-cdp/SKILL.md` for full docs.
+
+**Always try Chrome CDP first for ANY browser task.** It handles navigation, clicking, typing, form filling, screenshots, scraping — everything. Because it uses Chris's real Chrome session, sites are already logged in and cookies are intact.
+
+```bash
+CDP="C:/Users/Chris Hadley/claude-projects/chrome-cdp-skill/skills/chrome-cdp/scripts/cdp.mjs"
+node.exe "$CDP" list                           # list tabs
+node.exe "$CDP" nav <tab> "https://..."        # navigate
+node.exe "$CDP" eval <tab> "document.title"    # extract data
+node.exe "$CDP" click <tab> "button.submit"    # click element
+node.exe "$CDP" type <tab> "search text"       # type into focused element
+node.exe "$CDP" shot <tab> "C:/Users/Chris Hadley/tmp/shot.png"  # screenshot
+```
+
+**Important:** Always use `node.exe` (Windows Node) not `node`, and use Windows-style paths.
+
+### Playwright MCP (fallback only — if Chrome CDP fails)
+
+Launches a **separate Chromium** in headless mode via MCP tools. Visible on Chris's desktop via WSLg.
+
+**Only use Playwright if Chrome CDP cannot handle the task** — e.g. Stripe payment iframes (cross-origin `frameLocator`), flows requiring Chris to visually intervene on a separate browser window, or if CDP Chrome is not running.
+
+Use `browser_navigate`, `browser_click`, etc. directly — do NOT use ToolSearch for these.
 
 ## Tool Names (DO NOT use ToolSearch — call directly)
 
@@ -50,8 +73,9 @@ Do NOT waste turns searching for running Chrome instances or trying to connect t
 
 ## When to Use Which Tool
 
-- **WebSearch/WebFetch** → reading information (search results, page content)
-- **Playwright browser** → interacting with websites (clicking, filling forms, booking, adding to baskets)
+- **Chrome CDP (`node.exe` cdp.mjs)** → **DEFAULT for all browser tasks.** Navigation, clicking, typing, scraping, screenshots, form filling, data extraction. Try this first, always.
+- **Playwright browser (MCP)** → **Fallback only.** Use when CDP fails or for Stripe payment iframes / cross-origin frameLocator scenarios.
+- **WebSearch/WebFetch** → search results, simple static page content
 - **Hadley API `/browser/fetch`** → one-shot page fetch that bypasses bot protection (read-only)
 
 ## Restaurant/Venue Bookings

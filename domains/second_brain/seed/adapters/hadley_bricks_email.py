@@ -227,6 +227,7 @@ class HadleyBricksEmailAdapter(SeedAdapter):
                     "category": f"HB/{category_name}",
                     "business": "hadley-bricks",
                 },
+                content_type="email",
             )
 
         except Exception as e:

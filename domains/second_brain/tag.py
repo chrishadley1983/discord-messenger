@@ -1,53 +1,94 @@
 """AI topic extraction/tagging for Second Brain using Claude API.
 
-Extracts 3-8 topic tags, preferring known domain tags from SECOND-BRAIN.md Section 11.2.
+Extracts 3-8 topic tags per item. Tags describe SUBJECT MATTER, not format.
+Uses content_type context to guide tag extraction.
 """
 
 import json
 import re
 
 from logger import logger
-from .config import call_claude, KNOWN_DOMAIN_TAGS
+from .config import call_claude, KNOWN_DOMAIN_TAGS, KNOWN_DOMAIN_TAG_GROUPS
 
 
-# Tagging prompt from SECOND-BRAIN.md Section 11.2
+# Content-type-aware tagging prompt
 TAG_PROMPT = """Extract 3-8 topic tags for this content. Use lowercase, hyphenated tags.
-Prefer these known domains when applicable:
-- hadley-bricks, ebay, bricklink, brick-owl, amazon
-- lego, lego-investing, retired-sets, minifigures
-- running, marathon, training, nutrition, garmin
-- family, max, emmie, abby, japan-trip
-- tech, development, peterbot, familyfuel
-- finance, tax, self-employment
+Content type: {content_type}
 
+RULES:
+- Tag the SUBJECT MATTER, not the format or source
+- NEVER use these tags: email, general, calendar, untagged, claude-history, note, conversation
+- Prefer known domain tags when they match the content
+
+Known domain tags by category:
+{tag_groups}
+
+EXAMPLES of good tagging:
+- An email about LEGO set 10305 price drop → ["lego-investing", "retired-sets", "hadley-bricks"]
+- A calendar event for Max's parents evening → ["school", "stocks-green", "max", "parents-evening"]
+- A Garmin activity from parkrun → ["running", "parkrun", "garmin", "fitness"]
+
+Title: {title}
 Content: {text}
 
 Return as JSON array: ["tag1", "tag2", ...]"""
 
 
-async def extract_topics(text: str, title: str | None = None) -> list[str]:
+def _format_tag_groups() -> str:
+    """Format tag groups for the prompt."""
+    lines = []
+    for group, tags in KNOWN_DOMAIN_TAG_GROUPS.items():
+        lines.append(f"  {group}: {', '.join(tags)}")
+    return "\n".join(lines)
+
+
+async def extract_topics(
+    text: str,
+    title: str | None = None,
+    content_type: str | None = None,
+) -> list[str]:
     """Extract topic tags from content.
 
     Args:
         text: Full content text
         title: Optional title for context
+        content_type: Content type string for context-aware tagging
 
     Returns:
         List of 3-8 topic tags
     """
     truncated_text = text[:4000] if len(text) > 4000 else text
-    prompt = TAG_PROMPT.format(text=truncated_text)
-    if title:
-        prompt = f"Title: {title}\n\n{prompt}"
+    prompt = TAG_PROMPT.format(
+        text=truncated_text,
+        title=title or "Untitled",
+        content_type=content_type or "unknown",
+        tag_groups=_format_tag_groups(),
+    )
 
     result = await call_claude(prompt, max_tokens=100, timeout=20)
     if result:
         tags = _parse_tags_response(result)
-        logger.debug(f"Extracted tags: {tags}")
-        return tags
+        # Filter out banned tags
+        tags = _filter_noise_tags(tags)
+        if tags:
+            logger.debug(f"Extracted tags: {tags}")
+            return tags
 
     logger.warning("Tag extraction failed, using keyword fallback")
-    return _fallback_topics(text, title)
+    return _fallback_topics(text, title, content_type)
+
+
+# Tags that describe format/source, not content — always filter out
+_NOISE_TAGS = frozenset({
+    "email", "general", "calendar", "untagged", "claude-history",
+    "note", "conversation", "document", "bookmark", "url",
+})
+
+
+def _filter_noise_tags(tags: list[str]) -> list[str]:
+    """Remove tags that describe format rather than content."""
+    filtered = [t for t in tags if t not in _NOISE_TAGS]
+    return filtered if filtered else tags  # Keep originals if all were noise
 
 
 def _parse_tags_response(response: str) -> list[str]:
@@ -90,7 +131,28 @@ def _normalize_tag(tag: str) -> str:
     return tag
 
 
-def _fallback_topics(text: str, title: str | None = None) -> list[str]:
+# Content-type to default topic mapping (used when fallback finds nothing)
+_CONTENT_TYPE_DEFAULTS: dict[str, list[str]] = {
+    "email": ["communication"],
+    "calendar_event": ["scheduling"],
+    "health_activity": ["fitness", "garmin"],
+    "financial_report": ["finance"],
+    "listening_history": ["music", "spotify"],
+    "viewing_history": ["entertainment", "netflix"],
+    "commit": ["development"],
+    "code": ["development", "tech"],
+    "recipe": ["cooking", "food"],
+    "travel_booking": ["travel"],
+    "conversation_extract": ["conversation"],
+    "bookmark": ["reference"],
+}
+
+
+def _fallback_topics(
+    text: str,
+    title: str | None = None,
+    content_type: str | None = None,
+) -> list[str]:
     """Extract topics using keyword matching (no API)."""
     tags = set()
     combined = (title or '') + ' ' + text[:2000]
@@ -124,27 +186,22 @@ def _fallback_topics(text: str, title: str | None = None) -> list[str]:
             tags.add(tag)
 
     result = list(tags)[:8]
-    return result if result else ['general']
+    if result:
+        return result
+
+    # Use content-type-based defaults instead of "general"
+    if content_type and content_type in _CONTENT_TYPE_DEFAULTS:
+        return _CONTENT_TYPE_DEFAULTS[content_type]
+
+    return ['unclassified']
 
 
 async def suggest_related_tags(existing_tags: list[str]) -> list[str]:
-    """Suggest related tags based on existing tags.
-
-    Useful for connection discovery.
-    """
-    # Simple relatedness based on known domain groupings
+    """Suggest related tags based on existing tags."""
     related = set()
 
-    tag_groups = {
-        'business': ['hadley-bricks', 'ebay', 'bricklink', 'brick-owl', 'amazon', 'finance', 'tax'],
-        'lego': ['lego', 'lego-investing', 'retired-sets', 'minifigures', 'hadley-bricks'],
-        'fitness': ['running', 'marathon', 'training', 'nutrition', 'garmin'],
-        'family': ['family', 'max', 'emmie', 'abby', 'japan-trip'],
-        'tech': ['tech', 'development', 'peterbot', 'familyfuel'],
-    }
-
     for tag in existing_tags:
-        for group_name, group_tags in tag_groups.items():
+        for group_name, group_tags in KNOWN_DOMAIN_TAG_GROUPS.items():
             if tag in group_tags:
                 related.update(group_tags)
 

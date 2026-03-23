@@ -1123,6 +1123,7 @@ class TravelBookingAdapter(SeedAdapter):
             topics=topics,
             created_at=created_at,
             metadata=metadata,
+            content_type="travel_booking",
         )
 
     @staticmethod

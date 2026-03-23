@@ -42,6 +42,15 @@ from hadley_api.voice_routes import router as voice_router
 app.include_router(voice_router)
 from hadley_api.spelling_routes import router as spelling_router
 app.include_router(spelling_router)
+from hadley_api.japan_routes import router as japan_router
+app.include_router(japan_router)
+
+# Train status endpoint
+from hadley_api.japan_train_status import get_train_status as _get_train_status
+
+@app.get("/japan/trains")
+async def train_status_direct(city: str = "all"):
+    return await _get_train_status(city)
 
 
 @app.get("/gcp/usage")
@@ -6320,11 +6329,17 @@ class ReminderCreate(BaseModel):
     run_at: str  # ISO 8601 datetime string
     user_id: int
     channel_id: int
+    reminder_type: str = "one_off"       # "one_off" | "nag"
+    interval_minutes: int | None = None  # e.g. 120 (for nag type)
+    nag_until: str | None = None         # e.g. "21:00" (for nag type)
+    delivery: str = "discord"            # "discord" | "whatsapp:abby" | "whatsapp:chris" | "whatsapp:group"
 
 
 class ReminderUpdate(BaseModel):
     task: Optional[str] = None
     run_at: Optional[str] = None  # ISO 8601 datetime string
+    last_nagged_at: Optional[str] = None
+    fired_at: Optional[str] = None
 
 
 @app.get("/reminders")
@@ -6389,6 +6404,10 @@ async def create_reminder(body: ReminderCreate):
                     "channel_id": body.channel_id,
                     "task": body.task.strip(),
                     "run_at": run_at.isoformat(),
+                    "reminder_type": body.reminder_type,
+                    "interval_minutes": body.interval_minutes,
+                    "nag_until": body.nag_until,
+                    "delivery": body.delivery,
                 },
             )
             resp.raise_for_status()
@@ -6428,13 +6447,20 @@ async def update_reminder(reminder_id: str, body: ReminderUpdate):
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid run_at format: {e}")
 
+    if body.last_nagged_at is not None:
+        updates["last_nagged_at"] = body.last_nagged_at
+    if body.fired_at is not None:
+        updates["fired_at"] = body.fired_at
+
     if not updates:
-        raise HTTPException(status_code=400, detail="Nothing to update (provide task and/or run_at)")
+        raise HTTPException(status_code=400, detail="Nothing to update")
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
+            # For nag updates (last_nagged_at/fired_at), don't filter by fired_at=is.null
+            filter_fired = "&fired_at=is.null" if body.last_nagged_at is None and body.fired_at is None else ""
             resp = await client.patch(
-                f"{SUPABASE_URL}/rest/v1/reminders?id=eq.{reminder_id}&fired_at=is.null",
+                f"{SUPABASE_URL}/rest/v1/reminders?id=eq.{reminder_id}{filter_fired}",
                 headers=_supabase_headers(),
                 json=updates,
             )
@@ -6542,7 +6568,7 @@ class MealPlanIngredientsUpdate(BaseModel):
 
 @app.get("/meal-plan/current")
 async def meal_plan_current():
-    """Get the current week's meal plan with items and ingredients."""
+    """Get the current week's meals by querying items directly by date range (Mon-Sun)."""
     from domains.nutrition.services.meal_plan_service import get_current_meal_plan
 
     try:
@@ -6550,6 +6576,22 @@ async def meal_plan_current():
         if not plan:
             return {"plan": None, "message": "No meal plan found for this week"}
         return {"plan": plan, "fetched_at": datetime.now(UK_TZ).isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/meal-plan/meals")
+async def meal_plan_meals_by_date(
+    start: str = Query(description="Start date (YYYY-MM-DD)"),
+    end: str = Query(default=None, description="End date (YYYY-MM-DD), defaults to start"),
+):
+    """Get meals for a specific date or date range, regardless of plan grouping."""
+    from domains.nutrition.services.meal_plan_service import get_meals_for_date_range
+
+    try:
+        end_date = end or start
+        items = await get_meals_for_date_range(start, end_date)
+        return {"items": items, "count": len(items), "start": start, "end": end_date}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -6890,9 +6932,10 @@ async def meal_plan_create(request: Request):
     """Create or update a meal plan with items in one call.
 
     Body: {
-        week_start: "YYYY-MM-DD" (Monday of the plan week),
+        week_start: "YYYY-MM-DD" (optional — defaults to Monday of earliest item date),
         source: "generated" | "manual" | etc,
         notes: "optional notes",
+        check_overlaps: true (optional — if true, returns conflicts instead of overwriting),
         items: [
             {
                 date: "YYYY-MM-DD",
@@ -6909,16 +6952,38 @@ async def meal_plan_create(request: Request):
     }
     """
     from domains.nutrition.services.meal_plan_service import (
-        upsert_meal_plan, upsert_meal_plan_items
+        upsert_meal_plan, upsert_meal_plan_items, check_meal_overlaps
     )
 
     MEAL_SLOT_MAP = {"breakfast": 0, "lunch": 1, "dinner": 2, "snack": 3}
 
     try:
         body = await request.json()
+        items = body.get("items", [])
+
+        # Map string meal_slot to integer and keep only valid DB columns
+        valid_cols = {"date", "meal_slot", "adults_meal", "kids_meal",
+                      "source_tag", "recipe_url", "cook_time_mins",
+                      "servings", "notes"}
+        core_cols = {"date", "meal_slot", "adults_meal", "kids_meal",
+                     "source_tag", "recipe_url"}
+        cleaned = []
+        for item in items:
+            row = {k: v for k, v in item.items() if k in valid_cols and v is not None}
+            # Convert string meal_slot to integer
+            if isinstance(row.get("meal_slot"), str):
+                row["meal_slot"] = MEAL_SLOT_MAP.get(row["meal_slot"].lower(), 2)
+            cleaned.append(row)
+
+        # Derive week_start from items if not provided
         week_start = body.get("week_start")
-        if not week_start:
-            raise HTTPException(status_code=400, detail="week_start is required")
+        if not week_start and cleaned:
+            earliest = min(item["date"] for item in cleaned)
+            d = datetime.fromisoformat(earliest).date()
+            monday = d - timedelta(days=d.weekday())
+            week_start = monday.isoformat()
+        elif not week_start:
+            raise HTTPException(status_code=400, detail="week_start is required when no items are provided")
 
         plan = await upsert_meal_plan(
             week_start=week_start,
@@ -6926,22 +6991,18 @@ async def meal_plan_create(request: Request):
             notes=body.get("notes"),
         )
 
-        items = body.get("items", [])
+        # Check for overlaps if requested
+        if body.get("check_overlaps") and cleaned:
+            conflicts = await check_meal_overlaps(cleaned, exclude_plan_id=plan["id"])
+            if conflicts:
+                return {
+                    "plan": plan,
+                    "conflicts": conflicts,
+                    "message": f"Found {len(conflicts)} overlapping meals. Remove them first or set check_overlaps=false to overwrite."
+                }
+
         saved_items = []
-        if items:
-            # Map string meal_slot to integer and keep only valid DB columns
-            valid_cols = {"date", "meal_slot", "adults_meal", "kids_meal",
-                          "source_tag", "recipe_url", "cook_time_mins",
-                          "servings", "notes"}
-            core_cols = {"date", "meal_slot", "adults_meal", "kids_meal",
-                         "source_tag", "recipe_url"}
-            cleaned = []
-            for item in items:
-                row = {k: v for k, v in item.items() if k in valid_cols and v is not None}
-                # Convert string meal_slot to integer
-                if isinstance(row.get("meal_slot"), str):
-                    row["meal_slot"] = MEAL_SLOT_MAP.get(row["meal_slot"].lower(), 2)
-                cleaned.append(row)
+        if cleaned:
             try:
                 saved_items = await upsert_meal_plan_items(plan["id"], cleaned)
             except Exception as item_err:
@@ -7688,9 +7749,20 @@ async def generate_meal_plan_view_html(req: MealPlanViewHTMLRequest):
     from datetime import datetime as dt
 
     generated_at = dt.now(UK_TZ).strftime("%d %b %Y, %H:%M")
-    week_start = req.plan.get("week_start", "")
+
+    # Derive date range label from items rather than week_start
+    items = req.plan.get("items", [])
+    item_dates = sorted({item.get("date", "") for item in items if item.get("date")})
     week_label = ""
-    if week_start:
+    if item_dates:
+        try:
+            first = dt.fromisoformat(item_dates[0])
+            last = dt.fromisoformat(item_dates[-1])
+            week_label = f"{first.strftime('%a %-d %b')} to {last.strftime('%a %-d %b')}"
+        except Exception:
+            week_label = f"{item_dates[0]} to {item_dates[-1]}"
+    elif req.plan.get("week_start"):
+        week_start = req.plan["week_start"]
         try:
             ws = dt.fromisoformat(week_start)
             week_label = f"w/c {ws.strftime('%-d %b %Y')}"
@@ -9229,6 +9301,359 @@ async def jobs_health(hours: int = 24):
         result["hb"] = {"error": str(e)}
 
     return result
+
+
+# ============================================================
+# Schedule Pauses
+# ============================================================
+
+PAUSES_FILE = Path(__file__).parent.parent / "data" / "schedule_pauses.json"
+
+
+def _load_pauses() -> dict:
+    if not PAUSES_FILE.exists():
+        return {"pauses": []}
+    try:
+        return json.loads(PAUSES_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"pauses": []}
+
+
+def _save_pauses(data: dict):
+    PAUSES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PAUSES_FILE.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+
+
+def _filter_active_pauses(data: dict) -> dict:
+    """Remove expired pauses and return only active ones."""
+    now = datetime.now(UK_TZ)
+    active = []
+    for p in data.get("pauses", []):
+        try:
+            from dateutil.parser import parse as parse_dt
+            resume = parse_dt(p["resume_at"])
+            if resume.tzinfo is None:
+                resume = resume.replace(tzinfo=UK_TZ)
+            if resume > now:
+                active.append(p)
+        except Exception:
+            continue
+    data["pauses"] = active
+    return data
+
+
+class PauseCreate(BaseModel):
+    skills: list[str]       # skill names or ["*"] for all
+    reason: str
+    resume_at: str          # ISO datetime or "2026-04-03T06:00"
+    paused_by: str          # "chris" or "abby"
+
+
+@app.get("/schedule/pauses")
+async def list_pauses():
+    """List all active schedule pauses (auto-filters expired)."""
+    data = _filter_active_pauses(_load_pauses())
+    _save_pauses(data)
+    return data["pauses"]
+
+
+@app.post("/schedule/pauses")
+async def create_pause(body: PauseCreate):
+    """Create a new schedule pause."""
+    import uuid
+
+    if not body.skills:
+        raise HTTPException(status_code=400, detail="skills list cannot be empty")
+
+    # Validate resume_at
+    try:
+        from dateutil.parser import parse as parse_dt
+        resume = parse_dt(body.resume_at)
+        if resume.tzinfo is None:
+            resume = resume.replace(tzinfo=UK_TZ)
+        if resume <= datetime.now(UK_TZ):
+            raise HTTPException(status_code=400, detail="resume_at must be in the future")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid resume_at: {e}")
+
+    data = _filter_active_pauses(_load_pauses())
+
+    pause = {
+        "id": f"pause_{uuid.uuid4().hex[:8]}",
+        "skills": body.skills,
+        "reason": body.reason,
+        "paused_by": body.paused_by,
+        "paused_at": datetime.now(UK_TZ).isoformat(),
+        "resume_at": resume.isoformat(),
+    }
+    data["pauses"].append(pause)
+    _save_pauses(data)
+    return pause
+
+
+@app.delete("/schedule/pauses/{pause_id}")
+async def delete_pause(pause_id: str):
+    """Remove a pause early (unpause)."""
+    data = _load_pauses()
+    for i, p in enumerate(data["pauses"]):
+        if p["id"] == pause_id:
+            removed = data["pauses"].pop(i)
+            _save_pauses(data)
+            return {"status": "unpaused", "removed": removed}
+    raise HTTPException(status_code=404, detail="Pause not found")
+
+
+@app.get("/schedule/pauses/check/{skill}")
+async def check_pause(skill: str):
+    """Check if a specific skill is currently paused."""
+    data = _filter_active_pauses(_load_pauses())
+    _save_pauses(data)
+
+    for p in data["pauses"]:
+        if "*" in p["skills"] or skill in p["skills"]:
+            return {"paused": True, "reason": p["reason"], "resume_at": p["resume_at"], "pause_id": p["id"]}
+    return {"paused": False}
+
+
+# ============================================================
+# Schedule Jobs CRUD (atomic SCHEDULE.md operations)
+# ============================================================
+
+
+@app.get("/schedule/jobs")
+async def list_schedule_jobs():
+    """List all jobs parsed from SCHEDULE.md."""
+    from hadley_api.schedule_manager import parse_schedule_table
+    return parse_schedule_table()
+
+
+class JobUpdate(BaseModel):
+    schedule: str | None = None
+    channel: str | None = None
+    enabled: str | None = None
+    name: str | None = None
+
+
+@app.patch("/schedule/jobs/{skill}")
+async def update_schedule_job(skill: str, body: JobUpdate):
+    """Update fields for a job in SCHEDULE.md by skill name."""
+    from hadley_api.schedule_manager import update_job_field
+
+    updates = {}
+    if body.schedule is not None:
+        updates["schedule"] = body.schedule
+    if body.channel is not None:
+        updates["channel"] = body.channel
+    if body.enabled is not None:
+        updates["enabled"] = body.enabled
+    if body.name is not None:
+        updates["name"] = body.name
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    try:
+        result = None
+        for field, value in updates.items():
+            result = update_job_field(skill, field, value)
+        return {"status": "updated", "job": result}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class JobCreate(BaseModel):
+    name: str
+    skill: str
+    schedule: str
+    channel: str
+    enabled: str = "yes"
+    section: str = "cron"
+
+
+@app.post("/schedule/jobs")
+async def create_schedule_job(body: JobCreate):
+    """Add a new job row to SCHEDULE.md."""
+    from hadley_api.schedule_manager import add_job_row
+    job = add_job_row(body.name, body.skill, body.schedule, body.channel, body.enabled, body.section)
+    return {"status": "created", "job": job}
+
+
+@app.delete("/schedule/jobs/{skill}")
+async def delete_schedule_job(skill: str):
+    """Remove a job from SCHEDULE.md by skill name."""
+    from hadley_api.schedule_manager import remove_job_row
+    removed = remove_job_row(skill)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill}' not found in SCHEDULE.md")
+    return {"status": "removed", "job": removed}
+
+
+# ============================================================
+# Pending Actions (Confirmation Flow)
+# ============================================================
+
+
+class PendingActionCreate(BaseModel):
+    type: str               # "schedule_change", "pause", etc.
+    sender_number: str
+    sender_name: str
+    description: str
+    api_call: dict          # {"method": "PATCH", "url": "/schedule/jobs/...", "body": {...}}
+
+
+@app.post("/schedule/pending-actions")
+async def create_pending_action(body: PendingActionCreate):
+    """Create a pending action awaiting user confirmation."""
+    from domains.peterbot.pending_actions import create_pending_action as _create
+    action_id = _create(
+        action_type=body.type,
+        sender_number=body.sender_number,
+        sender_name=body.sender_name,
+        description=body.description,
+        api_call=body.api_call,
+    )
+    return {"status": "pending", "id": action_id, "expires_in_seconds": 300}
+
+
+@app.get("/schedule/pending-actions")
+async def list_pending_actions(sender: str = Query(None)):
+    """List pending actions, optionally filtered by sender number."""
+    from domains.peterbot.pending_actions import get_pending_for_sender, _load, cleanup_expired
+    if sender:
+        return get_pending_for_sender(sender)
+    cleanup_expired()
+    data = _load()
+    return data.get("actions", [])
+
+
+@app.post("/schedule/pending-actions/{action_id}/confirm")
+async def confirm_pending_action(action_id: str):
+    """Confirm and execute a pending action."""
+    import httpx
+    from domains.peterbot.pending_actions import resolve_action
+
+    action = resolve_action(action_id, approved=True)
+    if not action:
+        raise HTTPException(status_code=404, detail="Pending action not found or expired")
+
+    # Execute the stored API call
+    api_call = action.get("api_call", {})
+    method = api_call.get("method", "POST").upper()
+    url = api_call.get("url", "")
+    body = api_call.get("body", {})
+
+    if not url:
+        return {"status": "confirmed", "action": action, "executed": False, "reason": "No URL in api_call"}
+
+    # Make the internal API call
+    base_url = "http://127.0.0.1:8100"
+    full_url = f"{base_url}{url}" if url.startswith("/") else url
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            if method == "GET":
+                resp = await client.get(full_url)
+            elif method == "DELETE":
+                resp = await client.delete(full_url)
+            elif method == "PATCH":
+                resp = await client.patch(full_url, json=body)
+            elif method == "PUT":
+                resp = await client.put(full_url, json=body)
+            else:
+                resp = await client.post(full_url, json=body)
+
+            resp.raise_for_status()
+            return {"status": "confirmed", "action": action, "executed": True, "result": resp.json()}
+    except Exception as e:
+        return {"status": "confirmed", "action": action, "executed": False, "error": str(e)}
+
+
+@app.post("/schedule/pending-actions/{action_id}/cancel")
+async def cancel_pending_action(action_id: str):
+    """Cancel a pending action."""
+    from domains.peterbot.pending_actions import resolve_action
+    action = resolve_action(action_id, approved=False)
+    if not action:
+        raise HTTPException(status_code=404, detail="Pending action not found or expired")
+    return {"status": "cancelled", "action": action}
+
+
+# ============================================================
+# Nag Reminder Extensions
+# ============================================================
+
+
+@app.post("/reminders/{reminder_id}/acknowledge")
+async def acknowledge_reminder(reminder_id: str):
+    """Acknowledge a nag reminder — sets acknowledged_at, stopping further nags."""
+    import httpx
+
+    if not SUPABASE_URL:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.patch(
+                f"{SUPABASE_URL}/rest/v1/reminders?id=eq.{reminder_id}",
+                headers=_supabase_headers(),
+                json={"acknowledged_at": datetime.now(UK_TZ).isoformat()},
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            if not result:
+                raise HTTPException(status_code=404, detail="Reminder not found")
+            return {"status": "acknowledged", "reminder": result[0] if isinstance(result, list) else result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to acknowledge: {e}")
+
+
+@app.get("/reminders/active-nags")
+async def list_active_nags(delivery: str = Query(None)):
+    """List active nag reminders (fired, not acknowledged).
+
+    Optional filter by delivery channel (e.g. delivery=whatsapp:abby).
+    """
+    import httpx
+
+    if not SUPABASE_URL:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    try:
+        # Query: reminder_type=nag, fired_at is not null (started), acknowledged_at is null (not done)
+        url = (
+            f"{SUPABASE_URL}/rest/v1/reminders"
+            f"?reminder_type=eq.nag&acknowledged_at=is.null&select=*&order=run_at"
+        )
+        if delivery:
+            url += f"&delivery=eq.{delivery}"
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=_supabase_headers())
+            resp.raise_for_status()
+            nags = resp.json()
+
+            # Filter to only those past their run_at (should be firing)
+            now = datetime.now(UK_TZ)
+            active = []
+            for nag in nags:
+                try:
+                    from dateutil.parser import parse as parse_dt
+                    run_at = parse_dt(nag["run_at"])
+                    if run_at.tzinfo is None:
+                        run_at = run_at.replace(tzinfo=UK_TZ)
+                    if run_at <= now:
+                        active.append(nag)
+                except Exception:
+                    continue
+            return active
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch active nags: {e}")
 
 
 if __name__ == "__main__":

@@ -58,12 +58,28 @@ When Chris says "250ml water" or any water amount:
 
 Same rule applies to meal logging — always execute the curl, never hallucinate a success.
 
-### Critical: Email Sending
+### Critical: Gmail (Read & Write)
 
-**ALWAYS use Hadley API for emails. NEVER use Gmail MCP for sending.**
-- Send: `curl -X POST "http://172.19.64.1:8100/gmail/send?to=...&subject=...&body=..."`
-- Draft: `curl -X POST "http://172.19.64.1:8100/gmail/draft?to=...&subject=...&body=..."`
-- The Gmail MCP tools only support drafts — they CANNOT send. Use the Hadley API.
+**ALWAYS use Hadley API for all email operations. NEVER use Gmail MCP for sending.**
+
+**Read:**
+- `GET /gmail/search?q=from:sarah+has:attachment` — Search emails (Gmail search syntax)
+- `GET /gmail/get?id=<message_id>` — Get full email with attachment list
+- `GET /gmail/attachments?message_id=<id>` — List attachments with IDs
+- `GET /gmail/attachment/text?message_id=<id>&attachment_id=<id>` — Extract text from PDF/text attachments (uses pypdf)
+- `GET /gmail/unread`, `/gmail/starred`, `/gmail/thread?id=<thread_id>`, `/gmail/labels`
+
+**Write:**
+- `POST /gmail/send?to=...&subject=...&body=...` — Send email
+- `POST /gmail/draft?to=...&subject=...&body=...` — Create draft
+- `POST /gmail/reply?message_id=<id>&body=...` — Reply to email
+- `POST /gmail/forward?message_id=<id>&to=...` — Forward email
+
+**When Chris says "check my emails" or "look at an attachment":**
+1. Search with `/gmail/search?q=...` to find the email
+2. Get it with `/gmail/get?id=...` to see attachments listed
+3. Extract text with `/gmail/attachment/text?message_id=...&attachment_id=...` — this handles PDFs
+4. Never say you can't read attachments — the API extracts text from them
 
 ### Hadley API
 
@@ -148,11 +164,13 @@ These return formatted markdown — present the data directly, don't summarise u
 
 Read `RECIPES.md` for full recipe search/save workflow, API endpoints, and meal planning skill references.
 
-### Browser Interaction (Playwright MCP)
+### Browser Interaction
 
-Read `BROWSER.md` before any browser interaction (bookings, forms, payments, Stripe, Amazon checkout, login flows).
+Read `BROWSER.md` before any browser interaction. You have **two options**:
 
-**⛔ CRITICAL:** Once the browser is open, NEVER output plain text — it kills the process and destroys the browser. If you need Chris to act (login, CAPTCHA, 2FA), use the webhook+sleep pattern from BROWSER.md. This is the #1 cause of failed browser flows.
+1. **Chrome CDP** (`node.exe` + cdp.mjs) — **DEFAULT for all browser tasks.** Uses Chris's real Chrome (logged in, cookies intact). Handles navigation, clicking, typing, scraping, screenshots, form filling. Read `skills/chrome-cdp/SKILL.md` for commands. **Always try this first.**
+
+2. **Playwright MCP** — **Fallback only** if Chrome CDP fails or for Stripe payment iframes. **⛔ CRITICAL:** Once the Playwright browser is open, NEVER output plain text — it kills the process and destroys the browser. Use the webhook+sleep pattern from BROWSER.md.
 
 ### Live Data Routing
 
@@ -160,10 +178,11 @@ Priority order:
 1. **Financial data MCP tools** (for money/budget/business questions — see table above)
 2. Hadley API endpoint (check matched playbook for endpoints)
 3. Dedicated skill (check `skills/manifest.json`)
-4. **Playwright browser** (for interactive web tasks — booking, forms, baskets)
-5. `/fetch-url` for PDFs or problematic URLs
-6. Web search (Brave MCP or built-in WebSearch/WebFetch)
-7. Tell user you can't access it
+4. **Chrome CDP** (`node.exe` + cdp.mjs) — **DEFAULT for all browser tasks** — navigation, scraping, clicking, typing, screenshots (see `skills/chrome-cdp/SKILL.md`)
+5. **Playwright browser** — fallback only if Chrome CDP fails or for Stripe iframes
+6. `/fetch-url` for PDFs or problematic URLs
+7. Web search (Brave MCP or built-in WebSearch/WebFetch)
+8. Tell user you can't access it
 
 Never scrape dynamic JS sites (BBC Sport, ESPN, etc.) — use web search instead.
 
@@ -218,10 +237,17 @@ Discord message → bot.py → router_v2.py → [memory context + Second Brain i
 - **Storage**: Supabase PostgreSQL + pgvector (semantic search via 384-dim gte-small embeddings)
 
 ### Scheduler System
-- **SCHEDULE.md**: Defines cron/interval jobs
+- **SCHEDULE.md**: Defines cron/interval skill-based jobs (Peter can view/edit with Chris's approval)
 - **APScheduler**: Python scheduler runs jobs at specified times
 - **Quiet hours**: 23:00-06:00 UK — no scheduled jobs run
 - **manifest.json**: Auto-generated listing all skills and triggers
+
+**Infrastructure jobs** (registered in `bot.py`, NOT in SCHEDULE.md):
+- `school_daily_sync` — Daily 7:03 AM UK: Gmail school email parser + Arbor scraper/monitor
+- `school_weekly_sync` — Saturday 6:00 AM UK: term dates poller + newsletter scraper + calendar sync
+- `energy_daily_sync`, `whatsapp_sync`, `incremental_seed` — other background jobs
+
+School sync scripts live in the **hadley-bricks repo** at `scripts/school/` (gmail_school_parser.py, arbor_scraper.py, arbor_monitor.py, term_dates_poller.py, newsletter_scraper.py, calendar_sync.py). The job runner in `jobs/school_sync.py` calls them via subprocess. These are NOT in the peterbot repo.
 
 ### Reminder System (One-Off Reminders)
 The Discord bot handles reminders separately from SCHEDULE.md.

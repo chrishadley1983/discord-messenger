@@ -86,11 +86,22 @@ Want me to save any to your recipes? Just say "save 1 and 3" or "save all".
 
 ### Step 4: Save Flow
 
-When Chris says "save 1 and 3" or "save the salmon one":
+**Position-based saving:** When Chris says "save 2" or "save 1 and 3":
 
-1. Extract recipe from the URL via `POST http://172.19.64.1:8100/recipes/extract` with `{"url": "<recipe_url>", "auto_save": true}`
-2. If extraction fails (no JSON-LD schema), manually construct the recipe data and save via `POST http://172.19.64.1:8100/recipes`
-3. Confirm: "Saved **Korean Beef Bulgogi Bowl** and **Chicken Shawarma Wraps** to Family Fuel. They'll show up as candidates next time you generate a meal plan."
+1. **Match the number(s) to recipe positions** from your most recent recommendation list
+   - "Save 2" → save the recipe at position 2 in your list
+   - "Save 1 and 3" or "Save 1, 3" → save recipes at positions 1 and 3
+   - "Save all" → save all recommended recipes
+   - "Save the salmon one" → match by name/description
+
+2. **Extract each recipe** from its URL:
+   `POST http://172.19.64.1:8100/recipes/extract` with `{"url": "<recipe_url>", "auto_save": true}`
+
+3. **If extraction fails** (no JSON-LD schema), manually construct the recipe data and save via `POST http://172.19.64.1:8100/recipes`
+
+4. **Confirm with names**: "Saved **Korean Beef Bulgogi Bowl** and **Chicken Shawarma Wraps** to Family Fuel. They'll show up as candidates next time you generate a meal plan."
+
+**IMPORTANT:** Always track the recipe URLs from your recommendations so you can save by position. If Chris says "save 2" but you don't have the context of which recipe was #2, ask: "Which recipe would you like me to save? I don't have the list in context."
 
 ## Hadley API Endpoints
 

@@ -112,9 +112,10 @@ async def process_capture(
     content_type = content_type_override or _detect_content_type(extracted.source, extracted.text)
 
     # Steps 3-4b: Run summary, topics, and structured extraction concurrently (PR-003)
+    # Run structured extraction for all content types except media logs
     needs_structured = (
         not facts_override and not concepts_override
-        and (content_type == ContentType.CONVERSATION_EXTRACT or capture_type == CaptureType.EXPLICIT)
+        and content_type not in {ContentType.LISTENING_HISTORY, ContentType.VIEWING_HISTORY}
     )
 
     async def _safe_summary():
@@ -126,7 +127,7 @@ async def process_capture(
 
     async def _safe_topics():
         try:
-            return await extract_topics(extracted.text, title)
+            return await extract_topics(extracted.text, title, content_type=content_type.value)
         except Exception as e:
             logger.warning(f"Topic extraction failed: {e}")
             return ['untagged']
@@ -135,7 +136,7 @@ async def process_capture(
         if not needs_structured:
             return {}
         try:
-            return await extract_structured(extracted.text, title)
+            return await extract_structured(extracted.text, title, content_type=content_type.value)
         except Exception as e:
             logger.warning(f"Structured extraction failed: {e}")
             return {}
@@ -414,3 +415,152 @@ async def reprocess_pending_items(limit: int = 10) -> int:
 
     logger.info(f"Reprocessed {processed}/{len(pending)} pending items")
     return processed
+
+
+# =============================================================================
+# BATCH PIPELINE SUPPORT
+# =============================================================================
+
+from dataclasses import dataclass, field
+from .chunk import TextChunk
+
+
+@dataclass
+class PreparedItem:
+    """An item that has been through extract/summarize/tag/chunk but NOT embedded."""
+    item: KnowledgeItem
+    chunks: list[TextChunk]
+    chunk_texts_for_embedding: list[str]
+
+
+async def prepare_capture(
+    source: str,
+    capture_type: CaptureType = CaptureType.SEED,
+    user_tags: list[str] | None = None,
+    content_type_override: ContentType | None = None,
+    source_system: str | None = None,
+    text: str | None = None,
+    title_override: str | None = None,
+    facts_override: list | None = None,
+    concepts_override: list | None = None,
+    created_at_override: datetime | None = None,
+) -> PreparedItem | None:
+    """Run the pipeline up to (but not including) embedding.
+
+    Returns a PreparedItem with chunk texts ready for batch embedding,
+    or None if the item should be skipped (duplicate, too short, etc.).
+    """
+    # Duplicate check
+    if '://' in source[:30]:
+        existing = await get_item_by_source(source)
+        if existing:
+            await boost_access(existing.id)
+            return None
+
+    # Extract content
+    if text:
+        extracted = ExtractedContent(
+            title=title_override or "",
+            text=text,
+            source=source,
+            excerpt=text[:200],
+            site_name="",
+            word_count=len(text.split()),
+        )
+    else:
+        try:
+            extracted = await extract_content(source)
+        except Exception as e:
+            logger.error(f"Extraction failed for {source}: {e}")
+            return None
+
+    if extracted.word_count < 5:
+        return None
+
+    # Title
+    title = title_override or extracted.title
+    if not title or len(title) < 5:
+        try:
+            title = await extract_title(extracted.text)
+        except Exception:
+            title = source[:100]
+
+    content_type = content_type_override or _detect_content_type(extracted.source, extracted.text)
+
+    # Concurrent: summary, topics, structured
+    needs_structured = (
+        not facts_override and not concepts_override
+        and content_type not in {ContentType.LISTENING_HISTORY, ContentType.VIEWING_HISTORY}
+    )
+
+    async def _safe_summary():
+        try:
+            return await generate_summary(extracted.text, title)
+        except Exception:
+            return extracted.excerpt or extracted.text[:200]
+
+    async def _safe_topics():
+        try:
+            return await extract_topics(extracted.text, title, content_type=content_type.value)
+        except Exception:
+            return ['untagged']
+
+    async def _safe_structured():
+        if not needs_structured:
+            return {}
+        try:
+            return await extract_structured(extracted.text, title, content_type=content_type.value)
+        except Exception:
+            return {}
+
+    summary, topics, structured = await asyncio.gather(
+        _safe_summary(), _safe_topics(), _safe_structured()
+    )
+
+    if user_tags:
+        topics = list(set(topics + user_tags))[:8]
+
+    facts = facts_override or structured.get("facts", [])
+    concepts = concepts_override or structured.get("concepts", [])
+
+    # Chunk
+    chunks = chunk_text(extracted.text)
+    chunk_texts = chunk_for_embedding(extracted.text, title)
+
+    # Build item
+    priority = {
+        CaptureType.EXPLICIT: PRIORITY_EXPLICIT,
+        CaptureType.SEED: PRIORITY_SEED,
+        CaptureType.PASSIVE: PRIORITY_PASSIVE,
+    }.get(capture_type, PRIORITY_PASSIVE)
+
+    now = created_at_override or datetime.now(timezone.utc)
+
+    item = KnowledgeItem(
+        id='',
+        title=title,
+        source=extracted.source,
+        content_type=content_type,
+        capture_type=capture_type,
+        status=ItemStatus.ACTIVE,
+        summary=summary,
+        full_text=extracted.text,
+        topics=topics,
+        priority=priority,
+        decay_score=1.0,
+        access_count=1,
+        last_accessed=now,
+        created_at=now,
+        updated_at=now,
+        site_name=extracted.site_name,
+        word_count=extracted.word_count,
+        source_system=source_system,
+        facts=facts,
+        concepts=concepts,
+    )
+
+    return PreparedItem(
+        item=item,
+        chunks=chunks,
+        chunk_texts_for_embedding=chunk_texts,
+    )

@@ -890,18 +890,74 @@ async def get_pl_results_data() -> dict[str, Any]:
         return {"error": str(e), "pl_matches": [], "cl_matches": []}
 
 
-async def get_spurs_live_data() -> dict[str, Any]:
-    """Fetch live Spurs match data for 10-minute update cycle.
+async def _get_next_spurs_fixture() -> dict[str, Any] | None:
+    """Look up the next scheduled Spurs fixture (up to 14 days ahead)."""
+    import httpx
+    from config import FOOTBALL_DATA_API_KEY
 
-    Checks both Premier League and Champions League.
-    Short-circuits with spurs_playing=false on non-match days (~100ms).
-    Only returns full data during match window (kickoff-15min to FT+15min).
+    if not FOOTBALL_DATA_API_KEY:
+        return None
+
+    now = datetime.now(UK_TZ)
+    date_from = now.date().isoformat()
+    date_to = (now.date() + timedelta(days=14)).isoformat()
+
+    try:
+        headers = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://api.football-data.org/v4/teams/73/matches",
+                headers=headers,
+                params={"dateFrom": date_from, "dateTo": date_to, "status": "SCHEDULED,TIMED"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            matches = resp.json().get("matches", [])
+
+        if not matches:
+            return None
+
+        m = matches[0]
+        kickoff = datetime.fromisoformat(m["utcDate"].replace("Z", "+00:00")).astimezone(UK_TZ)
+        return {
+            "kickoff": kickoff,
+            "home": m["homeTeam"]["shortName"],
+            "away": m["awayTeam"]["shortName"],
+            "competition": m["competition"]["name"],
+        }
+    except Exception as e:
+        logger.warning(f"Failed to fetch next Spurs fixture: {e}")
+        return None
+
+
+async def get_spurs_live_data() -> dict[str, Any]:
+    """Fetch live Spurs match data with smart scheduling.
+
+    Match window: 1 hour before kickoff to 1 hour after expected FT.
+    Outside the window, returns __skip__ with the next wake time so the
+    scheduler can avoid invoking Claude (saving ~£9/day).
     """
     import httpx
     from config import FOOTBALL_DATA_API_KEY
 
     today = datetime.now(UK_TZ).date().isoformat()
     now = datetime.now(UK_TZ)
+    state_file = Path(__file__).parent.parent.parent / "data" / "spurs_live_state.json"
+
+    # --- Check if we're in a sleep window ---
+    try:
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            wake_at_str = state.get("wake_at")
+            if wake_at_str:
+                wake_at = datetime.fromisoformat(wake_at_str)
+                if now < wake_at:
+                    # Still sleeping — skip without any API call
+                    next_fixture = state.get("next_fixture", "")
+                    logger.debug(f"Spurs-live sleeping until {wake_at.strftime('%a %d %b %H:%M')} ({next_fixture})")
+                    return {"__skip__": True, "reason": f"Sleeping until {wake_at.strftime('%a %d %b %H:%M')} — {next_fixture}"}
+    except Exception:
+        pass
 
     try:
         if not FOOTBALL_DATA_API_KEY:
@@ -934,43 +990,95 @@ async def get_spurs_live_data() -> dict[str, Any]:
                 break
 
         if not spurs_match:
-            return {"spurs_playing": False}
+            # No match today — find the next fixture and sleep until 1hr before kickoff
+            next_fix = await _get_next_spurs_fixture()
+            if next_fix:
+                wake_at = next_fix["kickoff"] - timedelta(hours=1)
+                desc = f"{next_fix['home']} vs {next_fix['away']} ({next_fix['competition']})"
+                try:
+                    state_file.parent.mkdir(parents=True, exist_ok=True)
+                    state_file.write_text(json.dumps({
+                        "wake_at": wake_at.isoformat(),
+                        "next_fixture": desc,
+                        "next_kickoff": next_fix["kickoff"].isoformat(),
+                    }), encoding="utf-8")
+                except Exception:
+                    pass
+                logger.info(f"Spurs-live: no match today, sleeping until {wake_at.strftime('%a %d %b %H:%M')} ({desc})")
+                return {"__skip__": True, "reason": f"No match today. Next: {desc} — waking {wake_at.strftime('%a %d %b %H:%M')}"}
+            return {"__skip__": True, "reason": "No match today, no fixtures found in next 14 days"}
 
         # Parse kickoff time
         kickoff_str = spurs_match["utcDate"]
         kickoff = datetime.fromisoformat(kickoff_str.replace("Z", "+00:00")).astimezone(UK_TZ)
 
-        # Match window: 15 min before kickoff to 15 min after expected FT (~105 min)
-        window_start = kickoff - timedelta(minutes=15)
-        window_end = kickoff + timedelta(minutes=120)
+        # Match window: 1 hour before kickoff to 1 hour after expected FT (~105 min)
+        window_start = kickoff - timedelta(hours=1)
+        window_end = kickoff + timedelta(minutes=165)  # kickoff + 105min match + 60min buffer
 
         status = spurs_match["status"]
         is_live = status in ("IN_PLAY", "LIVE", "PAUSED")
         is_finished = status == "FINISHED"
 
-        # Outside window and not live/finished -> silent
+        # Outside window and not live/finished -> sleep until window opens
         if not is_live and not is_finished and (now < window_start or now > window_end):
-            return {"spurs_playing": False}
+            if now < window_start:
+                # Before match — sleep until window opens
+                try:
+                    state_file.parent.mkdir(parents=True, exist_ok=True)
+                    home = spurs_match["homeTeam"]["shortName"]
+                    away = spurs_match["awayTeam"]["shortName"]
+                    state_file.write_text(json.dumps({
+                        "wake_at": window_start.isoformat(),
+                        "next_fixture": f"{home} vs {away}",
+                        "next_kickoff": kickoff.isoformat(),
+                    }), encoding="utf-8")
+                except Exception:
+                    pass
+                return {"__skip__": True, "reason": f"Match at {kickoff.strftime('%H:%M')}, waking at {window_start.strftime('%H:%M')}"}
+            else:
+                # After match window — find next fixture
+                next_fix = await _get_next_spurs_fixture()
+                if next_fix:
+                    wake_at = next_fix["kickoff"] - timedelta(hours=1)
+                    desc = f"{next_fix['home']} vs {next_fix['away']}"
+                    try:
+                        state_file.write_text(json.dumps({
+                            "wake_at": wake_at.isoformat(),
+                            "next_fixture": desc,
+                            "next_kickoff": next_fix["kickoff"].isoformat(),
+                        }), encoding="utf-8")
+                    except Exception:
+                        pass
+                    return {"__skip__": True, "reason": f"Match over. Next: {desc} — waking {wake_at.strftime('%a %d %b %H:%M')}"}
+                return {"__skip__": True, "reason": "Match window ended, no upcoming fixtures found"}
 
         # Build match data
         home = spurs_match["homeTeam"]["shortName"]
         away = spurs_match["awayTeam"]["shortName"]
         score = spurs_match["score"]
 
-        # Dedup: if FINISHED and we already sent the FT notification, go silent
-        state_file = Path(__file__).parent.parent.parent / "data" / "spurs_live_state.json"
+        # Dedup: if FINISHED and we already sent the FT notification, sleep until next fixture
         if is_finished:
             try:
                 if state_file.exists():
                     state = json.loads(state_file.read_text(encoding="utf-8"))
                     if state.get("date") == today and state.get("status") == "FINISHED":
-                        return {"spurs_playing": False}
+                        return {"__skip__": True, "reason": "FT already posted"}
             except Exception:
                 pass
-            # First FT notification — record it
+            # First FT notification — record it and set wake for next fixture
+            next_fix = await _get_next_spurs_fixture()
+            ft_state = {"date": today, "status": "FINISHED"}
+            if next_fix:
+                wake_at = next_fix["kickoff"] - timedelta(hours=1)
+                ft_state["wake_at"] = wake_at.isoformat()
+                ft_state["next_fixture"] = f"{next_fix['home']} vs {next_fix['away']}"
+                ft_state["next_kickoff"] = next_fix["kickoff"].isoformat()
+                logger.info(f"Spurs-live: FT! Next fixture wake at {wake_at.strftime('%a %d %b %H:%M')}")
             try:
                 state_file.parent.mkdir(parents=True, exist_ok=True)
-                state_file.write_text(json.dumps({"date": today, "status": "FINISHED"}), encoding="utf-8")
+                state_file.write_text(json.dumps(ft_state), encoding="utf-8")
             except Exception as e:
                 logger.debug(f"Spurs state write failed: {e}")
 

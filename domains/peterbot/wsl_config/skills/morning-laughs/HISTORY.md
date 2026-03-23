@@ -158,3 +158,33 @@
 - 2026-03-13: I used to be a banker, but I lost interest... then I found it again at a higher rate!
 - 2026-03-13: Why did the electrician break up with the light bulb? There was no spark.
 - 2026-03-13: "Success usually comes to those who are too busy to be looking for it." — Henry David Thoreau
+
+- 2026-03-14: What do you call a parade of rabbits hopping backwards? A receding hare-line.
+- 2026-03-14: I used to work at a blanket factory, but it folded.
+- 2026-03-14: Why did the scarecrow become a neurosurgeon? He was outstanding in his field and wanted to pick brains.
+- 2026-03-14: "Dream big and dare to fail." — Norman Vaughan
+
+- 2026-03-15: What do you call a pig that knows karate and also plays the piano? A pork chopstick.
+- 2026-03-15: I used to work in a shoe recycling shop. It was sole destroying.
+- 2026-03-15: Why don't scientists trust atoms when they're cooking? Because they make up recipes on the spot.
+- 2026-03-15: "Start by doing what's necessary; then do what's possible; and suddenly you are doing the impossible." — Francis of Assisi
+
+- 2026-03-16: What do you call a dinosaur that loves pancakes? A Triflipceratops.
+- 2026-03-16: I used to be a history teacher, but there was no future in it.
+- 2026-03-16: Why did the music teacher go to jail? Because she got caught with too many sharp objects.
+- 2026-03-16: "The only person you are destined to become is the person you decide to be." — Ralph Waldo Emerson
+
+- 2026-03-17: What do you call a row of rabbits walking backwards? A receding hareline... wait, no — a bunny trail mix-up!
+- 2026-03-17: I asked my dog what 2 minus 2 is. He said nothing. Fair point.
+- 2026-03-17: Why did the belt get arrested? For holding up some trousers.
+- 2026-03-17: "Opportunities don't happen. You create them." — Chris Grosser
+
+- 2026-03-18: What do you call a broken pencil? Pointless.
+- 2026-03-18: I used to collect stamps, but I gave it up — too many licks and no reward.
+- 2026-03-18: Why did the banker quit his job? He lost interest... in interest.
+- 2026-03-18: "It is during our darkest moments that we must focus to see the light." — Aristotle
+
+- 2026-03-19: What do you call a bee that can't make up its mind? A maybee.
+- 2026-03-19: I used to be a tailor, but I just wasn't suited for it.
+- 2026-03-19: Why did the skeleton skip the party? He had no body to go with.
+- 2026-03-19: "It does not matter how slowly you go as long as you do not stop." — Confucius

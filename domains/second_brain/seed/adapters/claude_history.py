@@ -74,6 +74,7 @@ class ClaudeHistoryAdapter(SeedAdapter):
                         "confidence": result.confidence,
                         "reason": result.reason,
                     },
+                    content_type="conversation_extract",
                 ))
 
                 if len(items) >= limit:

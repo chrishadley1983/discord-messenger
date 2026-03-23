@@ -196,6 +196,7 @@ class NetflixViewingAdapter(SeedAdapter):
                         "episode_count": len(titles),
                         "shows": list(shows.keys()),
                     },
+                    content_type="viewing_history",
                 ))
 
                 if len(items) >= limit:
