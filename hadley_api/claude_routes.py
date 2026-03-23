@@ -1,8 +1,11 @@
-"""Claude extraction routes.
+"""Claude CLI extraction routes.
 
-Provides a local Claude extraction endpoint. Tries the `claude -p` CLI first
-(uses OAuth subscription — no API cost), then falls back to the Anthropic API
-if the CLI returns empty (common on Windows due to async PIPE issues).
+Provides a local Claude extraction endpoint that uses `claude -p` (CLI print mode)
+instead of the Anthropic API. This avoids needing an API key — it uses the local
+Claude Code OAuth subscription instead.
+
+Uses sync subprocess.run via asyncio.to_thread with shell redirect to temp file
+to avoid Windows async PIPE issues (same pattern as japan_train_status.py).
 
 Used by Second Brain seed adapters for summarisation, tagging, and structured
 data extraction from emails.
@@ -11,9 +14,11 @@ data extraction from emails.
 import asyncio
 import logging
 import os
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
@@ -22,7 +27,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/claude", tags=["claude"])
 
 CLAUDE_CLI = os.path.expanduser("~/.local/bin/claude")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 
 class ExtractRequest(BaseModel):
@@ -38,45 +42,35 @@ class ExtractResponse(BaseModel):
 
 @router.post("/extract", response_model=ExtractResponse)
 async def claude_extract(req: ExtractRequest):
-    """Run a Claude extraction via CLI, with Anthropic API fallback.
+    """Run a Claude extraction via the local CLI.
 
-    1. Try `claude -p` (free, uses OAuth subscription)
-    2. If CLI returns empty, fall back to Anthropic API (uses API credits)
+    Uses `claude -p` (print mode) which reads from stdin and writes to stdout.
+    No API key needed — uses the local Claude Code OAuth subscription.
     """
-    # Try CLI first
     try:
-        result = await _run_claude_cli(req.prompt, req.max_tokens, req.model)
-        if result:
-            return ExtractResponse(result=result)
-        logger.warning("Claude CLI returned empty, trying API fallback")
-    except asyncio.TimeoutError:
-        logger.warning("Claude CLI timed out, trying API fallback")
+        result = await asyncio.to_thread(
+            _run_claude_cli_sync, req.prompt, req.max_tokens, req.model
+        )
+        if result is None:
+            return ExtractResponse(error="Claude CLI returned no output")
+        return ExtractResponse(result=result)
+    except subprocess.TimeoutExpired:
+        return ExtractResponse(error="Claude CLI timed out (60s)")
     except Exception as e:
-        logger.warning(f"Claude CLI failed ({e}), trying API fallback")
-
-    # Fallback to Anthropic API
-    if ANTHROPIC_API_KEY:
-        try:
-            result = await _call_anthropic_api(
-                req.prompt, req.max_tokens, req.model or "claude-haiku-4-5-20251001"
-            )
-            if result:
-                return ExtractResponse(result=result)
-            return ExtractResponse(error="Anthropic API returned empty")
-        except Exception as e:
-            return ExtractResponse(error=f"Both CLI and API failed: {e}")
-
-    return ExtractResponse(error="Claude CLI returned no output and no API key configured")
+        return ExtractResponse(error=str(e))
 
 
-async def _run_claude_cli(prompt: str, max_tokens: int = 1500, model: str = "") -> Optional[str]:
-    """Execute claude -p and return the text response."""
+def _run_claude_cli_sync(
+    prompt: str, max_tokens: int = 1500, model: str = ""
+) -> Optional[str]:
+    """Execute claude -p using sync subprocess with temp file redirect.
+
+    Uses shell redirect to temp file instead of PIPE to avoid
+    Windows async subprocess PIPE issues.
+    """
     cli = CLAUDE_CLI if os.path.exists(CLAUDE_CLI) else "claude"
-    cmd = [cli, "-p", "--output-format", "text", "--max-turns", "1"]
-    if model:
-        cmd.extend(["--model", model])
 
-    # Build clean env: inherit current env but remove keys that interfere
+    # Build clean env: remove keys that make CLI use API instead of OAuth
     env = os.environ.copy()
     env.pop("ANTHROPIC_API_KEY", None)
     env.pop("CLAUDECODE", None)
@@ -86,60 +80,41 @@ async def _run_claude_cli(prompt: str, max_tokens: int = 1500, model: str = "") 
     if local_bin not in env.get("PATH", ""):
         env["PATH"] = local_bin + os.pathsep + env.get("PATH", "")
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=env,
-    )
+    # Write prompt to temp file (avoids stdin PIPE issues)
+    prompt_file = Path(tempfile.mktemp(suffix=".txt", prefix="claude_prompt_"))
+    output_file = Path(tempfile.mktemp(suffix=".txt", prefix="claude_output_"))
 
     try:
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(input=prompt.encode("utf-8")),
+        prompt_file.write_text(prompt, encoding="utf-8")
+
+        # Build command with shell redirect
+        cmd_parts = [f'"{cli}"', "-p", "--output-format", "text", "--max-turns", "1"]
+        if model:
+            cmd_parts.extend(["--model", model])
+
+        # Read from prompt file, write to output file
+        cmd = f'{" ".join(cmd_parts)} < "{prompt_file}" > "{output_file}"'
+
+        subprocess.run(
+            cmd,
+            shell=True,
             timeout=60,
+            env=env,
+            stderr=subprocess.PIPE,
         )
-    except asyncio.TimeoutError:
-        proc.kill()
+
+        if output_file.exists():
+            content = output_file.read_text(encoding="utf-8").strip()
+            if content:
+                return content
+
+        return None
+
+    except subprocess.TimeoutExpired:
         raise
-
-    if proc.returncode != 0:
-        err = stderr.decode("utf-8", errors="ignore").strip()
-        out = stdout.decode("utf-8", errors="ignore").strip()
-        raise RuntimeError(
-            f"Claude CLI exited {proc.returncode}: "
-            f"stderr={err[:300]} stdout={out[:300]}"
-        )
-
-    return stdout.decode("utf-8", errors="ignore").strip() or None
-
-
-async def _call_anthropic_api(
-    prompt: str,
-    max_tokens: int = 1500,
-    model: str = "claude-haiku-4-5-20251001",
-) -> Optional[str]:
-    """Call the Anthropic Messages API directly as a fallback."""
-    async with httpx.AsyncClient(timeout=60) as client:
-        response = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": model,
-                "max_tokens": max_tokens,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-        )
-        if response.status_code == 401:
-            raise RuntimeError("Anthropic API key is invalid or expired — regenerate at console.anthropic.com")
-        response.raise_for_status()
-        data = response.json()
-
-        # Extract text from response content blocks
-        content = data.get("content", [])
-        texts = [block["text"] for block in content if block.get("type") == "text"]
-        return "\n".join(texts).strip() or None
+    except Exception as e:
+        logger.error(f"Claude CLI error: {e}")
+        raise
+    finally:
+        prompt_file.unlink(missing_ok=True)
+        output_file.unlink(missing_ok=True)
