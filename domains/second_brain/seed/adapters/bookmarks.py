@@ -1,6 +1,7 @@
 """Browser bookmarks adapter.
 
 Imports bookmarks from exported bookmark files (HTML or JSON).
+Optionally fetches page content via Hadley API for richer knowledge items.
 """
 
 import json
@@ -9,9 +10,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import httpx
+
 from logger import logger
 from ..base import SeedAdapter, SeedItem
 from ..runner import register_adapter
+
+# Hadley API for URL content fetching
+HADLEY_API_BASE = "http://172.19.64.1:8100"
 
 
 @register_adapter
@@ -25,6 +31,7 @@ class BookmarksAdapter(SeedAdapter):
     def __init__(self, config: dict = None):
         super().__init__(config)
         self.file_path = config.get("file_path") if config else None
+        self.fetch_content = config.get("fetch_content", True) if config else True
 
     async def validate(self) -> tuple[bool, str]:
         if not self.file_path:
@@ -38,18 +45,52 @@ class BookmarksAdapter(SeedAdapter):
 
         # Check if JSON by extension or by content (Chrome's Bookmarks has no extension)
         if file_path.suffix.lower() == ".json":
-            return await self._parse_json(file_path, limit)
+            items = await self._parse_json(file_path, limit)
+        elif self._is_json(file_path):
+            items = await self._parse_json(file_path, limit)
+        else:
+            items = await self._parse_html(file_path, limit)
 
-        # Try to detect JSON by reading first char
+        # Enrich bookmarks with page content (makes them searchable)
+        if self.fetch_content:
+            items = await self._enrich_with_content(items)
+
+        return items
+
+    def _is_json(self, path: Path) -> bool:
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                first_char = f.read(1)
-            if first_char == "{":
-                return await self._parse_json(file_path, limit)
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read(1) == "{"
         except Exception:
-            pass
+            return False
 
-        return await self._parse_html(file_path, limit)
+    async def _enrich_with_content(self, items: list[SeedItem]) -> list[SeedItem]:
+        """Fetch page content for bookmarks via Hadley API."""
+        enriched = 0
+        async with httpx.AsyncClient(timeout=15) as client:
+            for item in items:
+                if not item.source_url or len(item.content) > 100:
+                    continue  # Already has content or no URL
+                try:
+                    resp = await client.get(
+                        f"{HADLEY_API_BASE}/fetch-url",
+                        params={"url": item.source_url},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        page_text = data.get("text", "").strip()
+                        if page_text and len(page_text) > 50:
+                            # Truncate very long pages
+                            if len(page_text) > 5000:
+                                page_text = page_text[:5000] + "\n\n[Truncated]"
+                            item.content = f"{item.content}\n\n---\n\n{page_text}"
+                            enriched += 1
+                except Exception:
+                    pass  # Non-fatal — keep the stub
+
+        if enriched:
+            logger.info(f"Enriched {enriched}/{len(items)} bookmarks with page content")
+        return items
 
     async def _parse_json(self, path: Path, limit: int) -> list[SeedItem]:
         """Parse Chrome/Edge bookmark JSON export."""

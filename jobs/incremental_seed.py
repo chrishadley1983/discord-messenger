@@ -219,7 +219,7 @@ async def incremental_seed_import(bot=None):
             elif adapter_name == "garmin-activities":
                 config = {"years_back": 0.02}  # ~1 week of activities
             elif adapter_name == "bookmarks":
-                config = {"file_path": CHROME_BOOKMARKS_PATH}
+                config = {"file_path": CHROME_BOOKMARKS_PATH, "fetch_content": True}
             elif adapter_name == "email-link-scraper":
                 config = {"years_back": 0.1, "per_scraper_limit": 10}
             elif adapter_name == "hadley-bricks-email":
