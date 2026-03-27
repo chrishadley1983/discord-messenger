@@ -13,6 +13,7 @@ RESTART_LOG="/tmp/whatsapp-channel-restarts.log"
 
 HTTP_PORT=$(grep HTTP_PORT "$ENVFILE" | cut -d= -f2 | tr -d "\r\n")
 HADLEY_API=$(grep HADLEY_API "$ENVFILE" | cut -d= -f2 | tr -d "\r\n")
+HADLEY_AUTH_KEY=$(grep HADLEY_AUTH_KEY "$ENVFILE" | cut -d= -f2 | tr -d "\r\n")
 
 cat > /tmp/whatsapp-channel-mcp.json <<EOF
 {
@@ -23,6 +24,7 @@ cat > /tmp/whatsapp-channel-mcp.json <<EOF
       "env": {
         "HTTP_PORT": "${HTTP_PORT:-8102}",
         "HADLEY_API": "${HADLEY_API:-http://172.19.64.1:8100}",
+        "HADLEY_AUTH_KEY": "${HADLEY_AUTH_KEY:-}",
         "NODE_PATH": "$CHANNEL_DIR/node_modules"
       }
     }

@@ -155,19 +155,20 @@ const Utils = {
 const API = {
   baseUrl: '',
   timeout: 10000,
+  _authKey: document.querySelector('meta[name="api-key"]')?.content || '',
 
   async request(path, options = {}) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
+      const headers = { 'Content-Type': 'application/json', ...options.headers };
+      if (this._authKey) headers['x-api-key'] = this._authKey;
+
       const response = await fetch(`${this.baseUrl}${path}`, {
         ...options,
         signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          ...options.headers,
-        },
+        headers,
       });
 
       clearTimeout(timeoutId);
@@ -4656,87 +4657,83 @@ Utils.escapeRegex = function(string) { return string.replace(/[.*+?^${}()|[\]\\]
 
 
 /**
- * Memory View - Memory browser and search
+ * Knowledge View — Unified Second Brain browse + Mind Map visualizations
  */
-const MemoryView = {
-  title: 'Memory',
-  peterbotObservations: [],
-  claudeObservations: [],
+const KnowledgeView = {
+  title: 'Knowledge',
 
-  async render(container) {
-    container.innerHTML = `
-      <div class="animate-fade-in">
-        <div class="flex justify-between items-center mb-lg">
-          <div>
-            <h2>Memory Systems</h2>
-            <p class="text-secondary">Browse and search memory observations</p>
-          </div>
-          <button class="btn btn-secondary" onclick="MemoryView.refresh()">
-            ${Icons.refresh} Refresh
-          </button>
-        </div>
-
-        ${Components.tabs({
-          id: 'memory-tabs',
-          tabs: [
-            { label: 'Peterbot Memory', badge: '', content: this.renderPeterbotMemory() },
-            { label: 'Claude Memory', badge: '', content: this.renderClaudeMemory() },
-            { label: 'Second Brain', content: this.renderSecondBrain() },
-          ]
-        })}
-      </div>
-    `;
-
-    await this.loadData();
-  },
-
-  renderPeterbotMemory() {
-    return `
-      <div class="mb-md">
-        <div class="data-table-search" style="max-width: 400px;">
-          <span class="data-table-search-icon">${Icons.search}</span>
-          <input type="text" placeholder="Search peterbot memory..."
-                 id="peter-memory-search" onkeyup="if(event.key==='Enter')MemoryView.searchPeter(this.value)">
-        </div>
-      </div>
-      <div id="peter-memory-list">
-        <div class="flex justify-center py-lg"><div class="spinner"></div></div>
-      </div>
-    `;
-  },
-
-  renderClaudeMemory() {
-    return `
-      <div class="mb-md">
-        <div class="data-table-search" style="max-width: 400px;">
-          <span class="data-table-search-icon">${Icons.search}</span>
-          <input type="text" placeholder="Search claude memory..."
-                 id="claude-memory-search" onkeyup="if(event.key==='Enter')MemoryView.searchClaude(this.value)">
-        </div>
-      </div>
-      <div id="claude-memory-list">
-        <div class="flex justify-center py-lg"><div class="spinner"></div></div>
-      </div>
-    `;
-  },
-
-  // Second Brain state
+  // Second Brain browse state
   brainOffset: 0,
   brainLimit: 30,
   brainTotal: 0,
   brainContentType: '',
   brainTopic: '',
   brainSearchMode: false,
+  _activeTab: 0,
+  _searchTimeout: null,
 
-  renderSecondBrain() {
+  async render(container) {
+    container.innerHTML = `
+      <div class="animate-fade-in">
+        <div class="kb-header-row">
+          <div>
+            <h2>Knowledge</h2>
+            <p class="text-secondary">Browse, search, and visualize your knowledge base</p>
+          </div>
+          <div class="kb-header-controls">
+            <div class="mm-source-toggle" id="kb-source-toggle">
+              <button class="mm-source-btn active" data-source="both">Both</button>
+              <button class="mm-source-btn" data-source="brain">Second Brain</button>
+              <button class="mm-source-btn" data-source="memory">Memories</button>
+            </div>
+            <button class="btn btn-secondary" onclick="KnowledgeView.refresh()">
+              ${Icons.refresh} Refresh
+            </button>
+          </div>
+        </div>
+
+        <div class="kb-search-row">
+          <div class="data-table-search">
+            <span class="data-table-search-icon">${Icons.search}</span>
+            <input type="text" placeholder="Search knowledge..."
+                   id="kb-search" onkeyup="if(event.key==='Enter')KnowledgeView.handleSearch(this.value)">
+          </div>
+        </div>
+
+        <div class="mind-map-stats" id="mm-stats"></div>
+
+        <div class="kb-tabs">
+          ${Components.tabs({
+            id: 'kb-tabs',
+            tabs: [
+              { label: 'Browse', badge: '', content: this.renderBrowseTab() },
+              { label: 'Knowledge Graph', content: '<div id="mm-graph" class="mm-graph-container"><div class="mm-loading">Loading graph...</div></div>' },
+              { label: 'Radar', content: '<div id="mm-radar" class="mm-chart-container"><div class="mm-loading">Loading radar...</div></div>' },
+              { label: 'Timeline', content: '<div id="mm-activity" class="mm-chart-container"><div class="mm-loading">Loading activity...</div></div>' },
+              { label: 'Decay', content: '<div id="mm-decay" class="mm-chart-container"><div class="mm-loading">Loading decay data...</div></div>' },
+              { label: 'Health', content: '<div id="mm-health" class="mm-health-container"><div class="mm-loading">Loading health data...</div></div>' },
+            ]
+          })}
+        </div>
+
+        <div id="mm-detail-panel" class="mm-detail-panel" style="display:none"></div>
+      </div>
+    `;
+
+    this._wireTabSwitching();
+    this._wireSourceToggle();
+    await this.loadData();
+  },
+
+  renderBrowseTab() {
     return `
-      <div class="mb-md" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+      <div class="kb-filter-row">
         <div class="data-table-search" style="max-width: 300px; flex: 1;">
           <span class="data-table-search-icon">${Icons.search}</span>
           <input type="text" placeholder="Semantic search..."
-                 id="brain-search" onkeyup="if(event.key==='Enter')MemoryView.searchBrain(this.value)">
+                 id="brain-search" onkeyup="if(event.key==='Enter')KnowledgeView.searchBrain(this.value)">
         </div>
-        <select id="brain-filter-type" onchange="MemoryView.filterBrain()" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px;">
+        <select id="brain-filter-type" onchange="KnowledgeView.filterBrain()" class="kb-filter-select">
           <option value="">All types</option>
           <option value="article">Article</option>
           <option value="recipe">Recipe</option>
@@ -4746,7 +4743,7 @@ const MemoryView = {
           <option value="tutorial">Tutorial</option>
           <option value="news">News</option>
         </select>
-        <select id="brain-filter-topic" onchange="MemoryView.filterBrain()" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px;">
+        <select id="brain-filter-topic" onchange="KnowledgeView.filterBrain()" class="kb-filter-select">
           <option value="">All topics</option>
         </select>
       </div>
@@ -4757,43 +4754,49 @@ const MemoryView = {
     `;
   },
 
-  async loadData() {
-    this.loadPeterbotMemories();
-    this.loadClaudeMemories();
-    this.loadBrainItems();
-    this.loadBrainTopics();
+  _wireTabSwitching() {
+    const origSwitch = Tabs.switch.bind(Tabs);
+    document.querySelectorAll('#kb-tabs .tab').forEach((btn, idx) => {
+      btn.onclick = () => {
+        origSwitch('kb-tabs', idx);
+        this._activeTab = idx;
+        if (idx > 0 && typeof MindMapView !== 'undefined') {
+          MindMapView.setActiveTab(idx - 1);
+        }
+      };
+    });
   },
 
-  async loadPeterbotMemories() {
-    const container = document.getElementById('peter-memory-list');
-    if (!container) return;
-    try {
-      const data = await API.get('/api/memory/peter?limit=50');
-      this.peterbotObservations = data.observations || [];
-      this.renderObservationList('peter-memory-list', this.peterbotObservations, 'peterbot');
-      this.updateBadge(0, this.peterbotObservations.length);
-    } catch (error) {
-      console.error('Error loading peterbot memories:', error);
-      container.innerHTML = `<p class="text-error">Failed to load: ${error.message}</p>`;
+  _wireSourceToggle() {
+    document.querySelectorAll('#kb-source-toggle .mm-source-btn').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('#kb-source-toggle .mm-source-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        if (typeof MindMapView !== 'undefined') {
+          MindMapView.setSource(btn.dataset.source);
+        }
+      };
+    });
+  },
+
+  handleSearch(query) {
+    if (this._activeTab === 0) {
+      this.searchBrain(query);
+    } else if (typeof MindMapView !== 'undefined') {
+      MindMapView._handleSearch(query);
     }
   },
 
-  async loadClaudeMemories() {
-    const container = document.getElementById('claude-memory-list');
-    if (!container) return;
-    try {
-      const data = await API.get('/api/memory/claude?limit=50');
-      this.claudeObservations = data.observations || [];
-      this.renderObservationList('claude-memory-list', this.claudeObservations, 'claude');
-      this.updateBadge(1, this.claudeObservations.length);
-    } catch (error) {
-      console.error('Error loading claude memories:', error);
-      container.innerHTML = `<p class="text-error">Failed to load: ${error.message}</p>`;
+  async loadData() {
+    this.loadBrainItems();
+    this.loadBrainTopics();
+    if (typeof MindMapView !== 'undefined') {
+      MindMapView.init();
     }
   },
 
   updateBadge(tabIndex, count) {
-    const tabs = document.querySelectorAll('#memory-tabs .tab');
+    const tabs = document.querySelectorAll('#kb-tabs .tab');
     if (tabs[tabIndex]) {
       const badge = tabs[tabIndex].querySelector('.tab-badge');
       if (badge) { badge.textContent = count; }
@@ -4801,101 +4804,7 @@ const MemoryView = {
     }
   },
 
-  renderObservationList(containerId, observations, source) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-    if (!observations.length) { container.innerHTML = '<p class="text-muted">No observations found</p>'; return; }
-
-    const sourceColors = { 'peterbot': { bg: 'var(--primary)', text: 'white', label: 'Peterbot' }, 'claude': { bg: 'var(--warning)', text: 'black', label: 'Claude' } };
-
-    container.innerHTML = `
-      <div class="memory-observations-list">
-        ${observations.map(obs => {
-          const sourceStyle = sourceColors[source] || sourceColors['claude'];
-          const typeIcon = this.getTypeIcon(obs.type);
-          return `
-            <div class="memory-observation-item" onclick="MemoryView.showObservationDetail(${obs.id}, '${source}')">
-              <div class="memory-obs-header">
-                <div class="memory-obs-left">
-                  <span class="memory-obs-id">#${obs.id}</span>
-                  <span class="memory-obs-source" style="background: ${sourceStyle.bg}; color: ${sourceStyle.text};">${sourceStyle.label}</span>
-                  <span class="memory-obs-type">${typeIcon} ${obs.type || 'observation'}</span>
-                  ${obs.project && obs.project !== 'peterbot' ? `<span class="memory-obs-project">${obs.project}</span>` : ''}
-                </div>
-                <span class="memory-obs-time">${Format.datetime(obs.created_at)}</span>
-              </div>
-              <div class="memory-obs-title">${Utils.escapeHtml(obs.title || 'Untitled')}</div>
-              ${obs.subtitle ? `<div class="memory-obs-subtitle">${Utils.escapeHtml(obs.subtitle)}</div>` : ''}
-              ${obs.category ? `<span class="memory-obs-category">${obs.category}</span>` : ''}
-            </div>`;
-        }).join('')}
-      </div>
-      <style>
-        .memory-observations-list { display: flex; flex-direction: column; gap: 8px; }
-        .memory-observation-item { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; cursor: pointer; transition: all 0.2s ease; }
-        .memory-observation-item:hover { border-color: var(--primary); transform: translateX(4px); }
-        .memory-obs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px; }
-        .memory-obs-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-        .memory-obs-id { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
-        .memory-obs-source { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
-        .memory-obs-type { font-size: 12px; color: var(--text-secondary); }
-        .memory-obs-project { font-size: 11px; color: var(--text-muted); background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; }
-        .memory-obs-time { font-size: 12px; color: var(--text-muted); }
-        .memory-obs-title { font-weight: 500; margin-bottom: 4px; }
-        .memory-obs-subtitle { font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; }
-        .memory-obs-category { display: inline-block; font-size: 11px; color: var(--text-muted); background: var(--bg-tertiary); padding: 2px 8px; border-radius: 12px; margin-top: 4px; }
-      </style>
-    `;
-  },
-
-  getTypeIcon(type) {
-    const icons = { 'observation': '[ ]', 'task': '[x]', 'decision': '[!]', 'learning': '[i]', 'preference': '[*]', 'context': '[-]', 'error': '[E]', 'success': '[S]' };
-    return icons[type] || '[ ]';
-  },
-
-  showObservationDetail(id, source) {
-    const observations = source === 'peterbot' ? this.peterbotObservations : this.claudeObservations;
-    const obs = observations.find(o => o.id === id);
-    if (!obs) return;
-
-    const content = `
-      <div class="mb-lg">
-        <div class="flex items-center gap-sm mb-md">
-          <span class="text-lg font-bold">#${obs.id}</span>
-          <span class="status-badge ${source === 'peterbot' ? 'info' : 'warning'}">${source}</span>
-          <span class="status-badge">${obs.type || 'observation'}</span>
-        </div>
-        <h3 class="mb-sm">${Utils.escapeHtml(obs.title || 'Untitled')}</h3>
-        ${obs.subtitle ? `<p class="text-secondary mb-md">${Utils.escapeHtml(obs.subtitle)}</p>` : ''}
-      </div>
-      <div class="mb-md"><label class="text-sm text-muted">Created</label><p>${Format.datetime(obs.created_at)}</p></div>
-      ${obs.project ? `<div class="mb-md"><label class="text-sm text-muted">Project</label><p>${obs.project}</p></div>` : ''}
-      ${obs.category ? `<div class="mb-md"><label class="text-sm text-muted">Category</label><p>${obs.category}</p></div>` : ''}
-      ${obs.narrative ? `<div class="mb-md"><label class="text-sm text-muted">Narrative</label><p>${Utils.escapeHtml(obs.narrative)}</p></div>` : ''}
-      ${obs.facts && obs.facts !== '[]' ? `<div class="mb-md"><label class="text-sm text-muted">Facts</label><pre class="code-block" style="max-height: 200px; overflow-y: auto;">${Utils.escapeHtml(typeof obs.facts === 'string' ? obs.facts : JSON.stringify(obs.facts, null, 2))}</pre></div>` : ''}
-      <div class="mb-md"><label class="text-sm text-muted">Status</label><p>${obs.is_active ? 'Active' : 'Inactive'}</p></div>
-    `;
-    DetailPanel.open(content);
-  },
-
-  async searchPeter(query) {
-    if (!query.trim()) { this.renderObservationList('peter-memory-list', this.peterbotObservations, 'peterbot'); return; }
-    try {
-      const results = await API.get(`/api/search/memory?query=${encodeURIComponent(query)}`);
-      if (results.observations) { this.renderObservationList('peter-memory-list', results.observations, 'peterbot'); }
-      else if (results.results) { this.renderSearchResults('peter-memory-list', results.results); }
-    } catch (error) { Toast.error('Error', `Search failed: ${error.message}`); }
-  },
-
-  async searchClaude(query) {
-    if (!query.trim()) { this.renderObservationList('claude-memory-list', this.claudeObservations, 'claude'); return; }
-    const filtered = this.claudeObservations.filter(obs =>
-      (obs.title && obs.title.toLowerCase().includes(query.toLowerCase())) ||
-      (obs.subtitle && obs.subtitle.toLowerCase().includes(query.toLowerCase())) ||
-      (obs.narrative && obs.narrative.toLowerCase().includes(query.toLowerCase()))
-    );
-    this.renderObservationList('claude-memory-list', filtered, 'claude');
-  },
+  // --- Second Brain browse/search (preserved from MemoryView) ---
 
   async searchBrain(query) {
     if (!query.trim()) {
@@ -4917,7 +4826,7 @@ const MemoryView = {
       }
       container.innerHTML = `
         <div style="margin-bottom: 8px;">
-          <a href="#" onclick="event.preventDefault(); document.getElementById('brain-search').value=''; MemoryView.searchBrain('');" style="font-size: 13px; color: var(--primary);">&larr; Back to browse</a>
+          <a href="#" onclick="event.preventDefault(); document.getElementById('brain-search').value=''; KnowledgeView.searchBrain('');" style="font-size: 13px; color: var(--primary);">&larr; Back to browse</a>
           <span class="text-muted text-sm" style="margin-left: 8px;">${results.items.length} semantic match${results.items.length !== 1 ? 'es' : ''}</span>
         </div>
         ${results.items.map(item => this._renderBrainCard(item, true)).join('')}
@@ -4935,7 +4844,7 @@ const MemoryView = {
       const data = await API.get(url);
       if (!data.success) throw new Error(data.error || 'Unknown error');
       this.brainTotal = data.total || 0;
-      this.updateBadge(2, this.brainTotal);
+      this.updateBadge(0, this.brainTotal);
       this.renderBrainItems(data.items || []);
       this.renderBrainPagination();
     } catch (error) {
@@ -5005,9 +4914,9 @@ const MemoryView = {
     const page = Math.floor(this.brainOffset / this.brainLimit) + 1;
     const totalPages = Math.ceil(this.brainTotal / this.brainLimit);
     container.innerHTML = `
-      <button class="btn btn-secondary btn-sm" onclick="MemoryView.brainPage(-1)" ${page <= 1 ? 'disabled' : ''} style="padding: 4px 12px; font-size: 13px;">&larr; Prev</button>
+      <button class="btn btn-secondary btn-sm" onclick="KnowledgeView.brainPage(-1)" ${page <= 1 ? 'disabled' : ''} style="padding: 4px 12px; font-size: 13px;">&larr; Prev</button>
       <span class="text-sm text-muted" style="line-height: 32px;">Page ${page} of ${totalPages} (${this.brainTotal} items)</span>
-      <button class="btn btn-secondary btn-sm" onclick="MemoryView.brainPage(1)" ${page >= totalPages ? 'disabled' : ''} style="padding: 4px 12px; font-size: 13px;">Next &rarr;</button>
+      <button class="btn btn-secondary btn-sm" onclick="KnowledgeView.brainPage(1)" ${page >= totalPages ? 'disabled' : ''} style="padding: 4px 12px; font-size: 13px;">Next &rarr;</button>
     `;
   },
 
@@ -5016,26 +4925,15 @@ const MemoryView = {
     this.loadBrainItems();
   },
 
-  renderSearchResults(containerId, results) {
-    const container = document.getElementById(containerId);
-    if (!results.length) { container.innerHTML = '<p class="text-muted">No results found</p>'; return; }
-    container.innerHTML = results.map(r => `
-      <div class="card mb-sm">
-        <div class="card-body">
-          <div class="flex justify-between items-center mb-sm">
-            <span class="text-xs text-muted">#${r.id || '-'}</span>
-            <span class="text-xs text-muted">${Format.datetime(r.timestamp || r.created_at)}</span>
-          </div>
-          <p>${Utils.escapeHtml(r.content || r.text || r.title || '')}</p>
-        </div>
-      </div>
-    `).join('');
-  },
-
   async refresh() {
-    Toast.info('Refreshing', 'Loading memories...');
-    await this.loadData();
-    Toast.success('Done', 'Memories refreshed');
+    Toast.info('Refreshing', 'Loading knowledge...');
+    if (typeof MindMapView !== 'undefined') {
+      MindMapView.refresh();
+    }
+    this.brainOffset = 0;
+    this.brainSearchMode = false;
+    await Promise.all([this.loadBrainItems(), this.loadBrainTopics()]);
+    Toast.success('Done', 'Knowledge refreshed');
   },
 };
 
@@ -6220,7 +6118,7 @@ const CostsView = {
 
 
 // =============================================================================
-// TASKS VIEW — Kanban Board
+// TASKS VIEW — List + Kanban with Quick Actions
 // =============================================================================
 
 const TasksView = {
@@ -6229,8 +6127,12 @@ const TasksView = {
   _tasks: [],
   _counts: {},
   _categories: [],
-  _activeList: 'personal_todo',
+  _activeList: localStorage.getItem('tasks_activeList') || 'personal_todo',
+  _viewMode: localStorage.getItem('tasks_viewMode') || 'list',
+  _collapsedStatuses: new Set(JSON.parse(localStorage.getItem('tasks_collapsed') || '["done","cancelled"]')),
+  _selectedIndex: -1,
   _dragTaskId: null,
+  _quickMenuTaskId: null,
 
   LIST_TYPES: [
     { key: 'personal_todo', label: 'Todos', icon: Icons.checkCircle },
@@ -6239,7 +6141,6 @@ const TasksView = {
     { key: 'research', label: 'Research', icon: Icons.search },
   ],
 
-  // Columns shown per list type (order = left to right)
   COLUMNS: {
     personal_todo: ['inbox', 'scheduled', 'in_progress', 'done'],
     peter_queue:   ['queued', 'heartbeat_scheduled', 'in_heartbeat', 'in_progress', 'review', 'done'],
@@ -6248,16 +6149,16 @@ const TasksView = {
   },
 
   COLUMN_CONFIG: {
-    inbox:               { label: 'Inbox',        color: '#6B7280', accent: '#E5E7EB' },
-    scheduled:           { label: 'Scheduled',    color: '#2563EB', accent: '#BFDBFE' },
-    queued:              { label: 'Queued',        color: '#7C3AED', accent: '#DDD6FE' },
-    heartbeat_scheduled: { label: 'HB Scheduled',  color: '#D97706', accent: '#FDE68A' },
-    in_heartbeat:        { label: 'In Heartbeat',  color: '#EA580C', accent: '#FED7AA' },
-    in_progress:         { label: 'In Progress',   color: '#059669', accent: '#A7F3D0' },
-    review:              { label: 'Review',        color: '#7C3AED', accent: '#DDD6FE' },
+    inbox:               { label: 'Inbox',          color: '#6B7280', accent: '#E5E7EB' },
+    scheduled:           { label: 'Scheduled',      color: '#2563EB', accent: '#BFDBFE' },
+    queued:              { label: 'Queued',          color: '#7C3AED', accent: '#DDD6FE' },
+    heartbeat_scheduled: { label: 'HB Scheduled',   color: '#D97706', accent: '#FDE68A' },
+    in_heartbeat:        { label: 'In Heartbeat',   color: '#EA580C', accent: '#FED7AA' },
+    in_progress:         { label: 'In Progress',    color: '#059669', accent: '#A7F3D0' },
+    review:              { label: 'Review',          color: '#7C3AED', accent: '#DDD6FE' },
     findings_ready:      { label: 'Findings Ready', color: '#059669', accent: '#A7F3D0' },
-    done:                { label: 'Done',          color: '#16A34A', accent: '#BBF7D0' },
-    cancelled:           { label: 'Cancelled',     color: '#9CA3AF', accent: '#E5E7EB' },
+    done:                { label: 'Done',            color: '#16A34A', accent: '#BBF7D0' },
+    cancelled:           { label: 'Cancelled',       color: '#9CA3AF', accent: '#E5E7EB' },
   },
 
   PRIORITY_CONFIG: {
@@ -6268,66 +6169,86 @@ const TasksView = {
     someday:  { label: 'Someday',  color: '#9CA3AF', bg: '#F9FAFB' },
   },
 
+  _persistState() {
+    localStorage.setItem('tasks_activeList', this._activeList);
+    localStorage.setItem('tasks_viewMode', this._viewMode);
+    localStorage.setItem('tasks_collapsed', JSON.stringify([...this._collapsedStatuses]));
+  },
+
+  _hasOverdue(listKey) {
+    // Check from loaded tasks only if this is the active list
+    if (listKey !== this._activeList) return false;
+    const now = new Date();
+    return this._tasks.some(t =>
+      t.due_date && t.status !== 'done' && t.status !== 'cancelled' && new Date(t.due_date) < now
+    );
+  },
+
   async render(container) {
+    const listTabs = this.LIST_TYPES.map(lt => `
+      <button class="kb-list-tab ${lt.key === this._activeList ? 'kb-list-tab-active' : ''}"
+              onclick="TasksView.switchList('${lt.key}')"
+              data-list="${lt.key}">
+        ${lt.icon}
+        <span class="kb-list-tab-label">${lt.label}</span>
+        <span class="kb-tab-count" id="tab-count-${lt.key}"></span>
+        <span class="kb-tab-overdue" id="tab-overdue-${lt.key}"></span>
+      </button>
+    `).join('');
+
     container.innerHTML = `
-      <div class="animate-fade-in">
-        <div class="flex justify-between items-center mb-lg">
-          <div>
-            <h2>Tasks</h2>
-            <p class="text-secondary" id="tasks-subtitle">To-dos, ideas, research & Peter's work queue</p>
+      <div class="animate-fade-in kb-page">
+        <div class="kb-toolbar">
+          <div class="kb-toolbar-left">
+            <div class="kb-list-tabs">${listTabs}</div>
           </div>
-          <div class="flex gap-sm">
-            <button class="btn btn-primary" onclick="TasksView.showCreateModal()">
-              ${Icons.plus} New Task
-            </button>
-            <button class="btn btn-ghost" onclick="TasksView.refresh()">
-              ${Icons.refresh} Refresh
+          <div class="kb-toolbar-right">
+            <div class="kb-search-wrap">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="kb-search" placeholder="Search..." onkeyup="TasksView.applyFilters()">
+            </div>
+            <select id="kb-filter-priority" class="kb-filter-select" onchange="TasksView.applyFilters()">
+              <option value="">All Priorities</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+              <option value="someday">Someday</option>
+            </select>
+            <select id="kb-filter-category" class="kb-filter-select" onchange="TasksView.applyFilters()">
+              <option value="">All Categories</option>
+            </select>
+            <div class="kb-view-toggle">
+              <button class="kb-view-btn ${this._viewMode === 'list' ? 'kb-view-btn-active' : ''}"
+                      onclick="TasksView.setViewMode('list')" title="List view">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                  <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+                </svg>
+              </button>
+              <button class="kb-view-btn ${this._viewMode === 'kanban' ? 'kb-view-btn-active' : ''}"
+                      onclick="TasksView.setViewMode('kanban')" title="Board view">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="15" rx="1"/>
+                </svg>
+              </button>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="TasksView.showCreateModal()">
+              ${Icons.plus} New
             </button>
           </div>
         </div>
 
-        <div class="grid grid-cols-4 gap-md mb-lg" id="tasks-stats">
-          ${Components.skeleton('card')}
-          ${Components.skeleton('card')}
-          ${Components.skeleton('card')}
-          ${Components.skeleton('card')}
-        </div>
-
-        <div class="flex gap-sm mb-md" id="tasks-tab-bar">
-          ${this.LIST_TYPES.map(lt => `
-            <button class="btn ${lt.key === this._activeList ? 'btn-primary' : 'btn-secondary'}"
-                    onclick="TasksView.switchList('${lt.key}')"
-                    data-list="${lt.key}">
-              ${lt.icon} ${lt.label}
-              <span class="kb-tab-count" id="tab-count-${lt.key}"></span>
-            </button>
-          `).join('')}
-        </div>
-
-        <div class="kb-filter-bar" id="kb-filters">
-          <input type="text" id="kb-search" placeholder="Search tasks..." onkeyup="TasksView.applyFilters()">
-          <select id="kb-filter-priority" onchange="TasksView.applyFilters()">
-            <option value="">All Priorities</option>
-            <option value="critical">Critical</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-            <option value="someday">Someday</option>
-          </select>
-          <select id="kb-filter-category" onchange="TasksView.applyFilters()">
-            <option value="">All Categories</option>
-          </select>
-        </div>
-
-        <div id="kanban-board" class="kb-board">
+        <div id="kb-content" class="kb-content">
           ${Components.skeleton('table', 5)}
         </div>
       </div>
     `;
+    this._bindKeyboard();
     await this.loadData();
   },
 
-  async loadData() {
+  async loadData(retries = 2) {
     try {
       const [countsResp, tasksResp, catsResp] = await Promise.all([
         fetch(`${this.HADLEY_API}/ptasks/counts`),
@@ -6335,42 +6256,41 @@ const TasksView = {
         fetch(`${this.HADLEY_API}/ptasks/categories`),
       ]);
 
+      if (!countsResp.ok || !tasksResp.ok) {
+        if (retries > 0) {
+          console.warn(`Tasks API returned ${countsResp.status}/${tasksResp.status}, retrying...`);
+          await new Promise(r => setTimeout(r, 800));
+          return this.loadData(retries - 1);
+        }
+        throw new Error(`API error: counts=${countsResp.status} tasks=${tasksResp.status}`);
+      }
+
       this._counts = (await countsResp.json()).counts || {};
       this._tasks = (await tasksResp.json()).tasks || [];
-      this._categories = (await catsResp.json()).categories || [];
+      this._categories = catsResp.ok ? ((await catsResp.json()).categories || []) : this._categories;
 
-      this.renderStats();
-      this.populateCategoryFilter();
-      this.renderBoard();
+      this._updateTabCounts();
+      this._populateCategoryFilter();
+      this._renderContent();
     } catch (error) {
       console.error('Failed to load tasks:', error);
       Toast.error('Error', 'Failed to load tasks');
     }
   },
 
-  renderStats() {
-    const c = this._counts;
-    const total = (c.personal_todo || 0) + (c.peter_queue || 0) + (c.idea || 0) + (c.research || 0);
-    const container = document.getElementById('tasks-stats');
-    if (!container) return;
-
-    container.innerHTML = `
-      ${Components.statsCard({ icon: Icons.checkCircle, value: c.personal_todo || 0, label: 'Todos', variant: 'info' })}
-      ${Components.statsCard({ icon: Icons.zap, value: c.peter_queue || 0, label: 'Peter Queue', variant: 'warning' })}
-      ${Components.statsCard({ icon: Icons.star, value: c.idea || 0, label: 'Ideas', variant: 'success' })}
-      ${Components.statsCard({ icon: Icons.search, value: c.research || 0, label: 'Research', variant: 'info' })}
-    `;
-
-    // Update tab counts
+  _updateTabCounts() {
     for (const lt of this.LIST_TYPES) {
       const el = document.getElementById(`tab-count-${lt.key}`);
-      if (el) el.textContent = c[lt.key] || '';
+      if (el) {
+        const count = this._counts[lt.key] || 0;
+        el.textContent = count > 0 ? count : '';
+      }
+      const od = document.getElementById(`tab-overdue-${lt.key}`);
+      if (od) od.style.display = this._hasOverdue(lt.key) ? 'inline-block' : 'none';
     }
-
-    document.getElementById('tasks-subtitle').textContent = `${total} active tasks across all lists`;
   },
 
-  populateCategoryFilter() {
+  _populateCategoryFilter() {
     const sel = document.getElementById('kb-filter-category');
     if (!sel) return;
     const current = sel.value;
@@ -6390,44 +6310,175 @@ const TasksView = {
     });
   },
 
-  applyFilters() {
-    this.renderBoard();
+  applyFilters() { this._renderContent(); },
+
+  setViewMode(mode) {
+    this._viewMode = mode;
+    this._persistState();
+    document.querySelectorAll('.kb-view-btn').forEach(btn => btn.classList.remove('kb-view-btn-active'));
+    document.querySelector(`.kb-view-btn[title="${mode === 'list' ? 'List view' : 'Board view'}"]`)?.classList.add('kb-view-btn-active');
+    this._renderContent();
   },
 
-  renderBoard() {
-    const board = document.getElementById('kanban-board');
-    if (!board) return;
+  _renderContent() {
+    if (this._viewMode === 'kanban') {
+      this._renderKanban();
+    } else {
+      this._renderList();
+    }
+  },
+
+  // ===========================================================================
+  // LIST VIEW
+  // ===========================================================================
+  _renderList() {
+    const content = document.getElementById('kb-content');
+    if (!content) return;
 
     const columns = this.COLUMNS[this._activeList] || [];
     const filtered = this._getFilteredTasks();
-
-    // Group tasks by status
     const byStatus = {};
     for (const task of filtered) {
       byStatus[task.status] = byStatus[task.status] || [];
       byStatus[task.status].push(task);
     }
 
-    board.innerHTML = columns.map(status => {
-      const col = this.COLUMN_CONFIG[status] || { label: status, color: '#6B7280', accent: '#E5E7EB' };
+    let rowIndex = 0;
+    const groups = columns.map(status => {
+      const col = this.COLUMN_CONFIG[status] || { label: status, color: '#6B7280' };
       const tasks = byStatus[status] || [];
+      const isCollapsed = this._collapsedStatuses.has(status);
+      const rows = isCollapsed ? '' : tasks.map(t => this._renderListRow(t, rowIndex++)).join('');
 
       return `
-        <div class="kb-column" data-status="${status}"
-             ondragover="TasksView.onDragOver(event)"
-             ondragenter="TasksView.onDragEnter(event)"
-             ondragleave="TasksView.onDragLeave(event)"
-             ondrop="TasksView.onDrop(event, '${status}')">
-          <div class="kb-column-header" style="border-top: 3px solid ${col.color};">
-            <span class="kb-column-title">${col.label}</span>
-            <span class="kb-column-count">${tasks.length}</span>
+        <div class="kb-list-group" data-status="${status}">
+          <div class="kb-list-group-header" onclick="TasksView.toggleGroup('${status}')" style="--group-color: ${col.color};">
+            <div class="kb-list-group-left">
+              <svg class="kb-list-chevron ${isCollapsed ? '' : 'kb-list-chevron-open'}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="kb-list-group-dot" style="background: ${col.color};"></span>
+              <span class="kb-list-group-title">${col.label}</span>
+              <span class="kb-list-group-count">${tasks.length}</span>
+            </div>
           </div>
-          <div class="kb-column-body">
-            ${tasks.map(t => this._renderCard(t)).join('')}
+          <div class="kb-list-group-body ${isCollapsed ? 'kb-list-group-collapsed' : ''}">
+            ${rows || (tasks.length === 0 ? '<div class="kb-list-empty">No tasks</div>' : '')}
           </div>
         </div>
       `;
     }).join('');
+
+    content.innerHTML = `<div class="kb-list-view">${groups}</div>`;
+  },
+
+  _renderListRow(task, index) {
+    const prio = this.PRIORITY_CONFIG[task.priority] || this.PRIORITY_CONFIG.medium;
+    const isDone = task.status === 'done' || task.status === 'cancelled';
+    const isSelected = index === this._selectedIndex;
+
+    const dueStr = task.due_date
+      ? new Date(task.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+      : '';
+    const isOverdue = task.due_date && !isDone && new Date(task.due_date) < new Date();
+
+    const catBadges = (task.categories || []).map(slug => {
+      const cat = this._categories.find(c => c.slug === slug);
+      if (!cat) return '';
+      return `<span class="kb-cat-badge" style="background: ${cat.color}22; color: ${cat.color};">${Utils.escapeHtml(cat.name)}</span>`;
+    }).join('');
+
+    const effortLabel = task.estimated_effort ? `<span class="kb-effort">${Utils.escapeHtml(task.estimated_effort)}</span>` : '';
+
+    return `
+      <div class="kb-list-row ${isDone ? 'kb-list-row-done' : ''} ${isSelected ? 'kb-list-row-selected' : ''}"
+           data-task-id="${task.id}" data-row-index="${index}">
+        <button class="kb-checkbox ${isDone ? 'kb-checkbox-checked' : ''}"
+                onclick="event.stopPropagation(); TasksView.toggleComplete('${task.id}')"
+                style="--check-color: ${prio.color};"
+                title="${isDone ? 'Reopen' : 'Complete'}">
+          ${isDone ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+        </button>
+        <div class="kb-list-row-priority" style="background: ${prio.color};" title="${prio.label}"></div>
+        <div class="kb-list-row-main" onclick="TasksView.showEditModal('${task.id}')">
+          <div class="kb-list-row-title-line">
+            <span class="kb-list-row-title ${isDone ? 'kb-title-done' : ''}">${Utils.escapeHtml(task.title)}</span>
+            ${task.created_by === 'peter' ? '<span class="kb-peter-badge" title="Created by Peter">P</span>' : ''}
+          </div>
+          ${task.description ? `<div class="kb-list-row-desc">${Utils.escapeHtml(task.description).substring(0, 100)}${task.description.length > 100 ? '...' : ''}</div>` : ''}
+        </div>
+        <div class="kb-list-row-meta">
+          <span class="kb-prio-chip" style="background: ${prio.bg}; color: ${prio.color};">${prio.label}</span>
+          ${catBadges}
+        </div>
+        <div class="kb-list-row-end">
+          ${dueStr ? `<span class="kb-due ${isOverdue ? 'kb-overdue' : ''}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> ${dueStr}</span>` : ''}
+          ${effortLabel}
+        </div>
+        <button class="kb-quick-menu-btn" onclick="event.stopPropagation(); TasksView.showQuickMenu(event, '${task.id}')" title="Actions">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>
+          </svg>
+        </button>
+      </div>
+    `;
+  },
+
+  toggleGroup(status) {
+    if (this._collapsedStatuses.has(status)) {
+      this._collapsedStatuses.delete(status);
+    } else {
+      this._collapsedStatuses.add(status);
+    }
+    this._persistState();
+    this._renderContent();
+  },
+
+  // ===========================================================================
+  // KANBAN VIEW
+  // ===========================================================================
+  _renderKanban() {
+    const content = document.getElementById('kb-content');
+    if (!content) return;
+
+    const columns = this.COLUMNS[this._activeList] || [];
+    const filtered = this._getFilteredTasks();
+    const byStatus = {};
+    for (const task of filtered) {
+      byStatus[task.status] = byStatus[task.status] || [];
+      byStatus[task.status].push(task);
+    }
+
+    content.innerHTML = `<div class="kb-board">${columns.map(status => {
+      const col = this.COLUMN_CONFIG[status] || { label: status, color: '#6B7280' };
+      const tasks = byStatus[status] || [];
+      const isDoneCol = status === 'done' || status === 'cancelled';
+      const isCollapsed = isDoneCol && this._collapsedStatuses.has(status);
+      const showMax = 10;
+      const visibleTasks = tasks.slice(0, showMax);
+      const hiddenCount = tasks.length - showMax;
+
+      return `
+        <div class="kb-column ${isCollapsed ? 'kb-column-collapsed' : ''}" data-status="${status}"
+             ondragover="TasksView.onDragOver(event)"
+             ondragenter="TasksView.onDragEnter(event)"
+             ondragleave="TasksView.onDragLeave(event)"
+             ondrop="TasksView.onDrop(event, '${status}')">
+          <div class="kb-column-header" style="border-top: 3px solid ${col.color};"
+               ${isDoneCol ? `onclick="TasksView.toggleGroup('${status}')"` : ''}>
+            <span class="kb-column-title">${col.label}</span>
+            <span class="kb-column-count">${tasks.length}</span>
+          </div>
+          <div class="kb-column-body">
+            ${visibleTasks.map(t => this._renderCard(t)).join('')}
+            ${hiddenCount > 0 ? `<button class="kb-show-more" onclick="this.parentElement.innerHTML = TasksView._renderAllCards('${status}'); ">Show ${hiddenCount} more</button>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('')}</div>`;
+  },
+
+  _renderAllCards(status) {
+    const filtered = this._getFilteredTasks().filter(t => t.status === status);
+    return filtered.map(t => this._renderCard(t)).join('');
   },
 
   _renderCard(task) {
@@ -6449,13 +6500,28 @@ const TasksView = {
       <div class="kb-card ${isDone ? 'kb-card-done' : ''}"
            draggable="true"
            data-task-id="${task.id}"
+           style="border-left: 3px solid ${prio.color};"
            ondragstart="TasksView.onDragStart(event, '${task.id}')"
-           ondragend="TasksView.onDragEnd(event)"
-           onclick="TasksView.showEditModal('${task.id}')">
-        <div class="kb-card-title ${isDone ? 'kb-title-done' : ''}">${Utils.escapeHtml(task.title)}</div>
-        ${task.description ? `<div class="kb-card-desc">${Utils.escapeHtml(task.description).substring(0, 80)}${task.description.length > 80 ? '...' : ''}</div>` : ''}
+           ondragend="TasksView.onDragEnd(event)">
+        <div class="kb-card-top">
+          <button class="kb-checkbox kb-checkbox-sm ${isDone ? 'kb-checkbox-checked' : ''}"
+                  onclick="event.stopPropagation(); TasksView.toggleComplete('${task.id}')"
+                  style="--check-color: ${prio.color};"
+                  title="${isDone ? 'Reopen' : 'Complete'}">
+            ${isDone ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+          </button>
+          <div class="kb-card-title-wrap" onclick="TasksView.showEditModal('${task.id}')">
+            <span class="kb-card-title ${isDone ? 'kb-title-done' : ''}">${Utils.escapeHtml(task.title)}</span>
+          </div>
+          <button class="kb-quick-menu-btn kb-quick-menu-btn-card" onclick="event.stopPropagation(); TasksView.showQuickMenu(event, '${task.id}')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>
+            </svg>
+          </button>
+        </div>
+        ${task.description ? `<div class="kb-card-desc" onclick="TasksView.showEditModal('${task.id}')">${Utils.escapeHtml(task.description).substring(0, 80)}${task.description.length > 80 ? '...' : ''}</div>` : ''}
         <div class="kb-card-footer">
-          <span class="kb-prio-dot" style="background: ${prio.color};" title="${prio.label}"></span>
+          <span class="kb-prio-chip kb-prio-chip-sm" style="background: ${prio.bg}; color: ${prio.color};">${prio.label}</span>
           ${catBadges}
           ${dueStr ? `<span class="kb-due ${isOverdue ? 'kb-overdue' : ''}">${dueStr}</span>` : ''}
           ${task.created_by === 'peter' ? '<span class="kb-peter-badge" title="Created by Peter">P</span>' : ''}
@@ -6464,7 +6530,166 @@ const TasksView = {
     `;
   },
 
-  // ---- Drag and Drop ----
+  // ===========================================================================
+  // QUICK ACTIONS MENU
+  // ===========================================================================
+  showQuickMenu(event, taskId) {
+    event.preventDefault();
+    this.closeQuickMenu();
+    this._quickMenuTaskId = taskId;
+    const task = this._tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    const isDone = task.status === 'done' || task.status === 'cancelled';
+    const columns = this.COLUMNS[this._activeList] || [];
+    const priorities = Object.entries(this.PRIORITY_CONFIG);
+
+    const statusItems = columns.filter(s => s !== task.status).map(s => {
+      const sc = this.COLUMN_CONFIG[s] || { label: s, color: '#6B7280' };
+      return `<button class="kb-qm-item" onclick="TasksView.quickSetStatus('${taskId}', '${s}')">
+        <span class="kb-qm-dot" style="background: ${sc.color};"></span> ${sc.label}
+      </button>`;
+    }).join('');
+
+    const prioItems = priorities.filter(([k]) => k !== task.priority).map(([k, v]) =>
+      `<button class="kb-qm-item" onclick="TasksView.quickSetPriority('${taskId}', '${k}')">
+        <span class="kb-qm-dot" style="background: ${v.color};"></span> ${v.label}
+      </button>`
+    ).join('');
+
+    const menu = document.createElement('div');
+    menu.className = 'kb-quick-menu';
+    menu.innerHTML = `
+      <button class="kb-qm-item kb-qm-item-primary" onclick="TasksView.toggleComplete('${taskId}')">
+        ${isDone ? '&#x21bb; Reopen' : '&#x2713; Complete'}
+      </button>
+      <div class="kb-qm-divider"></div>
+      <div class="kb-qm-label">Move to</div>
+      ${statusItems}
+      <div class="kb-qm-divider"></div>
+      <div class="kb-qm-label">Priority</div>
+      ${prioItems}
+      <div class="kb-qm-divider"></div>
+      <div class="kb-qm-label">Reschedule</div>
+      <button class="kb-qm-item" onclick="TasksView.quickReschedule('${taskId}', 'today')">Today</button>
+      <button class="kb-qm-item" onclick="TasksView.quickReschedule('${taskId}', 'tomorrow')">Tomorrow</button>
+      <button class="kb-qm-item" onclick="TasksView.quickReschedule('${taskId}', 'next_week')">Next week</button>
+      <button class="kb-qm-item" onclick="TasksView.quickReschedule('${taskId}', 'clear')">Clear date</button>
+      <div class="kb-qm-divider"></div>
+      <button class="kb-qm-item kb-qm-item-danger" onclick="TasksView.deleteTask('${taskId}')">Delete</button>
+    `;
+
+    document.body.appendChild(menu);
+
+    // Position near the button
+    const rect = event.target.closest('button').getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    let top = rect.bottom + 4;
+    let left = rect.right - menuRect.width;
+    if (left < 8) left = 8;
+    if (top + menuRect.height > window.innerHeight - 8) top = rect.top - menuRect.height - 4;
+    menu.style.top = top + 'px';
+    menu.style.left = left + 'px';
+
+    // Close on click outside
+    setTimeout(() => {
+      document.addEventListener('click', TasksView._closeQuickMenuHandler);
+    }, 0);
+  },
+
+  _closeQuickMenuHandler(e) {
+    if (!e.target.closest('.kb-quick-menu')) TasksView.closeQuickMenu();
+  },
+
+  closeQuickMenu() {
+    document.querySelectorAll('.kb-quick-menu').forEach(m => m.remove());
+    document.removeEventListener('click', TasksView._closeQuickMenuHandler);
+    this._quickMenuTaskId = null;
+  },
+
+  async toggleComplete(taskId) {
+    this.closeQuickMenu();
+    const task = this._tasks.find(t => t.id === taskId);
+    if (!task) return;
+    const isDone = task.status === 'done' || task.status === 'cancelled';
+    const newStatus = isDone ? (this.COLUMNS[this._activeList]?.[0] || 'inbox') : 'done';
+    try {
+      const resp = await fetch(`${this.HADLEY_API}/ptasks/${taskId}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus, actor: 'chris' })
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        Toast.error('Error', err.detail || 'Status change failed');
+        return;
+      }
+      await this.loadData();
+    } catch (error) {
+      Toast.error('Error', error.message);
+    }
+  },
+
+  async quickSetStatus(taskId, newStatus) {
+    this.closeQuickMenu();
+    try {
+      const resp = await fetch(`${this.HADLEY_API}/ptasks/${taskId}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus, actor: 'chris' })
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        Toast.error('Invalid move', err.detail || 'Status transition not allowed');
+        return;
+      }
+      await this.loadData();
+    } catch (error) {
+      Toast.error('Error', error.message);
+    }
+  },
+
+  async quickSetPriority(taskId, priority) {
+    this.closeQuickMenu();
+    try {
+      await fetch(`${this.HADLEY_API}/ptasks/${taskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priority })
+      });
+      await this.loadData();
+    } catch (error) {
+      Toast.error('Error', error.message);
+    }
+  },
+
+  async quickReschedule(taskId, when) {
+    this.closeQuickMenu();
+    let dueDate = null;
+    if (when === 'today') {
+      dueDate = new Date().toISOString();
+    } else if (when === 'tomorrow') {
+      const d = new Date(); d.setDate(d.getDate() + 1);
+      dueDate = d.toISOString();
+    } else if (when === 'next_week') {
+      const d = new Date(); d.setDate(d.getDate() + (8 - d.getDay()) % 7 || 7);
+      dueDate = d.toISOString();
+    }
+    try {
+      await fetch(`${this.HADLEY_API}/ptasks/${taskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ due_date: dueDate })
+      });
+      await this.loadData();
+    } catch (error) {
+      Toast.error('Error', error.message);
+    }
+  },
+
+  // ===========================================================================
+  // DRAG AND DROP (kanban)
+  // ===========================================================================
   onDragStart(e, taskId) {
     this._dragTaskId = taskId;
     e.dataTransfer.effectAllowed = 'move';
@@ -6477,10 +6702,7 @@ const TasksView = {
     document.querySelectorAll('.kb-column-over').forEach(el => el.classList.remove('kb-column-over'));
   },
 
-  onDragOver(e) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  },
+  onDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; },
 
   onDragEnter(e) {
     e.preventDefault();
@@ -6497,43 +6719,103 @@ const TasksView = {
     e.preventDefault();
     const col = e.target.closest('.kb-column');
     if (col) col.classList.remove('kb-column-over');
-
     if (!this._dragTaskId) return;
     const task = this._tasks.find(t => t.id === this._dragTaskId);
     if (!task || task.status === newStatus) return;
-
-    try {
-      const resp = await fetch(`${this.HADLEY_API}/ptasks/${this._dragTaskId}/status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus, actor: 'chris' })
-      });
-      if (!resp.ok) {
-        const err = await resp.json();
-        Toast.error('Invalid move', err.detail || 'Status transition not allowed');
-        return;
-      }
-      await this.loadData();
-    } catch (error) {
-      Toast.error('Error', `Failed to move task: ${error.message}`);
-    }
+    await this.quickSetStatus(this._dragTaskId, newStatus);
   },
 
-  // ---- List switching ----
+  // ===========================================================================
+  // LIST SWITCHING
+  // ===========================================================================
   async switchList(listType) {
     this._activeList = listType;
-    document.querySelectorAll('#tasks-tab-bar button[data-list]').forEach(btn => {
-      btn.classList.toggle('btn-primary', btn.dataset.list === listType);
-      btn.classList.toggle('btn-secondary', btn.dataset.list !== listType);
+    this._persistState();
+    document.querySelectorAll('.kb-list-tab').forEach(btn => {
+      btn.classList.toggle('kb-list-tab-active', btn.dataset.list === listType);
     });
-    document.getElementById('kanban-board').innerHTML = Components.skeleton('table', 5);
+    document.getElementById('kb-content').innerHTML = Components.skeleton('table', 5);
     await this.loadData();
   },
 
-  // ---- Edit Modal (full editing with activity timeline) ----
+  // ===========================================================================
+  // KEYBOARD SHORTCUTS
+  // ===========================================================================
+  _boundKeyHandler: null,
+
+  _bindKeyboard() {
+    if (this._boundKeyHandler) document.removeEventListener('keydown', this._boundKeyHandler);
+    this._boundKeyHandler = (e) => this._handleKey(e);
+    document.addEventListener('keydown', this._boundKeyHandler);
+  },
+
+  _handleKey(e) {
+    // Don't intercept when in inputs/modals
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    if (document.querySelector('.modal.open, .modal-backdrop.open')) return;
+    if (this._viewMode !== 'list') return;
+
+    const rows = document.querySelectorAll('.kb-list-row');
+    const maxIndex = rows.length - 1;
+
+    switch (e.key) {
+      case 'n':
+        e.preventDefault();
+        this.showCreateModal();
+        break;
+      case 'j':
+      case 'ArrowDown':
+        e.preventDefault();
+        this._selectedIndex = Math.min(this._selectedIndex + 1, maxIndex);
+        this._highlightSelected(rows);
+        break;
+      case 'k':
+      case 'ArrowUp':
+        e.preventDefault();
+        this._selectedIndex = Math.max(this._selectedIndex - 1, 0);
+        this._highlightSelected(rows);
+        break;
+      case 'x':
+        e.preventDefault();
+        if (this._selectedIndex >= 0 && rows[this._selectedIndex]) {
+          const id = rows[this._selectedIndex].dataset.taskId;
+          if (id) this.toggleComplete(id);
+        }
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (this._selectedIndex >= 0 && rows[this._selectedIndex]) {
+          const id = rows[this._selectedIndex].dataset.taskId;
+          if (id) this.showEditModal(id);
+        }
+        break;
+      case '1': case '2': case '3': case '4': case '5':
+        e.preventDefault();
+        if (this._selectedIndex >= 0 && rows[this._selectedIndex]) {
+          const id = rows[this._selectedIndex].dataset.taskId;
+          const prioKeys = ['critical', 'high', 'medium', 'low', 'someday'];
+          if (id) this.quickSetPriority(id, prioKeys[parseInt(e.key) - 1]);
+        }
+        break;
+      case 'Escape':
+        this._selectedIndex = -1;
+        this._highlightSelected(rows);
+        break;
+    }
+  },
+
+  _highlightSelected(rows) {
+    rows.forEach((r, i) => r.classList.toggle('kb-list-row-selected', i === this._selectedIndex));
+    if (this._selectedIndex >= 0 && rows[this._selectedIndex]) {
+      rows[this._selectedIndex].scrollIntoView({ block: 'nearest' });
+    }
+  },
+
+  // ===========================================================================
+  // EDIT MODAL
+  // ===========================================================================
   async showEditModal(taskId) {
     try {
-      // Fetch task detail and history in parallel
       const [taskResp, histResp] = await Promise.all([
         fetch(`${this.HADLEY_API}/ptasks/${taskId}`),
         fetch(`${this.HADLEY_API}/ptasks/${taskId}/history`),
@@ -6570,7 +6852,6 @@ const TasksView = {
         </div>
       `).join('') || '<p class="text-muted" style="font-size: 12px;">No comments yet</p>';
 
-      // Activity timeline from task_history
       const timeline = history.map(h => {
         const time = new Date(h.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
         let desc = h.action;
@@ -6668,12 +6949,10 @@ const TasksView = {
 
     if (!title) { Toast.error('Error', 'Title is required'); return; }
 
-    // Collect selected categories
     const catChecks = document.querySelectorAll('.kb-cat-check input[type="checkbox"]');
     const selectedCats = Array.from(catChecks).filter(cb => cb.checked).map(cb => cb.value);
 
     try {
-      // Update task fields
       const updateBody = { title, description: description || null, priority };
       if (dueDate) updateBody.due_date = new Date(dueDate).toISOString();
       if (effort) updateBody.estimated_effort = effort;
@@ -6686,7 +6965,6 @@ const TasksView = {
         body: JSON.stringify(updateBody)
       });
 
-      // Update status if changed
       if (oldTask && oldTask.status !== status) {
         const statusResp = await fetch(`${this.HADLEY_API}/ptasks/${taskId}/status`, {
           method: 'POST',
@@ -6699,7 +6977,6 @@ const TasksView = {
         }
       }
 
-      // Update categories
       await fetch(`${this.HADLEY_API}/ptasks/${taskId}/categories`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -6717,7 +6994,6 @@ const TasksView = {
   async addComment(taskId) {
     const input = document.getElementById('edit-task-comment');
     if (!input || !input.value.trim()) return;
-
     try {
       await fetch(`${this.HADLEY_API}/ptasks/${taskId}/comments`, {
         method: 'POST',
@@ -6726,7 +7002,6 @@ const TasksView = {
       });
       input.value = '';
       Toast.success('Comment added', '');
-      // Refresh the comment list in-place
       this.showEditModal(taskId);
     } catch (error) {
       Toast.error('Error', `Failed to add comment: ${error.message}`);
@@ -6816,9 +7091,9 @@ const TasksView = {
       Toast.success('Created', `Task "${title}" created`);
       if (listType !== this._activeList) {
         this._activeList = listType;
-        document.querySelectorAll('#tasks-tab-bar button[data-list]').forEach(btn => {
-          btn.classList.toggle('btn-primary', btn.dataset.list === listType);
-          btn.classList.toggle('btn-secondary', btn.dataset.list !== listType);
+        this._persistState();
+        document.querySelectorAll('.kb-list-tab').forEach(btn => {
+          btn.classList.toggle('kb-list-tab-active', btn.dataset.list === listType);
         });
       }
       await this.loadData();
@@ -6829,8 +7104,8 @@ const TasksView = {
 
   async deleteTask(taskId) {
     if (!confirm('Delete this task? This cannot be undone.')) return;
+    this.closeQuickMenu();
     Modal.close();
-
     try {
       await fetch(`${this.HADLEY_API}/ptasks/${taskId}`, { method: 'DELETE' });
       Toast.success('Deleted', 'Task deleted');
@@ -7946,14 +8221,10 @@ const App = {
     Router.register('/parser', ParserView);
     Router.register('/logs', LogsView);
     Router.register('/files', FilesView);
-    Router.register('/memory', MemoryView);
+    Router.register('/knowledge', KnowledgeView);
     // ApiExplorerView is defined in api-explorer.js which may load after this
     if (typeof ApiExplorerView !== 'undefined') {
       Router.register('/api-explorer', ApiExplorerView);
-    }
-    // MindMapView is defined in mind-map.js which may load after this
-    if (typeof MindMapView !== 'undefined') {
-      Router.register('/mind-map', MindMapView);
     }
     Router.register('/costs', CostsView);
     Router.register('/tasks', TasksView);
@@ -8053,7 +8324,7 @@ const App = {
       } else if (shortcutBuffer === 'gf') {
         Router.navigate('/files');
       } else if (shortcutBuffer === 'gm') {
-        Router.navigate('/memory');
+        Router.navigate('/knowledge');
       } else if (shortcutBuffer === 'gc') {
         Router.navigate('/costs');
       } else if (shortcutBuffer === 'gp') {
@@ -8111,7 +8382,7 @@ window.ServicesView = ServicesView;
 window.SkillsView = SkillsView;
 window.LogsView = LogsView;
 window.FilesView = FilesView;
-window.MemoryView = MemoryView;
+window.KnowledgeView = KnowledgeView;
 window.CostsView = CostsView;
 window.MealPlanView = MealPlanView;
 window.SubscriptionsView = SubscriptionsView;

@@ -71,81 +71,29 @@ const MindMapView = {
     });
   },
 
-  async render(container) {
-    container.innerHTML = `
-      <div class="animate-fade-in">
-        <div class="flex justify-between items-center mb-lg">
-          <div>
-            <h2>Peter's Mind Map</h2>
-            <p class="text-secondary">Knowledge topology, activity, and health</p>
-          </div>
-          <div class="flex gap-sm">
-            <div class="mind-map-search-wrap">
-              <input type="text" id="mm-search" class="input" placeholder="Search knowledge..." style="width: 240px">
-            </div>
-            <button class="btn btn-secondary" onclick="MindMapView.refresh()">Refresh</button>
-          </div>
-        </div>
-
-        <div class="mind-map-stats" id="mm-stats"></div>
-
-        <div class="mm-global-controls">
-          <div class="mm-source-toggle" id="mm-global-source">
-            <button class="mm-source-btn active" data-source="both">Both</button>
-            <button class="mm-source-btn" data-source="brain">Second Brain</button>
-            <button class="mm-source-btn" data-source="memory">Memories</button>
-          </div>
-        </div>
-
-        ${Components.tabs({
-          id: 'mm-tabs',
-          tabs: [
-            { label: 'Knowledge Graph', content: '<div id="mm-graph" class="mm-graph-container"><div class="mm-loading">Loading graph...</div></div>' },
-            { label: 'Knowledge Radar', content: '<div id="mm-radar" class="mm-chart-container"><div class="mm-loading">Loading radar...</div></div>' },
-            { label: 'Activity Timeline', content: '<div id="mm-activity" class="mm-chart-container"><div class="mm-loading">Loading activity...</div></div>' },
-            { label: 'Decay Analysis', content: '<div id="mm-decay" class="mm-chart-container"><div class="mm-loading">Loading decay data...</div></div>' },
-            { label: 'Health Dashboard', content: '<div id="mm-health" class="mm-health-container"><div class="mm-loading">Loading health data...</div></div>' },
-          ]
-        })}
-
-        <div id="mm-detail-panel" class="mm-detail-panel" style="display:none"></div>
-      </div>
-    `;
-
-    // Wire up tab switching to render the right chart
-    const origSwitch = Tabs.switch.bind(Tabs);
-    const mmTabSwitch = (id, idx) => {
-      origSwitch(id, idx);
-      if (id === 'mm-tabs') {
-        this._activeTab = idx;
-        this._renderActiveTab();
-      }
-    };
-    // Patch tab buttons
-    document.querySelectorAll('#mm-tabs .tab').forEach((btn, idx) => {
-      btn.onclick = () => mmTabSwitch('mm-tabs', idx);
-    });
-
-    // Global source toggle
+  /**
+   * Initialize as a headless visualization engine.
+   * Expects DOM containers to already exist: mm-stats, mm-graph, mm-radar,
+   * mm-activity, mm-decay, mm-health, mm-detail-panel.
+   * Called by KnowledgeView after rendering the page shell.
+   */
+  async init() {
     this._graphSource = 'both';
-    document.querySelectorAll('#mm-global-source .mm-source-btn').forEach(btn => {
-      btn.onclick = () => {
-        document.querySelectorAll('#mm-global-source .mm-source-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        this._graphSource = btn.dataset.source;
-        this._renderActiveTab();
-      };
-    });
-
-    // Search handler
-    const searchInput = document.getElementById('mm-search');
-    let searchTimeout;
-    searchInput.addEventListener('input', () => {
-      clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => this._handleSearch(searchInput.value), 300);
-    });
-
+    this._activeTab = 0;
+    this._data = null;
+    this._memories = null;
+    this._activity = null;
     await this._loadData();
+  },
+
+  setSource(source) {
+    this._graphSource = source;
+    if (this._data) this._renderActiveTab();
+  },
+
+  setActiveTab(idx) {
+    this._activeTab = idx;
+    if (this._data) this._renderActiveTab();
   },
 
   async _loadData() {
@@ -1183,10 +1131,5 @@ const MindMapView = {
   },
 };
 
-// Make globally available
+// Make globally available (used by KnowledgeView)
 window.MindMapView = MindMapView;
-
-// Register with Router if it exists and route not already registered
-if (typeof Router !== 'undefined' && Router.routes && !Router.routes['/mind-map']) {
-  Router.register('/mind-map', MindMapView);
-}

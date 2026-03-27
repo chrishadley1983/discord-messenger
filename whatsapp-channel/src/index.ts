@@ -34,6 +34,7 @@ function log(msg: string) {
 
 const HTTP_PORT = parseInt(process.env.HTTP_PORT || "8102", 10);
 const HADLEY_API = process.env.HADLEY_API || "http://172.19.64.1:8100";
+const HADLEY_AUTH_KEY = process.env.HADLEY_AUTH_KEY || "";
 
 // ---------------------------------------------------------------------------
 // State: track last user message per sender (for Second Brain capture)
@@ -157,8 +158,11 @@ async function handleReply(phone: string, text: string) {
 
   try {
     const url = `${HADLEY_API}/whatsapp/send?to=${encodeURIComponent(phone)}&message=${encodeURIComponent(text.trim())}`;
+    const headers: Record<string, string> = {};
+    if (HADLEY_AUTH_KEY) headers["x-api-key"] = HADLEY_AUTH_KEY;
     const resp = await fetch(url, {
       method: "POST",
+      headers,
       signal: AbortSignal.timeout(30000),
     });
 
@@ -205,8 +209,11 @@ async function handleVoiceReply(phone: string, text: string) {
 
   try {
     const url = `${HADLEY_API}/whatsapp/send-voice?to=${encodeURIComponent(phone)}&message=${encodeURIComponent(text.trim())}`;
+    const headers: Record<string, string> = {};
+    if (HADLEY_AUTH_KEY) headers["x-api-key"] = HADLEY_AUTH_KEY;
     const resp = await fetch(url, {
       method: "POST",
+      headers,
       signal: AbortSignal.timeout(30000),
     });
 

@@ -4,7 +4,8 @@ Handles OAuth complexity and exposes simple REST endpoints.
 Run with: uvicorn hadley_api.main:app --port 8100
 """
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from hadley_api.auth import require_auth
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse, Response
 from datetime import datetime, timedelta
@@ -72,7 +73,7 @@ async def get_current_time():
 # Service restart endpoint — Peter can restart NSSM services (admin-gated)
 # ---------------------------------------------------------------------------
 
-@app.post("/services/restart/{service_name}")
+@app.post("/services/restart/{service_name}", dependencies=[Depends(require_auth)])
 async def restart_service(service_name: str):
     """Restart an NSSM service. Restricted to known safe services.
 
@@ -157,7 +158,7 @@ async def channel_status():
     return results
 
 
-@app.post("/channels/restart/{session_name}")
+@app.post("/channels/restart/{session_name}", dependencies=[Depends(require_auth)])
 async def restart_channel(session_name: str):
     """Kill and relaunch a channel tmux session. The restart loop in launch.sh handles recovery."""
     import subprocess as _sp
@@ -188,7 +189,7 @@ async def restart_channel(session_name: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/channels/restart-all")
+@app.post("/channels/restart-all", dependencies=[Depends(require_auth)])
 async def restart_all_channels():
     """Restart all channel sessions."""
     results = {}
@@ -6451,6 +6452,22 @@ async def brain_stats():
                 for r in recent
             ],
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/brain/item/{item_id}")
+async def brain_delete_item(item_id: str):
+    """Archive (soft-delete) a Second Brain item. Requires explicit user permission."""
+    from uuid import UUID
+    from domains.second_brain.db import archive_knowledge_item
+
+    try:
+        uuid_id = UUID(item_id)
+        await archive_knowledge_item(uuid_id)
+        return {"status": "archived", "id": item_id}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

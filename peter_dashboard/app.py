@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, WebSocket, WebSocketDisconnect, HTTPException, Request
 
 # Service manager for reliable process control
 try:
@@ -46,6 +46,18 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# --- API key auth for mutating endpoints ---
+_DASHBOARD_AUTH_KEY = os.getenv("HADLEY_AUTH_KEY", "")
+
+
+def require_auth(x_api_key: str = Header(default="")):
+    """Reject requests without a valid API key on protected endpoints."""
+    if not _DASHBOARD_AUTH_KEY:
+        return  # No key configured — fail open (dev mode)
+    if x_api_key != _DASHBOARD_AUTH_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
 
 # UK timezone for timestamps
 UK_TZ = ZoneInfo("Europe/London")
@@ -655,7 +667,7 @@ async def dashboard(request: Request):
     """
     # Try to serve the new redesigned dashboard (v2)
     if templates and (_templates_dir / "index.html").exists():
-        return templates.TemplateResponse("index.html", {"request": request})
+        return templates.TemplateResponse("index.html", {"request": request, "api_key": _DASHBOARD_AUTH_KEY})
 
     # Fallback to legacy inline HTML
     return HTMLResponse(content=DASHBOARD_HTML)
@@ -953,7 +965,7 @@ async def get_tmux_screen(request: Request, session: str, lines: int = 60):
     return {"error": "Session not found or not accessible"}
 
 
-@app.post("/api/restart/{service}")
+@app.post("/api/restart/{service}", dependencies=[Depends(require_auth)])
 @limiter.limit("5/minute")
 async def restart_service_endpoint(request: Request, service: str):
     """Restart a service with proper single-instance enforcement.
@@ -997,7 +1009,7 @@ async def restart_service_endpoint(request: Request, service: str):
         raise HTTPException(400, f"Unknown service: {service}")
 
 
-@app.post("/api/restart-all")
+@app.post("/api/restart-all", dependencies=[Depends(require_auth)])
 @limiter.limit("2/minute")
 async def restart_all_services(request: Request):
     """Restart all Peter-related services (headless - no console windows).
@@ -2089,7 +2101,7 @@ async def get_skill(name: str):
     return read_wsl_file(path, tail_lines=0, skip_validation=True)
 
 
-@app.post("/api/file/append/{file_type}/{file_name}")
+@app.post("/api/file/append/{file_type}/{file_name}", dependencies=[Depends(require_auth)])
 async def append_to_file(file_type: str, file_name: str, content: str):
     """Append content to an .md file."""
     if file_type == "windows":
@@ -2117,7 +2129,7 @@ async def append_to_file(file_type: str, file_name: str, content: str):
         raise HTTPException(400, "Invalid file type")
 
 
-@app.put("/api/file/write/{file_type}/{file_name}")
+@app.put("/api/file/write/{file_type}/{file_name}", dependencies=[Depends(require_auth)])
 async def write_file(file_type: str, file_name: str, content: str):
     """Write/replace content of an .md file."""
     if file_type == "windows":
@@ -6443,7 +6455,8 @@ DASHBOARD_HTML = """
         async function saveFile(type, name) {
             const content = document.getElementById('file-editor').value;
             const result = await fetch(`/api/file/write/${type}/${encodeURIComponent(name)}?content=${encodeURIComponent(content)}`, {
-                method: 'PUT'
+                method: 'PUT',
+                headers: { 'x-api-key': '""" + _DASHBOARD_AUTH_KEY + """' }
             });
             const data = await result.json();
             if (data.status === 'success') {
@@ -6460,7 +6473,8 @@ DASHBOARD_HTML = """
                 return;
             }
             const result = await fetch(`/api/file/append/${type}/${encodeURIComponent(name)}?content=${encodeURIComponent(text)}`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'x-api-key': '""" + _DASHBOARD_AUTH_KEY + """' }
             });
             const data = await result.json();
             if (data.status === 'success') {
