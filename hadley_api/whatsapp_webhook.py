@@ -92,8 +92,13 @@ ALLOWED_SENDERS_BY_NUMBER = {
     "447856182831": ("Abby", "447856182831"),
 }
 
-# DiscordBot internal server for WhatsApp message routing
-DISCORDBOT_WHATSAPP_URL = "http://127.0.0.1:8101/whatsapp/message"
+# WhatsApp message routing — channel mode or bot.py handler
+_WHATSAPP_USE_CHANNEL = os.getenv("WHATSAPP_USE_CHANNEL", "0") == "1"
+DISCORDBOT_WHATSAPP_URL = (
+    "http://127.0.0.1:8102/whatsapp/message"   # Channel MCP server
+    if _WHATSAPP_USE_CHANNEL else
+    "http://127.0.0.1:8101/whatsapp/message"    # bot.py handler (original)
+)
 
 # Evolution API config (for media download)
 EVOLUTION_URL = os.getenv("EVOLUTION_API_URL", "http://localhost:8085")
@@ -478,23 +483,38 @@ async def _debounce_flush(sender_number: str):
         f"{msg_count} message(s) batched{' (voice)' if has_voice else ''}"
     )
 
+    _payload = {
+        "sender_name": queue.sender_name,
+        "sender_number": queue.sender_number,
+        "reply_to": queue.reply_to,
+        "is_group": queue.is_group,
+        "text": combined_text,
+        "is_voice": has_voice,
+    }
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 DISCORDBOT_WHATSAPP_URL,
-                json={
-                    "sender_name": queue.sender_name,
-                    "sender_number": queue.sender_number,
-                    "reply_to": queue.reply_to,
-                    "is_group": queue.is_group,
-                    "text": combined_text,
-                    "is_voice": has_voice,
-                },
+                json=_payload,
                 timeout=600,
             )
             logger.info(f"WhatsApp forward to Peter: {resp.status_code}")
     except Exception as e:
         logger.error(f"WhatsApp forward failed: {e}")
+        # Smart fallback: if channel mode is on but unreachable, try bot.py handler
+        if _WHATSAPP_USE_CHANNEL:
+            logger.warning("Channel unreachable — falling back to bot.py handler")
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(
+                        "http://127.0.0.1:8101/whatsapp/message",
+                        json=_payload,
+                        timeout=600,
+                    )
+                    logger.info(f"WhatsApp fallback to bot.py: {resp.status_code}")
+            except Exception as e2:
+                logger.error(f"WhatsApp fallback also failed: {e2}")
 
     # Schedule cleanup of idle sender queues
     asyncio.create_task(_cleanup_idle_queue(sender_number))

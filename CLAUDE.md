@@ -13,9 +13,18 @@
 
 | Runs On | Components |
 |---------|------------|
-| **Windows** | Discord bot (`bot.py`), Hadley API, Dashboard, Scheduler |
-| **WSL2** | tmux session `peterbot`, Claude Code execution |
+| **Windows (NSSM)** | Discord bot (`bot.py`), Hadley API, Dashboard |
+| **WSL2 (tmux)** | 3 channel sessions: `peter-channel`, `whatsapp-channel`, `jobs-channel` |
 | **Symlinked** | `wsl_config/` → `/home/chris_hadley/peterbot/` (changes sync automatically) |
+
+### Channel Architecture (Primary — Mar 2026)
+
+Three persistent Claude Code sessions handle all messaging via Anthropic's channels:
+- `peter-channel/` — Discord conversations (discord.js gateway)
+- `whatsapp-channel/` — WhatsApp conversations (HTTP :8102, via Evolution API)
+- `jobs-channel/` — Scheduled jobs (HTTP :8103, synchronous reply pattern)
+
+Fallback: `PETERBOT_USE_CHANNEL=0` / `WHATSAPP_USE_CHANNEL=0` / `JOBS_USE_CHANNEL=0` in `.env` reverts to router_v2 (`claude -p` per message). Smart fallback auto-detects dead channel sessions.
 
 **Key Rule**: Skill files in `wsl_config/skills/` are symlinked to WSL. Changes are immediate - no sync needed.
 
@@ -55,21 +64,25 @@ This ensures Peter's knowledge base stays in sync with new features.
 
 ## Project Structure
 
-- `bot.py` - Main Discord bot entry point
-- `domains/peterbot/` - Peterbot domain (Claude Code routing with memory)
-  - `router.py` - Message routing and tmux session management
-  - `scheduler.py` - APScheduler integration for scheduled jobs
-  - `memory.py` - Memory context injection
+- `bot.py` - Main Discord bot entry point, scheduler, auto-start for channel sessions
+- `peter-channel/` - Discord channel MCP server (discord.js gateway + reply tool)
+- `whatsapp-channel/` - WhatsApp channel MCP server (HTTP :8102 + reply/voice_reply tools)
+- `jobs-channel/` - Scheduled jobs channel MCP server (HTTP :8103 + synchronous reply)
+- `domains/peterbot/` - Peterbot domain (routing, scheduling, response pipeline)
+  - `router_v2.py` - Stateless CLI routing (fallback when channels are down)
+  - `scheduler.py` - APScheduler integration, routes jobs to channel or CLI
+  - `memory.py` - Memory context injection, buffer management
   - `config.py` - Configuration constants
+  - `response/` - Response pipeline (sanitise → classify → format → chunk)
   - `wsl_config/` - WSL-side config synced to ~/peterbot
-    - `CLAUDE.md` - Peter's personality and instructions
+    - `CLAUDE.md` - Peter's personality, instructions, and governance rules
     - `SCHEDULE.md` - Scheduled jobs definition
     - `skills/` - Skill definitions for scheduled jobs
-- `domains/claude_code/` - Direct Claude Code tunnel (dumb pipe)
 - `domains/second_brain/` - Second Brain knowledge base (Supabase + pgvector)
   - `seed/adapters/` - Import adapters (email, calendar, GitHub, Garmin, recipes, finance)
 - `peter_dashboard/` - Dashboard Web UI (port 5000)
 - `hadley_api/` - REST API for external services (port 8100)
+  - `peter_routes/` - Auto-discovered endpoints created by Peter
 - `mcp_servers/` - MCP servers for Claude Desktop & Claude Code
   - `second_brain_mcp.py` - Knowledge base search & save (6 tools)
   - `financial_data_mcp.py` - Personal finance + Hadley Bricks business data (11 tools)

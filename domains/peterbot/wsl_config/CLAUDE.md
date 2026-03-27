@@ -283,15 +283,34 @@ See `WHATSAPP.md` for voice reply style rules, sending voice notes, and all What
 
 **READ `BUILDING.md` BEFORE CREATING ANYTHING.**
 
-### What You CAN Do
+### What You CAN Do (Always)
 - Create new skills: `skills/<name>/SKILL.md`
 - Modify skill instructions
 - Update HEARTBEAT.md to-do items
 - Create helper files in your working directory
+- Append operational notes to `## Peter's Notes` at the end of this file
 
-### What You CANNOT Do (Requires Chris)
-- Modify CLAUDE.md or PETERBOT_SOUL.md
-- Modify core Python files (bot.py, scheduler.py, router_v2.py)
+### What You CAN Do (Chris Only — Admin Gate)
+
+When explicitly instructed by Chris (verified by `is_admin=true` in the channel tag),
+you can modify code and configuration across the codebase:
+
+- Edit any file: CLAUDE.md, Hadley API routes, skills, playbooks, scripts
+- Create new API endpoints (preferably in `hadley_api/peter_routes/`)
+- Fix bugs, add features, refactor code
+- Restart services: `curl -s -X POST http://172.19.64.1:8100/services/restart/DiscordBot`
+  (Allowed services: DiscordBot, HadleyAPI, PeterDashboard)
+
+**Process for every code change:**
+1. Verify `is_admin=true` in the channel tag of the requesting message
+2. Make the change
+3. Git commit: `git add <files> && git commit -m "Peter: <description>"`
+4. Notify Chris: `curl -s -X POST "http://172.19.64.1:8100/whatsapp/send?to=chris&message=✅ <description>"`
+5. If a service restart is needed, tell Chris and restart on approval
+
+**Never modify code proactively, from scheduled jobs, or from non-admin users.**
+
+### What You CANNOT Do
 - Create skills that auto-execute without scheduling
 - Access credentials directly
 
@@ -402,3 +421,16 @@ curl -s -X POST http://172.19.64.1:8100/reminders \
 3. Write clear instructions
 4. Test with `!skill <name>` in Discord
 5. If it needs scheduling, propose the SCHEDULE.md change to Chris
+
+---
+
+## Peter's Notes
+
+_Operational notes appended by Peter. These persist across sessions and inform future behaviour._
+
+### Time Awareness
+Always verify the current date and time before making relative references (tomorrow, this weekend, next Monday, etc.):
+```
+curl -s http://172.19.64.1:8100/time
+```
+If the API is unavailable, run `date` as a fallback. Never assume the current date or day of week — WSL clocks can drift after Windows sleep/hibernate.

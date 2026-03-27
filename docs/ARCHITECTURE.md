@@ -8,46 +8,72 @@ This document provides a comprehensive overview of the Peterbot system architect
 
 Peterbot is an AI-powered personal assistant running as a Discord bot on Windows, with Claude Code executing in WSL2.
 
-### Router V2 (Active Default — Feb 2026)
+### Channel Architecture (Active Default — Mar 2026)
 
-Uses `claude -p --output-format stream-json --verbose` — each message spawns an independent CLI process. No tmux, no session lock, no screen-scraping.
-
-```
-+------------------+      +------------------+      +------------------+
-|   Discord API    | <--> |  Discord Bot     | <--> |  Hadley API      |
-|                  |      |  (Windows)       |      |  (Windows:8100)  |
-+------------------+      +--------+---------+      +------------------+
-                                   |
-                                   | WSL subprocess (per-request)
-                                   v
-                         +------------------+
-                         |  claude -p       |
-                         |  --stream-json   |
-                         |  (WSL2)          |
-                         +--------+---------+
-                                  |
-                                  v
-                         +------------------+
-                         |  Claude Code     |
-                         |  (AI/LLM)        |
-                         +------------------+
-```
-
-### Router V1 (Legacy Fallback)
-
-Uses persistent tmux session with screen-scraping. Revert by setting `PETERBOT_ROUTER_V2=0`.
-Old files (router.py, parser.py, sanitiser.py) are kept in-tree for this fallback.
+Uses Anthropic's Claude Code channels — persistent Claude Code sessions that receive messages
+via MCP channel notifications. Three isolated sessions handle different message types:
 
 ```
-Discord Bot → tmux session (claude-peterbot) → screen capture → parser.py → sanitiser.py
++-----------+     +------------------+     +-------------------+
+| Discord   |---->| peter-channel    |---->|                   |
+| (Gateway) |     | MCP server       |     | Claude Code       |
++-----------+     +------------------+     | Session 1         |
+                                           | (tmux peter-      |
++-----------+     +------------------+     |  channel)         |
+| Evolution |---->| Hadley API       |     +-------------------+
+| API       |     | webhook          |
+| (WhatsApp)|     +-------+----------+     +-------------------+
++-----------+             |           +--->|                   |
+                          v                | Claude Code       |
+                  +------------------+     | Session 2         |
+                  | whatsapp-channel |---->| (tmux whatsapp-   |
+                  | MCP server :8102 |     |  channel)         |
+                  +------------------+     +-------------------+
+
++-----------+     +------------------+     +-------------------+
+| APScheduler|--->| jobs-channel     |---->| Claude Code       |
+| (bot.py)  |    | MCP server :8103 |     | Session 3         |
++-----------+     +------------------+     | (tmux jobs-       |
+                                           |  channel)         |
+                  +------------------+     +-------------------+
+                  | Hadley API :8100 |
+                  | (Windows)        |     All sessions run in ~/peterbot (WSL)
+                  +------------------+     Same CLAUDE.md, same MCP tools
+```
+
+**Fallback switches** (in .env, default ON):
+- `PETERBOT_USE_CHANNEL=1` — Discord via channel; if Peter H bot offline, falls back to router_v2
+- `WHATSAPP_USE_CHANNEL=1` — WhatsApp via channel; if port 8102 unreachable, falls back to bot.py handler
+- `JOBS_USE_CHANNEL=1` — Jobs via channel; if port 8103 unreachable, falls back to `claude -p`
+
+**Channel MCP servers:**
+- `peter-channel/` — Discord.js gateway, reply tool posts to Discord
+- `whatsapp-channel/` — HTTP receiver on 8102, reply + voice_reply tools via Hadley API
+- `jobs-channel/` — HTTP receiver on 8103, synchronous reply pattern for scheduler.py
+
+**Session lifecycle:**
+- Auto-start: bot.py `on_ready` launches tmux sessions if not running
+- Auto-restart: launch.sh has restart loop (10s delay between crashes)
+- Smart fallback: if channel session dies, messages fall back to router_v2 automatically
+
+### Router V2 (Fallback — Feb 2026)
+
+Stateless fallback: `claude -p --output-format stream-json`. Each message spawns an independent
+CLI process. Used when channel sessions are down, or when env var flags are set to 0.
+
+```
+Discord Bot → router_v2.py → spawn claude -p (WSL) → NDJSON stream → response pipeline → Discord
 ```
 
 ### Services Running
 
 | Service | Port | Platform | Description |
 |---------|------|----------|-------------|
-| Discord Bot | - | Windows | Main bot process, message routing |
-| Hadley API | 8100 | Windows | FastAPI proxy for Gmail, Calendar, Notion |
+| Discord Bot | - | Windows (NSSM) | Main bot process, scheduler, fallback routing |
+| Hadley API | 8100 | Windows (NSSM) | FastAPI proxy for Gmail, Calendar, Notion, WhatsApp send |
+| peter-channel | - | WSL (tmux) | Discord channel MCP server (Discord.js gateway) |
+| whatsapp-channel | 8102 | WSL (tmux) | WhatsApp channel MCP server (HTTP receiver) |
+| jobs-channel | 8103 | WSL (tmux) | Scheduled jobs channel MCP server (synchronous HTTP) |
 | Peter Dashboard | 5000 | Windows | Flask web UI for monitoring |
 | Second Brain | - | Supabase | Unified memory (PostgreSQL + pgvector) |
 | Claude Code | - | WSL2 CLI | AI responses via `claude -p` (v2) or tmux (v1 fallback) |

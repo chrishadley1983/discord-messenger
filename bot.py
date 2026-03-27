@@ -104,6 +104,44 @@ peterbot_scheduler = None  # Initialized in on_ready
 _ready_initialized = False  # Guard against multiple on_ready calls
 
 
+def _launch_channel_sessions():
+    """Launch persistent Claude Code channel sessions in WSL tmux.
+
+    Called from on_ready. Each session auto-restarts on crash (restart loop
+    in launch.sh). If a session is already running, tmux has-session returns
+    0 and we skip it.
+    """
+    import subprocess
+
+    BASE = "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger"
+    sessions = [
+        ("peter-channel", f"{BASE}/peter-channel/launch.sh"),
+        ("whatsapp-channel", f"{BASE}/whatsapp-channel/launch.sh"),
+        ("jobs-channel", f"{BASE}/jobs-channel/launch.sh"),
+    ]
+
+    for name, script in sessions:
+        try:
+            # Check if session already exists
+            check = subprocess.run(
+                ["wsl", "bash", "-c", f"tmux has-session -t {name} 2>/dev/null"],
+                capture_output=True, timeout=5,
+            )
+            if check.returncode == 0:
+                logger.info(f"Channel session '{name}' already running, skipping")
+                continue
+
+            # Launch new tmux session with the channel's launch script
+            subprocess.Popen(
+                ["wsl", "bash", "-c",
+                 f'tmux new-session -d -s {name} -c $HOME/peterbot "bash \\"{script}\\""'],
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            )
+            logger.info(f"Launched channel session '{name}'")
+        except Exception as e:
+            logger.warning(f"Failed to launch channel session '{name}': {e}")
+
+
 def _create_logged_task(coro, name: str = None):
     """Create an asyncio task with exception logging.
 
@@ -216,6 +254,9 @@ async def on_ready():
         logger.info(f"Synced {len(synced)} slash commands")
     except Exception as e:
         logger.error(f"Failed to sync slash commands: {e}")
+
+    # Launch channel sessions in WSL (if not already running)
+    _launch_channel_sessions()
 
     # Register domains
     # NutritionDomain disabled - #food-log now uses Peterbot routing with Hadley API
@@ -688,6 +729,17 @@ async def on_message(message):
 
     # Peterbot domain - Claude Code routing WITH memory context
     # Works in multiple channels (peterbot, ai-briefings, etc.)
+    # When PETERBOT_USE_CHANNEL=1, Discord messages are handled by the
+    # channel MCP server (Peter H bot) — skip router_v2 processing here.
+    _PETERBOT_USE_CHANNEL = os.environ.get("PETERBOT_USE_CHANNEL", "0") == "1"
+    if message.channel.id in PETERBOT_CHANNEL_IDS and _PETERBOT_USE_CHANNEL:
+        # Smart fallback: check if Peter H bot is actually online in the guild
+        # If the channel session crashed, Peter H goes offline and we fall through to router_v2
+        _PETER_H_BOT_ID = 1487089363757043893
+        peter_h = message.guild.get_member(_PETER_H_BOT_ID) if message.guild else None
+        if peter_h and peter_h.status != discord.Status.offline:
+            return  # Channel is alive, let Peter H handle it
+        logger.warning("Peter H bot offline — falling back to router_v2 for Discord messages")
     if message.channel.id in PETERBOT_CHANNEL_IDS:
         async with message.channel.typing():
             # Check if buffer needs populating from Discord history (e.g., after restart)

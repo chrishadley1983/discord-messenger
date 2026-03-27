@@ -556,6 +556,46 @@ class PeterbotScheduler:
         now = datetime.now(UK_TZ)
         return now.hour >= QUIET_START or now.hour < QUIET_END
 
+    # --- Pause checking (cached 60s) ---
+    _pause_cache: list | None = None
+    _pause_cache_time: float = 0
+
+    def _is_skill_paused(self, skill: str) -> bool:
+        """Check if a skill is currently paused (cached for 60s)."""
+        import time as _time
+
+        now_mono = _time.monotonic()
+        if self._pause_cache is None or (now_mono - self._pause_cache_time) > 60:
+            self._pause_cache = self._load_pauses()
+            self._pause_cache_time = now_mono
+
+        now = datetime.now(UK_TZ)
+        for pause in self._pause_cache:
+            try:
+                from dateutil.parser import parse as parse_dt
+                resume = parse_dt(pause["resume_at"])
+                if resume.tzinfo is None:
+                    resume = resume.replace(tzinfo=UK_TZ)
+                if resume <= now:
+                    continue
+                if "*" in pause.get("skills", []) or skill in pause.get("skills", []):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    def _load_pauses() -> list:
+        """Load active pauses from data/schedule_pauses.json."""
+        pauses_file = Path(__file__).parent.parent.parent / "data" / "schedule_pauses.json"
+        if not pauses_file.exists():
+            return []
+        try:
+            data = json.loads(pauses_file.read_text(encoding="utf-8"))
+            return data.get("pauses", [])
+        except (json.JSONDecodeError, OSError):
+            return []
+
     async def _execute_job(self, job: JobConfig):
         """Execute a scheduled job via Claude Code with overlap prevention.
 
@@ -565,6 +605,11 @@ class PeterbotScheduler:
         # Skip during quiet hours (unless exempt)
         if self._is_quiet_hours() and not job.exempt_quiet_hours:
             logger.debug(f"Skipping {job.name} during quiet hours")
+            return
+
+        # Skip if skill is paused
+        if self._is_skill_paused(job.skill):
+            logger.debug(f"Skipping {job.name} — skill '{job.skill}' is paused")
             return
 
         # Check for job overlap
@@ -682,9 +727,14 @@ class PeterbotScheduler:
 
             # 4. Send to Claude Code with timeout
             try:
-                # Independent CLI process — no tmux, no session lock
-                # Timeout is handled inside invoke_claude_cli
-                response = await self._send_to_claude_code_v2(context, job=job)
+                # JOBS_USE_CHANNEL=1 routes through persistent jobs-channel session
+                # JOBS_USE_CHANNEL=0 (default) uses independent CLI process via router_v2
+                import os
+                _jobs_use_channel = os.environ.get("JOBS_USE_CHANNEL", "0") == "1"
+                if _jobs_use_channel:
+                    response = await self._send_to_jobs_channel(context, job=job)
+                else:
+                    response = await self._send_to_claude_code_v2(context, job=job)
             except asyncio.TimeoutError:
                 duration = time.time() - start_time
                 logger.error(f"Job {job.name} timed out after {duration:.1f}s")
@@ -987,6 +1037,40 @@ class PeterbotScheduler:
             response = f"> *Kimi 2.5 fallback*\n\n{response}"
 
         return response
+
+    async def _send_to_jobs_channel(self, context: str, job: JobConfig) -> str:
+        """Send job context to the jobs-channel MCP server and wait for response.
+
+        The jobs-channel runs a persistent Claude Code session. This method
+        POSTs the skill context, waits synchronously for Claude to process
+        it and call the reply tool, then returns the response.
+
+        Same interface as _send_to_claude_code_v2() — scheduler post-processing
+        works identically regardless of which method is used.
+        """
+        import httpx
+
+        skill_name = job.skill if job else "unknown"
+        timeout = self.JOB_TIMEOUT_SECONDS + 30  # Extra buffer over channel's internal timeout
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    "http://127.0.0.1:8103/job",
+                    json={"context": context, "skill": skill_name},
+                    timeout=timeout,
+                )
+                if resp.status_code == 200:
+                    return resp.json().get("response", "")
+                else:
+                    logger.error(f"Jobs channel returned {resp.status_code}: {resp.text}")
+                    return ""
+        except httpx.TimeoutException:
+            raise asyncio.TimeoutError(f"Jobs channel timed out after {timeout}s")
+        except Exception as e:
+            logger.error(f"Jobs channel error: {e}, falling back to CLI")
+            # Fall back to direct CLI if channel is down
+            return await self._send_to_claude_code_v2(context, job=job)
 
     async def _post_to_channel(self, job: JobConfig, message: str, files: list = None):
         """Post message to Discord channel (and optionally WhatsApp).
@@ -1417,3 +1501,114 @@ class PeterbotScheduler:
         ])
 
         return "\n".join(parts)
+
+    # --- Nag Reminder Checker ---
+
+    def start_nag_checker(self):
+        """Register a 60-second interval job to check and fire nag reminders."""
+        self.scheduler.add_job(
+            self._nag_reminder_checker,
+            IntervalTrigger(seconds=60),
+            id="__nag_checker",
+            max_instances=1,
+            replace_existing=True,
+        )
+        logger.info("Nag reminder checker started (checks every 60s)")
+
+    async def _nag_reminder_checker(self):
+        """Check for due nag reminders and send WhatsApp messages."""
+        import httpx
+
+        API_BASE = "http://172.19.64.1:8100"
+        now = datetime.now(UK_TZ)
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{API_BASE}/reminders/active-nags")
+                if resp.status_code != 200:
+                    return
+                nags = resp.json()
+        except Exception as e:
+            logger.debug(f"Nag checker: failed to fetch active nags: {e}")
+            return
+
+        for nag in nags:
+            try:
+                nag_id = nag["id"]
+                task = nag.get("task", "")
+                delivery = nag.get("delivery", "discord")
+                interval = nag.get("interval_minutes") or 120
+                nag_until = nag.get("nag_until")
+                last_nagged = nag.get("last_nagged_at")
+
+                # Check if past nag_until time — auto-acknowledge
+                if nag_until:
+                    try:
+                        end_hour, end_min = map(int, nag_until.split(":"))
+                        end_time = now.replace(hour=end_hour, minute=end_min, second=0)
+                        if now >= end_time:
+                            async with httpx.AsyncClient(timeout=10.0) as client:
+                                await client.post(f"{API_BASE}/reminders/{nag_id}/acknowledge")
+                            if delivery.startswith("whatsapp:"):
+                                target = delivery.split(":", 1)[1]
+                                await self._send_nag_whatsapp(
+                                    target, f"Wrapping up nag for today: *{task}* — no more reminders until tomorrow 👋"
+                                )
+                            logger.info(f"Nag {nag_id} auto-acknowledged (past {nag_until})")
+                            continue
+                    except (ValueError, AttributeError):
+                        pass
+
+                # Check if it's time to nag again
+                should_nag = False
+                if last_nagged is None:
+                    should_nag = True
+                else:
+                    from dateutil.parser import parse as parse_dt
+                    last = parse_dt(last_nagged)
+                    if last.tzinfo is None:
+                        last = last.replace(tzinfo=UK_TZ)
+                    if (now - last).total_seconds() >= interval * 60:
+                        should_nag = True
+
+                if not should_nag:
+                    continue
+
+                # Send the nag via WhatsApp
+                if delivery.startswith("whatsapp:"):
+                    target = delivery.split(":", 1)[1]
+                    await self._send_nag_whatsapp(target, f"Hey — {task} 💪\nReply *done* when you've finished.")
+                    logger.info(f"Nag sent via WhatsApp to {target}: {task[:50]}")
+                else:
+                    logger.debug(f"Nag {nag_id}: delivery={delivery} not handled by checker")
+                    continue
+
+                # Update last_nagged_at and fired_at
+                try:
+                    update_fields = {"last_nagged_at": now.isoformat()}
+                    if not nag.get("fired_at"):
+                        update_fields["fired_at"] = now.isoformat()
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        await client.patch(
+                            f"{API_BASE}/reminders/{nag_id}",
+                            json=update_fields,
+                        )
+                except Exception:
+                    pass
+
+            except Exception as e:
+                logger.debug(f"Nag checker error for {nag.get('id', '?')}: {e}")
+
+    @staticmethod
+    async def _send_nag_whatsapp(target: str, message: str):
+        """Send a WhatsApp nag message to a target (chris, abby, group)."""
+        from integrations.whatsapp import send_text, send_to_chris, send_to_abby, send_to_group
+
+        if target == "chris":
+            await send_to_chris(message)
+        elif target == "abby":
+            await send_to_abby(message)
+        elif target == "group":
+            await send_to_group("extended-team", message)
+        else:
+            await send_text(target, message)

@@ -44,6 +44,160 @@ from hadley_api.spelling_routes import router as spelling_router
 app.include_router(spelling_router)
 from hadley_api.japan_routes import router as japan_router
 app.include_router(japan_router)
+try:
+    from hadley_api.finance_routes import router as finance_router
+    app.include_router(finance_router)
+except Exception:
+    pass  # Non-critical — financial-data MCP is the primary path
+
+# ---------------------------------------------------------------------------
+# Time endpoint — reliable UK time from Windows host (WSL clocks can drift)
+# ---------------------------------------------------------------------------
+
+@app.get("/time")
+async def get_current_time():
+    """Return current UK date, time, and day of week from Windows host."""
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo("Europe/London"))
+    return {
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M"),
+        "day": now.strftime("%A"),
+        "datetime": now.isoformat(),
+        "timezone": "Europe/London",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Service restart endpoint — Peter can restart NSSM services (admin-gated)
+# ---------------------------------------------------------------------------
+
+@app.post("/services/restart/{service_name}")
+async def restart_service(service_name: str):
+    """Restart an NSSM service. Restricted to known safe services.
+
+    Peter calls this after making code changes that need a service restart.
+    Runs nssm restart as a subprocess — requires the Hadley API process
+    to have admin privileges (NSSM services run as SYSTEM).
+    """
+    import subprocess as _sp
+
+    _ALLOWED_SERVICES = {"DiscordBot", "HadleyAPI", "PeterDashboard"}
+    if service_name not in _ALLOWED_SERVICES:
+        return JSONResponse(
+            status_code=403,
+            content={"error": f"Service '{service_name}' not in allowed list: {_ALLOWED_SERVICES}"},
+        )
+
+    try:
+        result = _sp.run(
+            ["nssm", "restart", service_name],
+            capture_output=True, text=True, timeout=30,
+        )
+        _logging.getLogger("hadley_api.services").info(
+            f"Service restart '{service_name}': exit={result.returncode}"
+        )
+        return {
+            "service": service_name,
+            "status": "restarted" if result.returncode == 0 else "failed",
+            "exit_code": result.returncode,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
+    except _sp.TimeoutExpired:
+        return JSONResponse(status_code=504, content={"error": f"Restart timed out for {service_name}"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# peter_routes auto-discovery — Peter can create new endpoint files here
+# ---------------------------------------------------------------------------
+
+_peter_routes_dir = Path(__file__).parent / "peter_routes"
+if _peter_routes_dir.exists():
+    import importlib
+    for _f in sorted(_peter_routes_dir.glob("*.py")):
+        if _f.name.startswith("_"):
+            continue
+        try:
+            _mod = importlib.import_module(f"hadley_api.peter_routes.{_f.stem}")
+            if hasattr(_mod, "router"):
+                app.include_router(_mod.router)
+        except Exception:
+            pass  # Non-critical — skip broken peter_routes
+
+# Response capture endpoint (inline to avoid NSSM sub-router import issues)
+import logging as _logging
+_capture_log = _logging.getLogger("hadley_api.capture")
+import re as _re
+
+class _CaptureRequest(BaseModel):
+    text: str
+    user_message: Optional[str] = None
+    channel_name: Optional[str] = None
+    channel_id: Optional[str] = None
+    message_id: Optional[str] = None
+
+_CASUAL_PREFIXES = (
+    "sure", "here", "hey", "hi ", "ok", "yeah", "yep", "no,", "no ",
+    "yes,", "yes ", "i ", "i'", "thanks", "alright", "great", "good", "hmm",
+)
+
+def _is_generated_document(response: str) -> bool:
+    if len(response) < 800:
+        return False
+    if len(_re.findall(r"^#{1,3}\s+\S", response, _re.MULTILINE)) < 2:
+        return False
+    first_line = next((l.strip().lower() for l in response.split("\n") if l.strip()), "")
+    return not any(first_line.startswith(p) for p in _CASUAL_PREFIXES)
+
+@app.post("/response/capture")
+async def _capture_response(body: _CaptureRequest):
+    """Capture conversation to Second Brain (fire-and-forget from channel reply tool)."""
+    text = body.text
+    if not text or not text.strip():
+        return {"status": "skipped", "reason": "empty"}
+
+    captured = False
+
+    if body.user_message and body.user_message.strip():
+        async def _do_capture():
+            try:
+                from domains.second_brain.conversation import capture_conversation
+                item = await capture_conversation(
+                    user_message=body.user_message,
+                    assistant_response=text,
+                    channel_id=body.channel_id,
+                    message_id=body.message_id,
+                )
+                if item:
+                    _capture_log.info(f"[channel] Captured conversation to Second Brain: {item.id}")
+            except Exception as e:
+                _capture_log.warning(f"[channel] Capture failed: {e}")
+        asyncio.create_task(_do_capture())
+        captured = True
+
+    is_doc = _is_generated_document(text)
+    if is_doc:
+        async def _do_save_doc():
+            try:
+                from domains.second_brain import process_capture, CaptureType
+                item = await process_capture(
+                    source=text,
+                    capture_type=CaptureType.EXPLICIT,
+                    user_note="[Generated document from channel conversation]",
+                    user_tags=["generated", "document", "channel"],
+                    source_system="peterbot:channel",
+                )
+                if item:
+                    _capture_log.info(f"[channel] Auto-saved document to Second Brain: {item.id}")
+            except Exception as e:
+                _capture_log.warning(f"[channel] Document save failed: {e}")
+        asyncio.create_task(_do_save_doc())
+        captured = True
+
+    return {"status": "capturing" if captured else "skipped", "conversation": bool(body.user_message), "document": is_doc}
 
 # Train status endpoint
 from hadley_api.japan_train_status import get_train_status as _get_train_status
