@@ -38,12 +38,15 @@ while true; do
   echo "[$(date)] Starting Jobs channel session (attempt $RESTART_COUNT)..."
   echo "[$(date)] START attempt=$RESTART_COUNT" >> "$RESTART_LOG"
 
+  # Auto-accept startup prompts in background
+  bash "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/scripts/auto-accept-prompts.sh" jobs-channel &
+
   claude \
     --mcp-config /tmp/jobs-channel-mcp.json \
     --dangerously-load-development-channels server:jobs-channel \
     --model claude-opus-4-6 \
     --effort medium \
-    --dangerously-skip-permissions || true
+    --permission-mode bypassPermissions || true
 
   EXIT_CODE=$?
   echo "[$(date)] Session exited (code $EXIT_CODE), restarting in 10s..."
