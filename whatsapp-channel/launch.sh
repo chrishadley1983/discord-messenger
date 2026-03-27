@@ -41,7 +41,7 @@ while true; do
   claude \
     --mcp-config /tmp/whatsapp-channel-mcp.json \
     --dangerously-load-development-channels server:whatsapp-channel \
-    --model opus \
+    --model claude-opus-4-6 \
     --effort medium \
     --dangerously-skip-permissions || true
 

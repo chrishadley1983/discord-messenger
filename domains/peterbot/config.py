@@ -12,12 +12,10 @@ PETERBOT_CHANNEL_IDS = {CHANNEL_ID} if CHANNEL_ID else set()
 if _extra_channels:
     PETERBOT_CHANNEL_IDS.update(int(cid.strip()) for cid in _extra_channels.split(",") if cid.strip())
 
-# Dedicated tmux session for peterbot
-# Session name derived from path basename: peterbot -> claude-peterbot
-PETERBOT_SESSION = "claude-peterbot"
+# Working directory for peterbot (WSL-side, where CLAUDE.md lives)
 PETERBOT_SESSION_PATH = os.environ.get(
     "PETERBOT_SESSION_PATH",
-    "/home/chris_hadley/peterbot"  # Creates ~/peterbot if needed
+    "/home/chris_hadley/peterbot"
 )
 
 # Memory integration (Second Brain)
@@ -49,12 +47,6 @@ STABLE_COUNT_THRESHOLD = 3
 INTERIM_UPDATE_DELAY = 5.0  # Seconds before first interim update
 INTERIM_UPDATE_INTERVAL = 10.0  # Seconds between interim updates
 
-# Context file for large prompts (avoids tmux paste issues)
-CONTEXT_FILE = f"{PETERBOT_SESSION_PATH}/context.md"
-
-# Raw log path for debugging
-RAW_LOG_PATH = f"{PETERBOT_SESSION_PATH}/raw_output.log"
-
 # Channel ID to name mapping (populated at runtime or configured here)
 CHANNEL_ID_TO_NAME = {
     # Add channel mappings as needed, e.g.:
@@ -68,8 +60,8 @@ CLI_MAX_TURNS = 80            # Max agentic turns for conversations (browser flo
 CLI_SCHEDULED_MAX_TURNS = 50  # Max agentic turns for scheduled jobs (same as conversations)
 # No --max-budget-usd flag needed: CLI runs on subscription, not API billing.
 # The subscription's own rate limits are the safety net.
-CLI_MODEL = "opus"                # Opus for conversations (better at autonomous multi-step tasks)
-CLI_SCHEDULED_MODEL = "opus"  # Opus for scheduled jobs (4.6 hangs on open-ended skills like self-reflect)
+CLI_MODEL = "claude-opus-4-6"            # Opus 4.6 for conversations (fallback path)
+CLI_SCHEDULED_MODEL = "claude-opus-4-6"  # Opus 4.6 for scheduled jobs (fallback path)
 CLI_COMMAND = os.environ.get("PETERBOT_CLI_COMMAND", "claude")  # CLI binary
 CLI_WORKING_DIR = PETERBOT_SESSION_PATH  # ~/peterbot (where CLAUDE.md lives)
 
