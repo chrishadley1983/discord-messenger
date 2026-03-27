@@ -111,6 +111,97 @@ async def restart_service(service_name: str):
 
 
 # ---------------------------------------------------------------------------
+# Channel session management — restart/status for tmux channel sessions
+# ---------------------------------------------------------------------------
+
+_CHANNEL_SESSIONS = ["peter-channel", "whatsapp-channel", "jobs-channel"]
+
+@app.get("/channels/status")
+async def channel_status():
+    """Status of all channel tmux sessions."""
+    import subprocess as _sp
+    results = {}
+    for name in _CHANNEL_SESSIONS:
+        try:
+            check = _sp.run(
+                ["wsl", "bash", "-c", f"tmux has-session -t {name} 2>/dev/null && echo UP || echo DOWN"],
+                capture_output=True, text=True, timeout=5,
+            )
+            status = check.stdout.strip()
+            results[name] = {"status": "up" if status == "UP" else "down"}
+
+            # Get restart count from log
+            log_check = _sp.run(
+                ["wsl", "bash", "-c", f"grep -c 'START attempt' /tmp/{name}-restarts.log 2>/dev/null || echo 0"],
+                capture_output=True, text=True, timeout=5,
+            )
+            results[name]["restart_count"] = int(log_check.stdout.strip() or "0")
+
+            # Check HTTP port for whatsapp/jobs channels
+            if name == "whatsapp-channel":
+                try:
+                    import httpx
+                    r = await asyncio.to_thread(lambda: httpx.get("http://127.0.0.1:8102/health", timeout=3))
+                    results[name]["http"] = "ok"
+                except Exception:
+                    results[name]["http"] = "unreachable"
+            elif name == "jobs-channel":
+                try:
+                    import httpx
+                    r = await asyncio.to_thread(lambda: httpx.get("http://127.0.0.1:8103/health", timeout=3))
+                    results[name]["http"] = "ok"
+                except Exception:
+                    results[name]["http"] = "unreachable"
+        except Exception as e:
+            results[name] = {"status": "error", "error": str(e)}
+    return results
+
+
+@app.post("/channels/restart/{session_name}")
+async def restart_channel(session_name: str):
+    """Kill and relaunch a channel tmux session. The restart loop in launch.sh handles recovery."""
+    import subprocess as _sp
+
+    if session_name not in _CHANNEL_SESSIONS:
+        return JSONResponse(status_code=403, content={"error": f"Unknown session: {session_name}"})
+
+    try:
+        # Kill the tmux session — the restart loop in launch.sh will NOT auto-recover
+        # because killing tmux kills the shell running the loop.
+        # So we need to relaunch the session.
+        _sp.run(
+            ["wsl", "bash", "-c", f"tmux kill-session -t {session_name} 2>/dev/null"],
+            capture_output=True, timeout=5,
+        )
+
+        # Relaunch via the launch script
+        base = "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger"
+        _sp.Popen(
+            ["wsl", "bash", "-c",
+             f'tmux new-session -d -s {session_name} -c $HOME/peterbot '
+             f'"bash \\"{base}/{session_name}/launch.sh\\""'],
+            creationflags=0x08000000,  # CREATE_NO_WINDOW
+        )
+
+        return {"session": session_name, "status": "restarting"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/channels/restart-all")
+async def restart_all_channels():
+    """Restart all channel sessions."""
+    results = {}
+    for name in _CHANNEL_SESSIONS:
+        resp = await restart_channel(name)
+        if isinstance(resp, JSONResponse):
+            results[name] = "failed"
+        else:
+            results[name] = resp.get("status", "unknown") if isinstance(resp, dict) else "restarting"
+    return results
+
+
+# ---------------------------------------------------------------------------
 # peter_routes auto-discovery — Peter can create new endpoint files here
 # ---------------------------------------------------------------------------
 

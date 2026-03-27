@@ -1,0 +1,479 @@
+{
+  "shinjuku-eats-guide.html": [
+    {
+      "guide_name": "Menya Sho Hon Ten",
+      "scraper": {
+        "name": "Menya Sho",
+        "type": "restaurant",
+        "neighbourhood": "Shinjuku",
+        "city": "Tokyo",
+        "context": "Praised as Shinjuku's best shio ramen.",
+        "source_url": "https://reddit.com/r/Tokyo/comments/sl6rm9/shinjukus_best_shio_ramen_at_menya_sho/",
+        "source_platform": "reddit",
+        "sources": [
+          "reddit"
+        ],
+        "source_count": 1,
+        "source_urls": [
+          "https://reddit.com/r/Tokyo/comments/sl6rm9/shinjukus_best_shio_ramen_at_menya_sho/"
+        ],
+        "google_match": {
+          "place_id": "ChIJAQDFhSmNGGARFjICR3zt2F4",
+          "name": "Menya Sho Honten",
+          "address": "Japan, 〒160-0023 Tokyo, Shinjuku City, Nishishinjuku, 7-chōme−22−３４ 新宿東海ビル 101A",
+          "rating": 4.2,
+          "user_ratings_total": 2523,
+          "google_maps_url": "https://maps.google.com/?cid=6834473552557781526&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+          "types": [
+            "ramen_restaurant",
+            "noodle_shop",
+            "japanese_restaurant"
+          ]
+        },
+        "confidence_score": 3,
+        "confidence_label": "Likely Good"
+      },
+      "score": 100.0
+    },
+    {
+      "guide_name": "Ramen Hosenka",
+      "scraper": {
+        "name": "Ramen Hosenka",
+        "type": "restaurant",
+        "neighbourhood": "Shinjuku",
+        "city": "Tokyo",
+        "context": "A sea bream-based ramen and tsukemen shop in Shinjuku noted for an interesting but intensely flavored broth.",
+        "source_url": "https://reddit.com/r/JapanTravel/comments/1p6rugq/two_week_japan_trip_food_report/",
+        "source_platform": "reddit",
+        "sources": [
+          "reddit"
+        ],
+        "source_count": 1,
+        "source_urls": [
+          "https://reddit.com/r/JapanTravel/comments/1p6rugq/two_week_japan_trip_food_report/"
+        ],
+        "tabelog_match": {
+          "name": "Ramen Hosenka",
+          "score": 3.69,
+          "reviews": 2861,
+          "url": "https://tabelog.com/en/tokyo/A1304/A130401/13224521/",
+          "prices": [],
+          "area": "",
+          "match_confidence": 100.0
+        },
+        "google_match": {
+          "place_id": "ChIJ0TReM8KNGGARwJ6VHU1gOpM",
+          "name": "Ramen Hōsenka Shinjuku",
+          "address": "Japan, 〒160-0021 Tokyo, Shinjuku City, Kabukichō, 1-chōme−24−６ 鶴切ビル 1F",
+          "rating": 4.2,
+          "user_ratings_total": 2069,
+          "google_maps_url": "https://maps.google.com/?cid=10608897756549717696&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+          "types": [
+            "ramen_restaurant",
+            "noodle_shop",
+            "chinese_restaurant"
+          ]
+        },
+        "confidence_score": 4,
+        "confidence_label": "Verified"
+      },
+      "score": 100.0
+    },
+    {
+      "guide_name": "Udon Shin",
+      "scraper": {
+        "name": "Shin Udon",
+        "type": "restaurant",
+        "neighbourhood": "Shinjuku",
+        "city": "Tokyo",
+        "context": "Udon restaurant in Shinjuku rated highly by a visitor in a Tokyo restaurant review video.",
+        "source_url": "https://www.youtube.com/watch?v=brxCh6oQOrY",
+        "source_platform": "youtube",
+        "sources": [
+          "youtube"
+        ],
+        "source_count": 1,
+        "source_urls": [
+          "https://www.youtube.com/watch?v=brxCh6oQOrY"
+        ],
+        "tabelog_match": {
+          "name": "Udon Shin",
+          "score": 3.7,
+          "reviews": 2551,
+          "url": "https://tabelog.com/en/tokyo/A1304/A130401/13125862/",
+          "prices": [],
+          "area": "",
+          "match_confidence": 100.0
+        },
+        "google_match": {
+          "place_id": "ChIJAQCl79GMGGARZheneHqgIUs",
+          "name": "Udon Shin",
+          "address": "Japan, 〒151-0053 Tokyo, Shibuya, Yoyogi, 2-chōme−20−１６ 相馬ビル １F",
+          "rating": 3.9,
+          "user_ratings_total": 5040,
+          "google_maps_url": "https://maps.google.com/?cid=5413784674946717542&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+          "types": [
+            "japanese_restaurant",
+            "restaurant",
+            "food"
+          ]
+        },
+        "confidence_score": 4,
+        "confidence_label": "Verified"
+      },
+      "score": 100.0
+    },
+    {
+      "guide_name": "Tamawarai",
+      "scraper": {
+        "name": "Tamawarai",
+        "type": "restaurant",
+        "neighbourhood": "Harajuku",
+        "city": "Tokyo",
+        "context": "1-Michelin-star soba restaurant rated 4.09 on Tabelog, praised for soft fluffy egg omelette.",
+        "source_url": "https://reddit.com/r/JapanTravel/comments/7x1if7/my_top_10_favorite_meals_album_of_everything_else/",
+        "source_platform": "reddit",
+        "sources": [
+          "reddit"
+        ],
+        "source_count": 1,
+        "source_urls": [
+          "https://reddit.com/r/JapanTravel/comments/7x1if7/my_top_10_favorite_meals_album_of_everything_else/"
+        ],
+        "tabelog_match": {
+          "name": "Tamawarai",
+          "score": 3.85,
+          "reviews": 1846,
+          "url": "https://tabelog.com/en/tokyo/A1306/A130601/13129390/",
+          "prices": [],
+          "area": "",
+          "match_confidence": 100.0
+        },
+        "google_match": {
+          "place_id": "ChIJ1X1k7qaMGGARGOc-4AZclSg",
+          "name": "Tamawarai",
+          "address": "5-chōme-23-3 Jingūmae, Shibuya, Tokyo 150-0001, Japan",
+          "rating": 3.6,
+          "user_ratings_total": 727,
+          "google_maps_url": "https://maps.google.com/?cid=2924344717648783128&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+          "types": [
+            "restaurant",
+            "food",
+            "point_of_interest"
+          ]
+        },
+        "confidence_score": 4,
+        "confidence_label": "Verified"
+      },
+      "score": 100.0
+    }
+  ],
+  "east-tokyo-eats-guide.html": [
+    {
+      "guide_name": "Aida Ya",
+      "scraper": {
+        "name": "Aidaya",
+        "type": "restaurant",
+        "neighbourhood": "",
+        "city": "Tokyo",
+        "context": "Tsukemen dipping ramen restaurant rated highly by a ramen expert who has eaten over 4,000 bowls; the sukiyaki wagyu add-on is a bonus.",
+        "source_url": "https://www.youtube.com/watch?v=4MVYLU7UD94",
+        "source_platform": "youtube",
+        "sources": [
+          "youtube"
+        ],
+        "source_count": 1,
+        "source_urls": [
+          "https://www.youtube.com/watch?v=4MVYLU7UD94"
+        ],
+        "google_match": {
+          "place_id": "ChIJR2JEzGCPGGARdPJDgHnVbuI",
+          "name": "Aidaya",
+          "address": "Japan, 〒110-0005 Tokyo, Taito City, Ueno, 6-chōme−1−６ 御徒町グリーンハイツ 101B",
+          "rating": 4.2,
+          "user_ratings_total": 611,
+          "google_maps_url": "https://maps.google.com/?cid=16316213217829581428&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+          "types": [
+            "ramen_restaurant",
+            "noodle_shop",
+            "japanese_restaurant"
+          ]
+        },
+        "confidence_score": 3,
+        "confidence_label": "Likely Good"
+      },
+      "score": 92.3076923076923
+    },
+    {
+      "guide_name": "Tonkatsu Marugo",
+      "scraper": {
+        "name": "Tonkatsu Marugo",
+        "type": "restaurant",
+        "neighbourhood": "Akihabara",
+        "city": "Tokyo",
+        "context": "A tonkatsu restaurant in Akihabara where the fattier cut was described as melting in your mouth; noted to have a queue forming before opening.",
+        "source_url": "https://reddit.com/r/JapanTravel/comments/1as9y2a/trip_report_i_went_to_japan_for_a_week_and_uhh/",
+        "source_platform": "reddit",
+        "sources": [
+          "reddit"
+        ],
+        "source_count": 1,
+        "source_urls": [
+          "https://reddit.com/r/JapanTravel/comments/1as9y2a/trip_report_i_went_to_japan_for_a_week_and_uhh/"
+        ],
+        "tabelog_match": {
+          "name": "Tonkatsu Marugo",
+          "score": 3.76,
+          "reviews": 3219,
+          "url": "https://tabelog.com/en/tokyo/A1310/A131001/13000379/",
+          "prices": [],
+          "area": "",
+          "match_confidence": 100.0
+        },
+        "google_match": {
+          "place_id": "ChIJs5tCVxyMGGARJswUvIj4drc",
+          "name": "Tonkatsu Marugo",
+          "address": "1-chōme-8-14 Sotokanda, Chiyoda City, Tokyo 101-0021, Japan",
+          "rating": 4.5,
+          "user_ratings_total": 2996,
+          "google_maps_url": "https://maps.google.com/?cid=13220027022347389990&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+          "types": [
+            "tonkatsu_restaurant",
+            "japanese_restaurant",
+            "restaurant"
+          ]
+        },
+        "confidence_score": 4,
+        "confidence_label": "Verified"
+      },
+      "score": 100.0
+    },
+    {
+      "guide_name": "Tempura Kondo",
+      "scraper": {
+        "name": "Tempura Kondo",
+        "type": "restaurant",
+        "neighbourhood": "Ginza",
+        "city": "Tokyo",
+        "context": "Described as precise and delicate tempura with seasonal ingredients; formal vibe with excellent quality including fresh oil changes for each session.",
+        "source_url": "https://reddit.com/r/JapanTravel/comments/1lkimgu/foodfocused_fall_japan_trip_tokyo_fuji_kyoto_nara/",
+        "source_platform": "reddit",
+        "sources": [
+          "reddit"
+        ],
+        "source_count": 1,
+        "source_urls": [
+          "https://reddit.com/r/JapanTravel/comments/1lkimgu/foodfocused_fall_japan_trip_tokyo_fuji_kyoto_nara/"
+        ],
+        "tabelog_match": {
+          "name": "Tempura Kondo",
+          "score": 4.1,
+          "reviews": 1098,
+          "url": "https://tabelog.com/en/tokyo/A1301/A130101/13004993/",
+          "prices": [],
+          "area": "",
+          "match_confidence": 100.0
+        },
+        "google_match": {
+          "place_id": "ChIJX2Mb_eWLGGARvhx7F4hr3FA",
+          "name": "Tempura Kondo",
+          "address": "Japan, 〒104-0061 Tokyo, Chuo City, Ginza, 5-chōme−5−１３ Sakaguchi Bld., ９F",
+          "rating": 4.4,
+          "user_ratings_total": 909,
+          "google_maps_url": "https://maps.google.com/?cid=5826650250164247742&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+          "types": [
+            "japanese_restaurant",
+            "restaurant",
+            "food"
+          ]
+        },
+        "confidence_score": 4,
+        "confidence_label": "Verified"
+      },
+      "score": 100.0
+    }
+  ],
+  "osaka-eats-guide.html": [
+    {
+      "guide_name": "Tempura Ando",
+      "scraper": {
+        "name": "Tempura Kondo",
+        "type": "restaurant",
+        "neighbourhood": "Ginza",
+        "city": "Tokyo",
+        "context": "Described as precise and delicate tempura with seasonal ingredients; formal vibe with excellent quality including fresh oil changes for each session.",
+        "source_url": "https://reddit.com/r/JapanTravel/comments/1lkimgu/foodfocused_fall_japan_trip_tokyo_fuji_kyoto_nara/",
+        "source_platform": "reddit",
+        "sources": [
+          "reddit"
+        ],
+        "source_count": 1,
+        "source_urls": [
+          "https://reddit.com/r/JapanTravel/comments/1lkimgu/foodfocused_fall_japan_trip_tokyo_fuji_kyoto_nara/"
+        ],
+        "tabelog_match": {
+          "name": "Tempura Kondo",
+          "score": 4.1,
+          "reviews": 1098,
+          "url": "https://tabelog.com/en/tokyo/A1301/A130101/13004993/",
+          "prices": [],
+          "area": "",
+          "match_confidence": 100.0
+        },
+        "google_match": {
+          "place_id": "ChIJX2Mb_eWLGGARvhx7F4hr3FA",
+          "name": "Tempura Kondo",
+          "address": "Japan, 〒104-0061 Tokyo, Chuo City, Ginza, 5-chōme−5−１３ Sakaguchi Bld., ９F",
+          "rating": 4.4,
+          "user_ratings_total": 909,
+          "google_maps_url": "https://maps.google.com/?cid=5826650250164247742&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+          "types": [
+            "japanese_restaurant",
+            "restaurant",
+            "food"
+          ]
+        },
+        "confidence_score": 4,
+        "confidence_label": "Verified"
+      },
+      "score": 88.0
+    },
+    {
+      "guide_name": "Mugi to Mensuke",
+      "scraper": {
+        "name": "Mugito Mensuke",
+        "type": "restaurant",
+        "neighbourhood": "",
+        "city": "Osaka",
+        "context": "Highly recommended for a single bowl of Osaka ramen, especially the special shoyu ramen.",
+        "source_url": "https://www.youtube.com/watch?v=anHRFZBsijA",
+        "source_platform": "youtube",
+        "sources": [
+          "youtube"
+        ],
+        "source_count": 1,
+        "source_urls": [
+          "https://www.youtube.com/watch?v=anHRFZBsijA"
+        ],
+        "tabelog_match": {
+          "name": "Mugi to Mensuke",
+          "score": 3.9,
+          "reviews": 2220,
+          "url": "https://tabelog.com/en/osaka/A2701/A270101/27078821/",
+          "prices": [],
+          "area": "",
+          "match_confidence": 96.55172413793103
+        },
+        "google_match": {
+          "place_id": "ChIJheIvSFLnAGAR6tUj_llwgS0",
+          "name": "Mugito Mensuke",
+          "address": "3-chōme-4-12 Toyosaki, Kita Ward, Osaka, 531-0072, Japan",
+          "rating": 4.4,
+          "user_ratings_total": 1796,
+          "google_maps_url": "https://maps.google.com/?cid=3279025535520593386&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+          "types": [
+            "ramen_restaurant",
+            "japanese_restaurant",
+            "restaurant"
+          ]
+        },
+        "confidence_score": 4,
+        "confidence_label": "Verified"
+      },
+      "score": 96.55172413793103
+    }
+  ],
+  "kyoto-eats-guide.html": [
+    {
+      "guide_name": "Menya Inoichi",
+      "scraper": {
+        "name": "Menya Inoichi",
+        "type": "restaurant",
+        "neighbourhood": "",
+        "city": "Kyoto",
+        "context": "Ramen spot where the poster waited four hours and declared it worth every minute.",
+        "source_url": "https://reddit.com/r/JapaneseFood/comments/1kqq1q9/two_days_in_kyoto/",
+        "source_platform": "reddit",
+        "sources": [
+          "reddit"
+        ],
+        "source_count": 1,
+        "source_urls": [
+          "https://reddit.com/r/JapaneseFood/comments/1kqq1q9/two_days_in_kyoto/"
+        ],
+        "tabelog_match": {
+          "name": "Menya Inoichi",
+          "score": 3.71,
+          "reviews": 1031,
+          "url": "https://tabelog.com/en/kyoto/A2601/A260201/26032368/",
+          "prices": [],
+          "area": "",
+          "match_confidence": 100.0
+        },
+        "google_match": {
+          "place_id": "ChIJufyODr4IAWARNVu7xBbRG2w",
+          "name": "Men-ya Inoichi",
+          "address": "542 Ebisunochō, Shimogyo Ward, Kyoto, 600-8033, Japan",
+          "rating": 4.4,
+          "user_ratings_total": 3703,
+          "google_maps_url": "https://maps.google.com/?cid=7790049876187503413&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+          "types": [
+            "ramen_restaurant",
+            "noodle_shop",
+            "japanese_restaurant"
+          ]
+        },
+        "confidence_score": 4,
+        "confidence_label": "Verified"
+      },
+      "score": 100.0
+    }
+  ],
+  "day-trip-eats-nara-himeji-guide.html": [
+    {
+      "guide_name": "Kitsune",
+      "scraper": {
+        "name": "Kitsuneya",
+        "type": "restaurant",
+        "neighbourhood": "Tsukiji, Chuo City",
+        "city": "Tokyo",
+        "context": "Gyūdon (beef bowl) restaurant in Tsukiji, one of 18 recommended cheap eats in Tokyo.",
+        "source_url": "https://www.youtube.com/watch?v=y0-LwK9Ni9U",
+        "source_platform": "youtube",
+        "sources": [
+          "youtube"
+        ],
+        "source_count": 1,
+        "source_urls": [
+          "https://www.youtube.com/watch?v=y0-LwK9Ni9U"
+        ],
+        "tabelog_match": {
+          "name": "Kitsune",
+          "score": 3.75,
+          "reviews": 269,
+          "url": "https://tabelog.com/en/nara/A2901/A290101/29012929/",
+          "prices": [],
+          "area": "",
+          "match_confidence": 87.5
+        },
+        "google_match": {
+          "place_id": "ChIJP0yI3d6LGGARAvFhG-bnXJU",
+          "name": "Kitsuneya",
+          "address": "4-chōme-9-12 Tsukiji, Chuo City, Tokyo 104-0045, Japan",
+          "rating": 4.1,
+          "user_ratings_total": 2747,
+          "google_maps_url": "https://maps.google.com/?cid=10762732184996540674&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+          "types": [
+            "japanese_restaurant",
+            "restaurant",
+            "food"
+          ]
+        },
+        "confidence_score": 4,
+        "confidence_label": "Verified"
+      },
+      "score": 87.5
+    }
+  ],
+  "day-trip-eats-coastal-guide.html": []
+}

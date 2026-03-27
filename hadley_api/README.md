@@ -199,16 +199,20 @@ Unified task management system with 4 list types: personal_todo, peter_queue, id
 ### Reminders
 **Read:**
 - `GET /reminders?user_id=<id>` — List pending (unfired) reminders, sorted by run_at
+- `GET /reminders/active-nags` — List active nag reminders (fired, not acknowledged). Optional `?delivery=whatsapp:abby` filter.
 
 **Write:**
-- `POST /reminders` — Create reminder (body: `{task, run_at, user_id, channel_id}`)
+- `POST /reminders` — Create reminder (body: `{task, run_at, user_id, channel_id, reminder_type?, interval_minutes?, nag_until?, delivery?}`)
   - `run_at` must be ISO 8601 and in the future
-  - Returns the created reminder object
-- `PATCH /reminders/{id}` — Update reminder (body: `{task?, run_at?}`)
-  - Only updates provided fields; `run_at` must be in the future
+  - `reminder_type`: `"one_off"` (default) or `"nag"` (repeats until acknowledged)
+  - `interval_minutes`: Nag repeat interval (e.g. 120 = every 2 hours)
+  - `nag_until`: Stop time in 24h format (e.g. `"21:00"`)
+  - `delivery`: `"discord"` (default), `"whatsapp:chris"`, `"whatsapp:abby"`, `"whatsapp:group"`
+- `POST /reminders/{id}/acknowledge` — Acknowledge a nag reminder (stops further nags)
+- `PATCH /reminders/{id}` — Update reminder (body: `{task?, run_at?, last_nagged_at?, fired_at?}`)
 - `DELETE /reminders/{id}` — Cancel/delete a reminder
 
-**Note:** The Discord bot's polling loop picks up new reminders every 60 seconds, so API-created reminders will be scheduled automatically without a bot restart.
+**Nag reminders:** The scheduler polls every 60s for due nags, sends WhatsApp messages, and auto-acknowledges past `nag_until` time. Users can reply "done" on WhatsApp to acknowledge.
 
 ### Weather
 - `GET /weather/current` - Current weather
@@ -449,9 +453,29 @@ Allowlisted: amazon.co.uk, ebay.co.uk, premierinn.com
 **Note:** Full pipeline takes ~5-10 minutes. Returns stdout/stderr and return code. Pipeline lives in `hadley-bricks/scripts/ml/`.
 
 ### Schedule Management
-- `GET /schedule` - Read current SCHEDULE.md content
+- `GET /schedule` - Read current SCHEDULE.md content (raw markdown)
 - `PUT /schedule` - Update SCHEDULE.md and trigger reload (body: `{content, reason}`)
 - `POST /schedule/reload` - Trigger schedule reload without editing
+- `POST /schedule/run/{skill}?channel=#peterbot` - Manually trigger a skill
+
+**Atomic Job CRUD:**
+- `GET /schedule/jobs` - List all jobs parsed from SCHEDULE.md (structured JSON)
+- `PATCH /schedule/jobs/{skill}` - Update job fields (body: `{schedule?, channel?, enabled?, name?}`)
+- `POST /schedule/jobs` - Add job (body: `{name, skill, schedule, channel, enabled?, section?}`)
+- `DELETE /schedule/jobs/{skill}` - Remove a job from SCHEDULE.md
+
+**Schedule Pauses:**
+- `GET /schedule/pauses` - List active pauses (auto-filters expired)
+- `POST /schedule/pauses` - Create pause (body: `{skills, reason, resume_at, paused_by}`)
+  - `skills`: list of skill names or `["*"]` for all
+- `DELETE /schedule/pauses/{id}` - Remove pause early (unpause)
+- `GET /schedule/pauses/check/{skill}` - Check if a skill is paused
+
+**Pending Actions (Confirmation Flow):**
+- `POST /schedule/pending-actions` - Create pending action (body: `{type, sender_number, sender_name, description, api_call}`)
+- `GET /schedule/pending-actions?sender=<number>` - List pending for sender
+- `POST /schedule/pending-actions/{id}/confirm` - Execute the stored API call
+- `POST /schedule/pending-actions/{id}/cancel` - Cancel the action
 
 ### Vinted Collections
 - `GET /vinted/collections?days=7&mark_reported=true` - Get Vinted parcels ready to collect

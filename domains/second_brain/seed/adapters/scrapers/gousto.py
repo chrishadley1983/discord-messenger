@@ -2,13 +2,15 @@
 
 Finds Gousto order summary emails, extracts recipe links,
 and scrapes full recipe content (ingredients, method, nutrition)
-via Playwright (Gousto pages are fully JS-rendered).
+via Chrome CDP (Gousto pages are fully JS-rendered).
 
 Email format: recipe names appear as plaintext next to clicks.gousto.co.uk
 tracking URLs. We extract the tracking URLs (deduplicated), then follow
-them in Playwright which redirects to the actual recipe page.
+them in CDP Chrome which redirects to the actual recipe page.
 """
 
+import asyncio
+import json
 import re
 from typing import Optional
 
@@ -26,6 +28,143 @@ RECIPE_URL_PATTERN = re.compile(
     r"https?://(?:www\.)?gousto\.co\.uk/cookbook/[\w-]+"
 )
 
+# CDP script path (Windows — called via node.exe from WSL)
+CDP_SCRIPT = "C:/Users/Chris Hadley/claude-projects/chrome-cdp-skill/skills/chrome-cdp/scripts/cdp.mjs"
+CDP_PORT = 9222
+
+# Hadley family cooks for 4 — scale all recipes to this
+TARGET_SERVINGS = 4
+
+
+def _scale_ingredient(text: str, factor: float) -> str:
+    """Scale the quantity in an ingredient string by the given factor.
+
+    Handles: "200g chicken breast" → "400g chicken breast"
+             "Spring onion x2" → "Spring onion x4"
+             "1 tsp cumin" → "2 tsp cumin"
+             "½ lemon" → "1 lemon"
+    """
+    if factor == 1.0:
+        return text
+
+    # Pattern: "ingredient x2" suffix notation
+    xn = re.search(r"(x)(\d+\.?\d*)\s*$", text)
+    if xn:
+        old_val = float(xn.group(2))
+        new_val = old_val * factor
+        nice = _nice_number(new_val)
+        return text[:xn.start(2)] + nice + text[xn.end(2):]
+
+    # Pattern: leading number (with optional fraction/unicode)
+    m = re.match(
+        r"^([\d./½¼¾⅓⅔]+)\s*"
+        r"(g|kg|ml|l|tsp|tbsp|clove|cloves|can|cans|tin|tins|pack|packs|"
+        r"pinch|handful|bunch|slice|slices|stick|sticks|cm|piece|pieces|pcs|"
+        r"tbsp\b|tsp\b)?\s*(.*)",
+        text, re.IGNORECASE,
+    )
+    if m:
+        old_val = _parse_fraction(m.group(1))
+        if old_val > 0:
+            new_val = old_val * factor
+            nice = _nice_number(new_val)
+            unit = m.group(2) or ""
+            rest = m.group(3) or ""
+            sep = "" if unit else " "
+            return f"{nice}{unit}{sep}{rest}".strip()
+
+    return text
+
+
+def _parse_fraction(s: str) -> float:
+    """Parse a quantity string that may contain unicode fractions."""
+    s = s.replace("½", ".5").replace("¼", ".25").replace("¾", ".75")
+    s = s.replace("⅓", ".333").replace("⅔", ".667")
+    try:
+        if "/" in s:
+            parts = s.split("/")
+            return float(parts[0]) / float(parts[1])
+        return float(s)
+    except (ValueError, ZeroDivisionError):
+        return 0
+
+
+def _nice_number(val: float) -> str:
+    """Format a number nicely — '2' not '2.0', '1.5' not '1.50'."""
+    if val == int(val):
+        return str(int(val))
+    # One decimal place max
+    return f"{val:.1f}".rstrip("0").rstrip(".")
+
+
+def _scale_nutrition_value(text: str, factor: float) -> str:
+    """Scale a nutrition value string like '523kcal' or '12.5g'."""
+    if factor == 1.0:
+        return text
+    m = re.match(r"([\d.]+)(.*)", text)
+    if m:
+        new_val = float(m.group(1)) * factor
+        return f"{_nice_number(new_val)}{m.group(2)}"
+    return text
+
+# JS to extract all recipe data in a single eval call
+EXTRACT_RECIPE_JS = """(function(){
+var r = {url: location.href, title: '', bodyText: '', ingredients: [], method: [], nutrition: {}};
+var h1 = document.querySelector('h1');
+r.title = h1 ? h1.textContent.trim() : '';
+r.bodyText = (document.body.innerText || '').substring(0, 2000);
+
+// Ingredients
+var iSels = ['[data-testid="ingredients"] li', '.ingredients li', '[class*="ingredient"] li', '[class*="Ingredient"] li'];
+for (var i = 0; i < iSels.length; i++) {
+    var els = document.querySelectorAll(iSels[i]);
+    if (els.length) { els.forEach(function(el) { var t = el.textContent.trim(); if (t) r.ingredients.push(t); }); break; }
+}
+if (!r.ingredients.length) {
+    var hs = document.querySelectorAll('h2, h3, h4');
+    for (var i = 0; i < hs.length; i++) {
+        if (hs[i].textContent.toLowerCase().includes('ingredient')) {
+            var sib = hs[i].nextElementSibling;
+            if (sib) { sib.querySelectorAll('li').forEach(function(li) { var t = li.textContent.trim(); if (t) r.ingredients.push(t); }); }
+            break;
+        }
+    }
+}
+
+// Method
+var mSels = ['[data-testid="method"] li', '[data-testid="instructions"] li', '.method li', '[class*="method"] li', '[class*="instruction"] li', '[class*="Method"] li'];
+for (var i = 0; i < mSels.length; i++) {
+    var els = document.querySelectorAll(mSels[i]);
+    if (els.length) { els.forEach(function(el) { var t = el.textContent.trim(); if (t) r.method.push(t); }); break; }
+}
+if (!r.method.length) {
+    var hs = document.querySelectorAll('h2, h3, h4');
+    for (var i = 0; i < hs.length; i++) {
+        if (hs[i].textContent.toLowerCase().includes('method')) {
+            var sib = hs[i].nextElementSibling;
+            if (sib) { sib.querySelectorAll('li').forEach(function(li) { var t = li.textContent.trim(); if (t) r.method.push(t); }); }
+            break;
+        }
+    }
+}
+
+// Nutrition
+var nSels = ['[data-testid="nutrition"] tr', '.nutrition tr', '[class*="nutrition"] tr', '[class*="Nutrition"] tr', 'table tr'];
+for (var i = 0; i < nSels.length; i++) {
+    var rows = document.querySelectorAll(nSels[i]);
+    if (rows.length > 1) {
+        rows.forEach(function(row) {
+            var cells = row.querySelectorAll('td, th');
+            var texts = Array.from(cells).map(function(c) { return c.textContent.trim(); }).filter(Boolean);
+            if (texts.length >= 2) r.nutrition[texts[0]] = texts[1];
+        });
+        if (Object.keys(r.nutrition).length) break;
+    }
+}
+
+return JSON.stringify(r);
+})()"""
+
 
 class GoustoRecipeScraper(BaseEmailLinkScraper):
     """Scrape Gousto recipe pages from order confirmation emails."""
@@ -33,11 +172,75 @@ class GoustoRecipeScraper(BaseEmailLinkScraper):
     name = "gousto"
     gmail_query = 'from:info.gousto.co.uk subject:"summary of your order"'
     default_topics = ["recipe", "gousto", "cooking", "meal-kit"]
-    needs_playwright = True
+    needs_playwright = False  # Uses Chrome CDP instead
 
     def __init__(self):
         # Map of tracking URL -> recipe name extracted from email
         self._link_names: dict[str, str] = {}
+        self._cdp_tab_id: str = ""
+
+    async def _cdp(self, *args: str) -> str:
+        """Run a CDP command via cdp.mjs (Windows Node from WSL)."""
+        proc = await asyncio.create_subprocess_exec(
+            "node.exe", CDP_SCRIPT, *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            err = stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"CDP {' '.join(args[:1])}: {err}")
+        return stdout.decode("utf-8", errors="replace").strip()
+
+    async def _cdp_create_tab(self) -> str:
+        """Create a new Chrome tab via CDP HTTP API, return tab ID."""
+        js = (
+            f"fetch('http://localhost:{CDP_PORT}/json/new',{{method:'PUT'}})"
+            ".then(r=>r.json()).then(t=>console.log(t.id))"
+        )
+        proc = await asyncio.create_subprocess_exec(
+            "node.exe", "-e", js,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        tab_id = stdout.decode("utf-8", errors="replace").strip()
+        if not tab_id:
+            raise RuntimeError("Failed to create CDP tab")
+        return tab_id
+
+    async def _cdp_close_tab(self, tab_id: str) -> None:
+        """Close a Chrome tab via CDP HTTP API."""
+        js = (
+            f"fetch('http://localhost:{CDP_PORT}/json/close/{tab_id}',"
+            "{method:'PUT'}).then(r=>r.text()).then(console.log)"
+        )
+        await asyncio.create_subprocess_exec(
+            "node.exe", "-e", js,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+    async def setup(self):
+        """Create a fresh CDP tab for recipe scraping."""
+        try:
+            self._cdp_tab_id = await self._cdp_create_tab()
+            # Force cdp.mjs daemon to rescan targets so it sees the new tab
+            await asyncio.sleep(0.5)
+            await self._cdp("list")
+            logger.info(f"Gousto scraper: CDP tab created ({self._cdp_tab_id[:8]})")
+        except Exception as e:
+            raise RuntimeError(f"Gousto scraper: cannot create CDP tab — is Chrome CDP running? {e}")
+
+    async def teardown(self):
+        """Close the CDP tab."""
+        if self._cdp_tab_id:
+            try:
+                await self._cdp_close_tab(self._cdp_tab_id)
+                logger.info(f"Gousto scraper: CDP tab closed ({self._cdp_tab_id[:8]})")
+            except Exception:
+                pass
+            self._cdp_tab_id = ""
 
     def extract_links(self, email_body: str) -> list[str]:
         """Extract Gousto tracking URLs that appear next to recipe names.
@@ -121,33 +324,43 @@ class GoustoRecipeScraper(BaseEmailLinkScraper):
         return recipe_urls
 
     async def scrape_link(self, page, url: str) -> Optional[ScrapedItem]:
-        """Scrape a Gousto recipe page via Playwright.
+        """Scrape a Gousto recipe page via Chrome CDP.
 
         Navigates to tracking URL which redirects to the actual recipe page.
+        The `page` argument is unused (kept for interface compatibility).
         """
+        if not self._cdp_tab_id:
+            logger.warning("Gousto scraper: no CDP tab available, skipping")
+            return None
+
         canonical_url = url  # Fallback — overwritten once we know the final URL
+        tab = self._cdp_tab_id[:8]  # Abbreviated tab ID
+
         try:
             # Navigate — tracking URL will redirect to actual recipe page
-            # Use domcontentloaded, not networkidle — redirect chains hang with networkidle
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await self._cdp("nav", tab, url)
 
             # Wait for redirects to settle
-            await page.wait_for_timeout(2000)
+            await asyncio.sleep(3)
 
-            # Check we landed on a recipe page
-            final_url = page.url
+            # Get the final URL
+            final_url = await self._cdp("eval", tab, "window.location.href")
             canonical_url = final_url.split("?")[0]  # Strip query params
 
             if "gousto.co.uk/cookbook" not in final_url:
                 logger.debug(f"Tracking URL did not redirect to recipe: {final_url}")
                 return None
 
-            # Wait for recipe content to render
-            await page.wait_for_selector("h1", timeout=10000)
+            # Wait for recipe content to render (poll for h1 up to 10s)
+            title = ""
+            for _ in range(5):
+                title = await self._cdp("eval", tab, "document.querySelector('h1')?.textContent?.trim() || ''")
+                if title:
+                    break
+                await asyncio.sleep(2)
 
-            # Extract title
-            title = await page.text_content("h1") or "Untitled Recipe"
-            title = title.strip()
+            if not title:
+                title = "Untitled Recipe"
 
             # Detect Gousto 404 page ("Oh crumbs!" = recipe removed from cookbook)
             if "oh crumbs" in title.lower():
@@ -175,23 +388,47 @@ class GoustoRecipeScraper(BaseEmailLinkScraper):
                     logger.debug(f"Gousto 404 with no email name for {canonical_url}, skipping")
                     return None
 
-            # Extract prep/cook time and servings from meta info
-            meta_info = await self._extract_meta(page)
+            # Extract all recipe data in one CDP eval call
+            result_json = await self._cdp("eval", tab, EXTRACT_RECIPE_JS)
+            try:
+                data = json.loads(result_json)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning(f"Failed to parse recipe data JSON for {canonical_url}")
+                data = {}
 
-            # Extract ingredients
-            ingredients = await self._extract_ingredients(page)
+            body_text = data.get("bodyText", "")
+            ingredients = data.get("ingredients", [])
+            method = data.get("method", [])
+            nutrition = data.get("nutrition", {})
 
-            # Extract method steps
-            method = await self._extract_method(page)
+            # Extract meta from body text
+            meta = {}
+            original_servings = 2  # Gousto default
+            servings_match = re.search(r"(\d+)\s*(?:serving|person|people)", body_text, re.I)
+            if servings_match:
+                original_servings = int(servings_match.group(1))
 
-            # Extract nutrition
-            nutrition = await self._extract_nutrition(page)
+            # Scale to target servings (family of 4)
+            scale = TARGET_SERVINGS / original_servings if original_servings > 0 else 1.0
+            meta["servings"] = str(TARGET_SERVINGS)
+            if scale != 1.0:
+                ingredients = [_scale_ingredient(ing, scale) for ing in ingredients]
+                nutrition = {k: _scale_nutrition_value(v, scale) for k, v in nutrition.items()}
+                meta["scaled_from"] = str(original_servings)
+
+            time_match = re.search(r"(\d+)\s*min(?:ute)?s?", body_text, re.I)
+            if time_match:
+                meta["cook_time"] = f"{time_match.group(1)} mins"
+            for level in ["easy", "medium", "hard"]:
+                if level in body_text.lower():
+                    meta["difficulty"] = level.capitalize()
+                    break
 
             # Build structured markdown
             content = self._format_recipe(
                 title=title,
                 url=canonical_url,
-                meta=meta_info,
+                meta=meta,
                 ingredients=ingredients,
                 method=method,
                 nutrition=nutrition,
@@ -204,148 +441,15 @@ class GoustoRecipeScraper(BaseEmailLinkScraper):
                 topics=self.default_topics.copy(),
                 metadata={
                     "source": "gousto",
-                    "servings": meta_info.get("servings", ""),
-                    "cook_time": meta_info.get("cook_time", ""),
-                    "prep_time": meta_info.get("prep_time", ""),
+                    "servings": str(TARGET_SERVINGS),
+                    "cook_time": meta.get("cook_time", ""),
+                    "prep_time": meta.get("prep_time", ""),
                 },
             )
 
         except Exception as e:
             logger.warning(f"Failed to scrape Gousto recipe {url}: {e}")
             return None
-
-    async def _extract_meta(self, page) -> dict:
-        """Extract cooking time, servings, difficulty from recipe page."""
-        meta = {}
-        try:
-            # Gousto renders meta info in various elements — try common selectors
-            page_text = await page.text_content("body") or ""
-
-            # Servings
-            servings_match = re.search(r"(\d+)\s*(?:serving|person|people)", page_text, re.I)
-            if servings_match:
-                meta["servings"] = servings_match.group(1)
-
-            # Cook time
-            time_match = re.search(r"(\d+)\s*min(?:ute)?s?", page_text, re.I)
-            if time_match:
-                meta["cook_time"] = f"{time_match.group(1)} mins"
-
-            # Difficulty
-            for level in ["easy", "medium", "hard"]:
-                if level in page_text.lower():
-                    meta["difficulty"] = level.capitalize()
-                    break
-
-        except Exception as e:
-            logger.debug(f"Meta extraction failed: {e}")
-        return meta
-
-    async def _extract_ingredients(self, page) -> list[str]:
-        """Extract ingredients list."""
-        ingredients = []
-        try:
-            # Try common ingredient selectors
-            for selector in [
-                "[data-testid='ingredients'] li",
-                ".ingredients li",
-                "[class*='ingredient'] li",
-                "[class*='Ingredient'] li",
-            ]:
-                elements = await page.query_selector_all(selector)
-                if elements:
-                    for el in elements:
-                        text = (await el.text_content() or "").strip()
-                        if text:
-                            ingredients.append(text)
-                    break
-
-            # Fallback: look for an ingredients section by heading
-            if not ingredients:
-                ingredients = await self._extract_section_items(page, "ingredient")
-
-        except Exception as e:
-            logger.debug(f"Ingredient extraction failed: {e}")
-        return ingredients
-
-    async def _extract_method(self, page) -> list[str]:
-        """Extract method/instruction steps."""
-        steps = []
-        try:
-            for selector in [
-                "[data-testid='method'] li",
-                "[data-testid='instructions'] li",
-                ".method li",
-                "[class*='method'] li",
-                "[class*='instruction'] li",
-                "[class*='Method'] li",
-            ]:
-                elements = await page.query_selector_all(selector)
-                if elements:
-                    for el in elements:
-                        text = (await el.text_content() or "").strip()
-                        if text:
-                            steps.append(text)
-                    break
-
-            if not steps:
-                steps = await self._extract_section_items(page, "method")
-
-        except Exception as e:
-            logger.debug(f"Method extraction failed: {e}")
-        return steps
-
-    async def _extract_nutrition(self, page) -> dict:
-        """Extract nutrition information per serving."""
-        nutrition = {}
-        try:
-            for selector in [
-                "[data-testid='nutrition'] tr",
-                ".nutrition tr",
-                "[class*='nutrition'] tr",
-                "[class*='Nutrition'] tr",
-                "table tr",
-            ]:
-                rows = await page.query_selector_all(selector)
-                if rows and len(rows) > 1:
-                    for row in rows:
-                        cells = await row.query_selector_all("td, th")
-                        texts = []
-                        for cell in cells:
-                            t = (await cell.text_content() or "").strip()
-                            if t:
-                                texts.append(t)
-                        if len(texts) >= 2:
-                            nutrition[texts[0]] = texts[1]
-                    if nutrition:
-                        break
-
-        except Exception as e:
-            logger.debug(f"Nutrition extraction failed: {e}")
-        return nutrition
-
-    async def _extract_section_items(self, page, keyword: str) -> list[str]:
-        """Fallback: find a heading containing keyword, then grab following list items."""
-        items = []
-        try:
-            headings = await page.query_selector_all("h2, h3, h4")
-            for heading in headings:
-                text = (await heading.text_content() or "").lower()
-                if keyword in text:
-                    # Get the next sibling list
-                    sibling = await heading.evaluate_handle(
-                        "el => el.nextElementSibling"
-                    )
-                    if sibling:
-                        lis = await sibling.query_selector_all("li")  # type: ignore
-                        for li in lis:
-                            t = (await li.text_content() or "").strip()
-                            if t:
-                                items.append(t)
-                    break
-        except Exception:
-            pass
-        return items
 
     def _format_recipe(
         self,
@@ -366,7 +470,10 @@ class GoustoRecipeScraper(BaseEmailLinkScraper):
 
         meta_parts = []
         if meta.get("servings"):
-            meta_parts.append(f"**Servings:** {meta['servings']}")
+            serving_note = f"**Servings:** {meta['servings']}"
+            if meta.get("scaled_from"):
+                serving_note += f" (scaled from {meta['scaled_from']})"
+            meta_parts.append(serving_note)
         if meta.get("cook_time"):
             meta_parts.append(f"**Cook Time:** {meta['cook_time']}")
         if meta.get("prep_time"):

@@ -710,56 +710,271 @@ async def set_sim_date(request: Request):
 
 
 # ============================================================
-# Photo Journal (Feature #6)
+# Photo Book Pipeline
 # ============================================================
 
-@router.post("/photos")
-async def save_photo(request: Request):
-    """Save a trip photo to the journal.
+# Google Drive folder IDs for each trip day
+DRIVE_FOLDER_IDS = {
+    1: "1hqMuktacySr3GopUhe1NMEeAeknZpf1A",   # Day 01 - Apr 3 - Tokyo Arrival
+    2: "1DIBiiPknSHaDQODkLlpM-QDaccVA8OGK",   # Day 02 - Apr 4 - Tokyo
+    3: "1dreeeD8l_Ho_938fcr4Jc5vq00eqZiCp",   # Day 03 - Apr 5 - Tokyo
+    4: "1PahQ-EkFWreQxqltIlqjHgooPtSNykdM",   # Day 04 - Apr 6 - Tokyo to Osaka
+    5: "16rZihI3OlMVVY33nhgb0KFlpCN-gGyx8",   # Day 05 - Apr 7 - Osaka
+    6: "189S8xOMQ4clqReuwp7rCVv_JWVRXenN5",   # Day 06 - Apr 8 - Osaka
+    7: "1BzHZG3DRgwDjj67Iv3HNYn5tVvGwlbmb",   # Day 07 - Apr 9 - Osaka
+    8: "1mbBcRNqJITUg6ynWqCWObJeSyFN7jEWj",   # Day 08 - Apr 10 - Osaka to Kyoto
+    9: "1k-3-AI3NfCdpROeE0mG7Koy9hU4nFFDc",   # Day 09 - Apr 11 - Kyoto
+    10: "1Xp7U-4tKDFkHqHbYUoRKTibwj6aVpP8A",  # Day 10 - Apr 12 - Kyoto
+    11: "15d19FZx643eOGLoCtjbbGcIjVp8-z8Fc",   # Day 11 - Apr 13 - Kyoto
+    12: "1FrF-SlI8UtE55zJsuz-V-UcuZxRxDB_t",   # Day 12 - Apr 14 - Kyoto to Tokyo
+    13: "1i7Ghc3iac4rvnAhGbFgK5hn8DFtgh_jq",   # Day 13 - Apr 15 - Tokyo
+    14: "1hQPiScYYeI9hGgoGqFSxWrTc9SovmmiM",   # Day 14 - Apr 16 - Tokyo
+    15: "1LvL2Ay5n17H6ibgkH55XWHhjfYSQ2JeA",   # Day 15 - Apr 17 - Tokyo
+    16: "1ipNbZw9P6a8a1wQLMx85rVcjs2yZpG4v",   # Day 16 - Apr 18 - Tokyo
+    17: "1RCA1P62F83Mu6W1yzi2ikA6GhcJzH1Z3",   # Day 17 - Apr 19 - Tokyo Departure
+}
+DRIVE_FOLDER_EXTRAS = "1oQ01PSG0LTO_AOHlHkCzzUFlL-UrBX4_"  # Highlights & Extras
+
+# Day-to-date mapping
+DAY_TO_DATE = {d: f"2026-04-{d + 2:02d}" for d in range(1, 18)}
+
+# Day-to-city mapping
+DAY_TO_CITY = {
+    1: "Tokyo", 2: "Tokyo", 3: "Tokyo",
+    4: "Osaka", 5: "Osaka", 6: "Osaka", 7: "Osaka",
+    8: "Kyoto", 9: "Kyoto", 10: "Kyoto", 11: "Kyoto",
+    12: "Tokyo", 13: "Tokyo", 14: "Tokyo", 15: "Tokyo", 16: "Tokyo", 17: "Tokyo",
+}
+
+
+def _get_current_trip_day() -> int | None:
+    """Get current trip day number (1-17) or None if outside trip."""
+    sim_file = Path(__file__).parent.parent / "data" / "japan_sim_date.txt"
+    sim_date = ""
+    if sim_file.exists():
+        sim_date = sim_file.read_text().strip()
+
+    if sim_date:
+        try:
+            dt = datetime.strptime(sim_date, "%Y-%m-%d")
+        except ValueError:
+            return None
+    else:
+        now_jst = datetime.now(JAPAN_TZ)
+        dt = datetime(now_jst.year, now_jst.month, now_jst.day)
+
+    trip_start = datetime(2026, 4, 3)
+    trip_end = datetime(2026, 4, 19)
+    if dt < trip_start or dt > trip_end:
+        return None
+    return (dt - trip_start).days + 1
+
+
+def _japan_supabase_headers() -> dict:
+    """Supabase headers targeting the japan schema."""
+    return {
+        **_supabase_headers(),
+        "Content-Profile": "japan",
+        "Accept-Profile": "japan",
+    }
+
+
+@router.post("/photobook/upload")
+async def photobook_upload(request: Request):
+    """Upload a photo to Google Drive and store metadata in Supabase.
 
     Body: {
-        "description": "Beautiful cherry blossoms at Osaka Castle",
-        "location": "Osaka Castle Park",
-        "lat": 34.6873,
-        "lng": 135.5262,
-        "image_path": "/path/to/image.jpg",
-        "day_date": "2026-04-09"  (optional, defaults to today JST)
+        "local_path": "/path/to/photo.jpg",
+        "caption": "Emmie feeding the deer at Nara",
+        "sender": "Chris",
+        "day_number": 6  (optional, auto-detected from JST date)
     }
     """
     body = await request.json()
+    local_path = body.get("local_path", "")
 
-    day_date = body.get("day_date")
-    if not day_date:
-        day_date = datetime.now(JAPAN_TZ).strftime("%Y-%m-%d")
+    if not local_path or not Path(local_path).exists():
+        raise HTTPException(status_code=400, detail=f"File not found: {local_path}")
 
-    photo = {
-        "day_date": day_date,
-        "description": body.get("description", ""),
-        "location_name": body.get("location", ""),
-        "lat": body.get("lat"),
-        "lng": body.get("lng"),
-        "image_path": body.get("image_path", ""),
-        "sender": body.get("sender", "Chris"),
+    # Determine day number
+    day_number = body.get("day_number") or _get_current_trip_day()
+    if not day_number or day_number < 1 or day_number > 17:
+        raise HTTPException(status_code=400, detail="Cannot determine trip day. Provide day_number (1-17).")
+
+    folder_id = DRIVE_FOLDER_IDS.get(day_number, DRIVE_FOLDER_EXTRAS)
+    sender = body.get("sender", "Chris")
+    caption = body.get("caption", "")
+    filename = Path(local_path).name
+
+    # Upload to Google Drive
+    try:
+        from hadley_api.google_auth import get_drive_service
+        from googleapiclient.http import MediaFileUpload
+        import mimetypes
+
+        drive = get_drive_service()
+        mime_type = mimetypes.guess_type(local_path)[0] or "image/jpeg"
+
+        file_metadata = {"name": filename, "parents": [folder_id]}
+        media = MediaFileUpload(local_path, mimetype=mime_type)
+        drive_file = drive.files().create(
+            body=file_metadata, media_body=media,
+            fields="id,webViewLink"
+        ).execute()
+
+        drive_file_id = drive_file.get("id", "")
+        drive_url = drive_file.get("webViewLink", "")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Drive upload failed: {e}")
+
+    # Store metadata in Supabase
+    photo_row = {
+        "day_number": day_number,
+        "day_date": DAY_TO_DATE.get(day_number),
+        "drive_file_id": drive_file_id,
+        "drive_url": drive_url,
+        "filename": filename,
+        "caption": caption,
+        "sent_by": sender,
+        "city": DAY_TO_CITY.get(day_number, ""),
     }
 
-    # Store in Supabase japan_photos table (create if doesn't exist via insert)
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{SUPABASE_URL}/rest/v1/japan_photos",
-            headers={
-                **_supabase_headers(),
-                "Content-Profile": "japan",
-                "Accept-Profile": "japan",
-                "Prefer": "return=representation",
-            },
-            json=photo,
+            headers=_japan_supabase_headers(),
+            json=photo_row,
+        )
+
+    return {
+        "status": "uploaded",
+        "day_number": day_number,
+        "drive_url": drive_url,
+        "filename": filename,
+        "caption": caption,
+    }
+
+
+@router.post("/photobook/highlight")
+async def photobook_highlight(request: Request):
+    """Store a one-liner highlight for the photo book.
+
+    Body: {
+        "text": "Max fell asleep on the bullet train",
+        "sender": "Chris",
+        "day_number": 4  (optional, auto-detected)
+    }
+    """
+    body = await request.json()
+    text = body.get("text", "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    day_number = body.get("day_number") or _get_current_trip_day()
+    if not day_number or day_number < 1 or day_number > 17:
+        raise HTTPException(status_code=400, detail="Cannot determine trip day. Provide day_number (1-17).")
+
+    row = {
+        "day_number": day_number,
+        "text": text,
+        "sent_by": body.get("sender", "Chris"),
+    }
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/japan_highlights",
+            headers=_japan_supabase_headers(),
+            json=row,
         )
 
     if resp.status_code not in (200, 201):
-        # Table might not exist — log but don't fail
-        return {"status": "logged_locally", "description": photo["description"], "note": "Supabase insert failed, photo details logged"}
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
-    return {"status": "saved", "description": photo["description"], "location": photo["location_name"], "day_date": day_date}
+    return {"status": "saved", "day_number": day_number, "text": text}
+
+
+@router.post("/photobook/diary")
+async def photobook_diary(request: Request):
+    """Store a diary entry or voice note transcription.
+
+    Body: {
+        "content": "Day 5 was all about Dotonbori...",
+        "source": "text" or "voice_note",
+        "sender": "Chris",
+        "day_number": 5  (optional, auto-detected)
+    }
+    """
+    body = await request.json()
+    content = body.get("content", "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="content is required")
+
+    day_number = body.get("day_number") or _get_current_trip_day()
+    if not day_number or day_number < 1 or day_number > 17:
+        raise HTTPException(status_code=400, detail="Cannot determine trip day. Provide day_number (1-17).")
+
+    row = {
+        "day_number": day_number,
+        "content": content,
+        "source": body.get("source", "text"),
+        "sent_by": body.get("sender", "Chris"),
+    }
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/japan_diary",
+            headers=_japan_supabase_headers(),
+            json=row,
+        )
+
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    return {"status": "saved", "day_number": day_number, "source": row["source"], "length": len(content)}
+
+
+@router.get("/photobook/coverage/{day_number}")
+async def photobook_coverage(day_number: int):
+    """Check photo book content coverage for a given day.
+
+    Returns counts of photos, highlights, and diary entries.
+    """
+    if day_number < 1 or day_number > 17:
+        raise HTTPException(status_code=400, detail="day_number must be 1-17")
+
+    headers = _japan_supabase_headers()
+    results = {}
+
+    async with httpx.AsyncClient() as client:
+        # Count photos
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/japan_photos",
+            headers={**headers, "Prefer": "count=exact"},
+            params={"day_number": f"eq.{day_number}", "select": "id"},
+        )
+        results["photos"] = int(resp.headers.get("content-range", "*/0").split("/")[-1])
+
+        # Count highlights
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/japan_highlights",
+            headers={**headers, "Prefer": "count=exact"},
+            params={"day_number": f"eq.{day_number}", "select": "id"},
+        )
+        results["highlights"] = int(resp.headers.get("content-range", "*/0").split("/")[-1])
+
+        # Count diary entries
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/japan_diary",
+            headers={**headers, "Prefer": "count=exact"},
+            params={"day_number": f"eq.{day_number}", "select": "id"},
+        )
+        results["diary_entries"] = int(resp.headers.get("content-range", "*/0").split("/")[-1])
+
+    results["day_number"] = day_number
+    results["city"] = DAY_TO_CITY.get(day_number, "")
+    results["has_enough"] = results["photos"] >= 5 and (results["highlights"] > 0 or results["diary_entries"] > 0)
+
+    return results
 
 
 @router.post("/sim/time")

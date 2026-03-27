@@ -72,7 +72,7 @@ async def phase1_sql_backfill(client: httpx.AsyncClient, dry_run: bool = False):
     print("1a. Reclassifying content_type by source_system...")
     for source_system, content_type in CONTENT_TYPE_MAPPINGS:
         if dry_run:
-            print(f"  [DRY RUN] {source_system} → {content_type}")
+            print(f"  [DRY RUN] {source_system} -> {content_type}")
             continue
 
         response = await client.patch(
@@ -82,7 +82,7 @@ async def phase1_sql_backfill(client: httpx.AsyncClient, dry_run: bool = False):
             json={"content_type": content_type},
         )
         count_range = response.headers.get("content-range", "*/0")
-        print(f"  {source_system} → {content_type}: {count_range}")
+        print(f"  {source_system} -> {content_type}: {count_range}")
 
     # 1b: Clean up noise tags from multi-tag items
     print("\n1b. Cleaning up noise tags...")
@@ -154,7 +154,7 @@ async def phase1_sql_backfill(client: httpx.AsyncClient, dry_run: bool = False):
                 if len(items) < 100:
                     break
 
-            print(f"  Replaced solo '{tag}' → 'unclassified' on {updated} items")
+            print(f"  Replaced solo '{tag}' -> 'unclassified' on {updated} items")
 
     print("\nPhase 1 complete.\n")
 

@@ -472,6 +472,93 @@ async def check_and_send_alerts(dry_run: bool = False) -> list[str]:
                     alerts_to_send.append(("confirm", alert_id, msg))
 
     # ════════════════════════════════════════
+    # RULE 6: Photo book content coverage nudge (08:00 JST)
+    # ════════════════════════════════════════
+    if 8 * 60 <= current_minutes < 8 * 60 + 15 and trip_day >= 2:
+        alert_id = "photobook_nudge"
+        if not _is_sent(dedup, date_str, alert_id):
+            # Check yesterday's content coverage
+            yesterday_day = trip_day - 1
+            try:
+                import httpx
+                headers = {
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Accept-Profile": "japan",
+                    "Prefer": "count=exact",
+                }
+                photo_count = 0
+                highlight_count = 0
+                diary_count = 0
+
+                resp_p = httpx.get(
+                    f"{SUPABASE_URL}/rest/v1/japan_photos",
+                    headers=headers,
+                    params={"day_number": f"eq.{yesterday_day}", "select": "id"},
+                    timeout=10,
+                )
+                if resp_p.status_code == 200:
+                    photo_count = int(resp_p.headers.get("content-range", "*/0").split("/")[-1])
+
+                resp_h = httpx.get(
+                    f"{SUPABASE_URL}/rest/v1/japan_highlights",
+                    headers=headers,
+                    params={"day_number": f"eq.{yesterday_day}", "select": "id"},
+                    timeout=10,
+                )
+                if resp_h.status_code == 200:
+                    highlight_count = int(resp_h.headers.get("content-range", "*/0").split("/")[-1])
+
+                resp_d = httpx.get(
+                    f"{SUPABASE_URL}/rest/v1/japan_diary",
+                    headers=headers,
+                    params={"day_number": f"eq.{yesterday_day}", "select": "id"},
+                    timeout=10,
+                )
+                if resp_d.status_code == 200:
+                    diary_count = int(resp_d.headers.get("content-range", "*/0").split("/")[-1])
+
+                yesterday_city = {
+                    1: "Tokyo", 2: "Tokyo", 3: "Tokyo",
+                    4: "Osaka", 5: "Osaka", 6: "Osaka", 7: "Osaka",
+                    8: "Kyoto", 9: "Kyoto", 10: "Kyoto", 11: "Kyoto",
+                    12: "Tokyo", 13: "Tokyo", 14: "Tokyo", 15: "Tokyo", 16: "Tokyo", 17: "Tokyo",
+                }.get(yesterday_day, "")
+
+                has_enough_photos = photo_count >= 5
+                has_text = highlight_count > 0 or diary_count > 0
+
+                if not has_enough_photos or not has_text:
+                    # Build nudge message
+                    missing = []
+                    if photo_count == 0:
+                        missing.append("no photos")
+                    elif photo_count < 5:
+                        missing.append(f"only {photo_count} photo{'s' if photo_count != 1 else ''}")
+                    if not has_text:
+                        missing.append("no highlights or diary")
+
+                    msg = (
+                        f"📸 *Photo Book — Day {yesterday_day} ({yesterday_city}) needs love!*\n"
+                        f"Currently: {', '.join(missing)}\n\n"
+                        f"Drop some photos in the Japan Drive folder or send them here with 'add to Japan Drive'.\n"
+                        f"A quick highlight or voice note about the day would be great too!"
+                    )
+                    alerts_to_send.append(("photobook", alert_id, msg))
+                else:
+                    # All good — optional positive confirmation
+                    msg = (
+                        f"📸 Day {yesterday_day} ({yesterday_city}): "
+                        f"{photo_count} photos, {highlight_count} highlights"
+                        + (f", {diary_count} diary" if diary_count else "")
+                        + " ✓"
+                    )
+                    alerts_to_send.append(("photobook", alert_id, msg))
+
+            except Exception as e:
+                logger.debug(f"Photo book coverage check failed: {e}")
+
+    # ════════════════════════════════════════
     # Send or return alerts
     # ════════════════════════════════════════
     sent_messages = []

@@ -62,11 +62,11 @@ ACCOMMODATIONS = {
     9: {"name": "Kyoto Machiya", "address": "Shimogyo Ward, Kyoto", "host": "Team LUX", "phone": "", "lat": 35.0050, "lng": 135.7590, "checkin": "15:00", "checkout": "11:00"},
     10: {"name": "Kyoto Machiya", "address": "Shimogyo Ward, Kyoto", "host": "Team LUX", "phone": "", "lat": 35.0050, "lng": 135.7590, "checkin": "15:00", "checkout": "11:00"},
     11: {"name": "Kyoto Machiya", "address": "Shimogyo Ward, Kyoto", "host": "Team LUX", "phone": "", "lat": 35.0050, "lng": 135.7590, "checkin": "15:00", "checkout": "11:00"},
-    12: {"name": "Nezu Apartment", "address": "Near Nezu Station, Bunkyo-ku", "host": "Toshiko", "phone": "", "lat": 35.7206, "lng": 139.7631, "checkin": "15:00", "checkout": "11:00"},
-    13: {"name": "Nezu Apartment", "address": "Near Nezu Station, Bunkyo-ku", "host": "Toshiko", "phone": "", "lat": 35.7206, "lng": 139.7631, "checkin": "15:00", "checkout": "11:00"},
-    14: {"name": "Nezu Apartment", "address": "Near Nezu Station, Bunkyo-ku", "host": "Toshiko", "phone": "", "lat": 35.7206, "lng": 139.7631, "checkin": "15:00", "checkout": "11:00"},
-    15: {"name": "Nezu Apartment", "address": "Near Nezu Station, Bunkyo-ku", "host": "Toshiko", "phone": "", "lat": 35.7206, "lng": 139.7631, "checkin": "15:00", "checkout": "11:00"},
-    16: {"name": "Nezu Apartment", "address": "Near Nezu Station, Bunkyo-ku", "host": "Toshiko", "phone": "", "lat": 35.7206, "lng": 139.7631, "checkin": "15:00", "checkout": "11:00"},
+    12: {"name": "Nezu Apartment", "address": "Near Nezu Station, Bunkyo-ku", "host": "Toshiko", "phone": "", "lat": 35.7206, "lng": 139.7631, "checkin": "13:00", "checkout": "11:00"},
+    13: {"name": "Nezu Apartment", "address": "Near Nezu Station, Bunkyo-ku", "host": "Toshiko", "phone": "", "lat": 35.7206, "lng": 139.7631, "checkin": "13:00", "checkout": "11:00"},
+    14: {"name": "Nezu Apartment", "address": "Near Nezu Station, Bunkyo-ku", "host": "Toshiko", "phone": "", "lat": 35.7206, "lng": 139.7631, "checkin": "13:00", "checkout": "11:00"},
+    15: {"name": "Nezu Apartment", "address": "Near Nezu Station, Bunkyo-ku", "host": "Toshiko", "phone": "", "lat": 35.7206, "lng": 139.7631, "checkin": "13:00", "checkout": "11:00"},
+    16: {"name": "Nezu Apartment", "address": "Near Nezu Station, Bunkyo-ku", "host": "Toshiko", "phone": "", "lat": 35.7206, "lng": 139.7631, "checkin": "13:00", "checkout": "11:00"},
     17: {"name": "Departure", "address": "Haneda Airport", "host": "", "phone": "", "lat": 35.5494, "lng": 139.7798, "checkin": "", "checkout": ""},
 }
 
@@ -368,6 +368,43 @@ def get_japan_context(sim_date: str | None = None) -> str:
     parts.append("Payment methods: card, cash, ic_card")
     parts.append("After logging, confirm with a brief message like '✅ Logged ¥3,200 for Kushikatsu (food, cash). Today's total: check /japan/expenses/today'")
     parts.append("If they don't specify payment method, ask 'Cash or card?' or default to cash for food under ¥5,000")
+    parts.append("")
+
+    # Photo book pipeline
+    parts.append("### Photo Book — Collecting Memories")
+    parts.append("We're building a post-trip photo book. You help collect photos, highlights, and diary entries during the trip.")
+    parts.append("")
+    parts.append("**1. Photos via WhatsApp — 'add this to the Japan Drive'**")
+    parts.append("When someone sends a photo and says 'add this to the Japan Drive' (or similar like 'save to drive', 'japan drive', 'photo book'):")
+    parts.append("- The image will be available as an attachment. Upload it by running:")
+    parts.append('```bash')
+    parts.append('curl -s -X POST http://172.19.64.1:8100/japan/photobook/upload -H "Content-Type: application/json" -d \'{"local_path": "IMAGE_PATH", "caption": "CAPTION", "sender": "SENDER_NAME"}\'')
+    parts.append('```')
+    parts.append("- local_path: the temp file path of the WhatsApp image attachment")
+    parts.append("- caption: any text they sent with the photo, or a brief description of what you see in the image")
+    parts.append("- sender: Chris or Abby")
+    parts.append(f"- day_number is auto-detected (currently Day {trip_day})")
+    parts.append("- After uploading, reply: '📸 Added to Day X! [caption]'")
+    parts.append("")
+    parts.append("**2. Highlights — one-liner memories**")
+    parts.append("When someone sends a short message (1-2 sentences) that captures a moment, e.g.:")
+    parts.append("  - 'Emmie lost her mind at the deer in Nara'")
+    parts.append("  - 'Best ramen of the trip at Fuunji'")
+    parts.append("  - 'Max fell asleep on the bullet train'")
+    parts.append("These are highlight moments for the photo book. Save them:")
+    parts.append('```bash')
+    parts.append('curl -s -X POST http://172.19.64.1:8100/japan/photobook/highlight -H "Content-Type: application/json" -d \'{"text": "THE HIGHLIGHT TEXT", "sender": "SENDER_NAME"}\'')
+    parts.append('```')
+    parts.append("- Reply: '✨ Saved highlight for Day X!'")
+    parts.append("- IMPORTANT: Only save messages that are clearly memorable moments, NOT questions, requests, or logistics")
+    parts.append("")
+    parts.append("**3. Diary entries & voice notes**")
+    parts.append("When someone sends a longer message (3+ sentences) reflecting on the day, or a voice note transcription that's narrative:")
+    parts.append('```bash')
+    parts.append('curl -s -X POST http://172.19.64.1:8100/japan/photobook/diary -H "Content-Type: application/json" -d \'{"content": "THE DIARY TEXT", "source": "text", "sender": "SENDER_NAME"}\'')
+    parts.append('```')
+    parts.append("- For voice notes, set source to 'voice_note'")
+    parts.append("- Reply: '📝 Diary entry saved for Day X! (N words)'")
     parts.append("")
 
     return "\n".join(parts)

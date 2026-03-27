@@ -46,12 +46,27 @@ Data fetcher: `meal-plan-generator` — pulls all of the following in parallel:
 - `data.batch_candidates` — Batch-friendly recipes (freezable or yields multiple meals) from Family Fuel
 - `data.price_data` — Cached Sainsbury's prices and current deals (from weekly price scan)
 - `data.week_start` — Monday date for the plan week
+- `data.date_lookup` — Pre-computed day→date mapping for this week (e.g. `{"saturday": "Saturday 21 March → 2026-03-21", ...}`)
+- `data.next_week_date_lookup` — Same mapping for next week
 
 ## Workflow
+
+### Fast Path: Chris-Provided Plan
+
+**When Chris provides a specific meal list, use it EXACTLY as given.**
+
+- Zero changes, zero additions, zero renames — transcribe the meals verbatim
+- Skip Steps 1-3 (template presentation, generation, swaps) — go straight to recipe resolution (Step 0 for Gousto import, then resolve recipe IDs per the Hard Gate in Step 2)
+- If a meal name is ambiguous or doesn't match a Family Fuel recipe, **ASK Chris** rather than guessing or substituting
+- Never add meals Chris didn't mention. If a slot seems empty, ask — don't fill it
+
+**Trigger:** Chris sends a list like "Sat - X, Sun - Y, Mon - Z..." or "here's this week's plan: ..."
 
 ### Step 0: Import Gousto Recipes (AUTOMATIC — runs before anything else)
 
 **This is mandatory. Do it immediately, before presenting defaults.**
+
+**Gousto Auto-Linking:** When Chris provides meal names that match Gousto recipe names, always search Family Fuel first (they should already exist from the import). Use the Family Fuel recipe ID, not the Gousto website URL. If a meal name looks like a Gousto recipe but isn't found, run `POST /meal-plan/import/gousto` to ensure the latest order is imported before creating a new recipe.
 
 1. Call `POST /meal-plan/import/gousto`
 2. This searches Gmail for Gousto order confirmation emails, scrapes each recipe page, and saves to Family Fuel with full ingredients, instructions, and nutrition
@@ -288,42 +303,44 @@ If Chris says yes:
 
 If Chris says no or ignores, that's fine — the shopping list is still available as HTML.
 
-## Completion Checklist (MANDATORY)
+## Deployment Gates (MANDATORY)
 
-**Before sharing links with Chris, run through EVERY item. ALL must be TRUE.**
+**Progress through gates sequentially. Each gate MUST pass before proceeding to the next. If a gate fails, stop and fix before continuing.**
 
-```
-RECIPE DATA
-[ ] Every meal in the plan has a Family Fuel recipe ID (no exceptions)
-[ ] Every non-Gousto recipe was saved with FULL ingredients and instructions
-[ ] Gousto import ran and saved recipes to Family Fuel
-[ ] PATCH /recipes/{id}/usage called for every recipe used
+### Gate 1: All Recipes Resolved
+- [ ] Every meal in the plan has a Family Fuel recipe ID (no exceptions, except OUT/Freezer Meal)
+- [ ] Gousto import ran (`POST /meal-plan/import/gousto`)
+- [ ] Every non-Gousto recipe saved with FULL ingredients and instructions
+- **BLOCKED?** Search harder, create recipe, or ask Chris
 
-MEAL PLAN PAGE
-[ ] POST /meal-plan called (plan saved to database)
-[ ] POST /meal-plan/history called (meals logged)
-[ ] Meal plan HTML deployed to hadley-meals.surge.sh (not any other URL)
-[ ] Every recipe link points to hadley-recipes.surge.sh/{id}.html (not external URLs)
-[ ] auto_generate_cards was true in the HTML generation call
+### Gate 2: Plan Saved to DB
+- [ ] `POST /meal-plan` returned 200 with `items_saved` matching expected count
+- [ ] Plan covers all days Chris specified
+- **BLOCKED?** Check error, split into smaller batches, verify field names
 
-RECIPE CARDS
-[ ] Every recipe card URL (hadley-recipes.surge.sh/{id}.html) returns 200
-[ ] Cards include full ingredients, method, nutrition, and source link
+### Gate 3: Meal Plan HTML Generated & Deployed
+- [ ] `POST /meal-plan/view/html` with `auto_generate_cards: true` returned HTML
+- [ ] `POST /deploy/surge` deployed to `hadley-meals.surge.sh`
+- [ ] `curl -s -o /dev/null -w "%{http_code}" https://hadley-meals.surge.sh` returns 200
+- **BLOCKED?** Check HTML generation errors, retry deploy
 
-SHOPPING LIST
-[ ] Ingredient verification completed for every non-Gousto recipe
-[ ] Shopping list generated via POST /meal-plan/shopping-list/html (not hand-built HTML)
-[ ] Shopping list deployed to hadley-shopping.surge.sh (not any other URL)
-[ ] Due staples included
-[ ] Gousto items shown in separate section (not on main shopping list)
+### Gate 4: Recipe Cards Verified
+- [ ] Every recipe card URL (`hadley-recipes.surge.sh/{id}.html`) returns 200
+- [ ] Cards include full ingredients, method, and source link
+- **BLOCKED?** Regenerate missing cards with `POST /recipes/{id}/card`, redeploy
 
-LINKS
-[ ] hadley-meals.surge.sh loads correctly
-[ ] hadley-shopping.surge.sh loads correctly
-[ ] All recipe card links from meal plan page are clickable and load
-```
+### Gate 5: Shopping List Generated & Deployed
+- [ ] Ingredient verification completed for every non-Gousto recipe
+- [ ] `POST /meal-plan/shopping-list/html` generated HTML
+- [ ] `POST /deploy/surge` deployed to `hadley-shopping.surge.sh`
+- [ ] `curl -s -o /dev/null -w "%{http_code}" https://hadley-shopping.surge.sh` returns 200
+- **BLOCKED?** Check ingredient data, fix missing recipes
 
-**If ANY item is FALSE, fix it before sharing links. Do not skip items.**
+### Gate 6: Links Shared
+- [ ] `hadley-meals.surge.sh` loads correctly
+- [ ] `hadley-shopping.surge.sh` loads correctly
+- [ ] All recipe card links from meal plan page are clickable and load
+- [ ] Links sent to Chris (and optionally Abby)
 
 ## Recipe Sources (Priority Order)
 
@@ -358,6 +375,20 @@ When a Family Fuel recipe is used in a plan, call `PATCH /recipes/{id}/usage` to
 - `POST /meal-plan/shopping-list/to-trolley?store=sainsburys` — One-click add shopping list to trolley
 - `POST /grocery/sainsburys/trolley/resolve` — Resolve ambiguous item (body: `{item_name, product_uid, quantity?}`)
 
+## API Field Reference: recipe_id vs recipe_url
+
+**These two fields exist in different endpoints — do not confuse them.**
+
+| Field | Used in | Type | Purpose |
+|-------|---------|------|---------|
+| `recipe_id` | `POST /recipes/{id}/card`, `POST /recipes/cards/batch`, `POST /meal-plan/view/html` (plan items) | UUID string | References a Family Fuel recipe by its database ID |
+| `recipe_url` | `POST /meal-plan` (items) | URL string | Stored on meal plan items — typically `https://hadley-recipes.surge.sh/{recipe_id}.html` |
+
+**When saving a meal plan** (`POST /meal-plan`): use `recipe_url` (a URL pointing to the recipe card)
+**When generating HTML** (`POST /meal-plan/view/html`): the plan items need `recipe_id` for auto-card generation
+
+**Common mistake:** Passing `recipe_id` to `POST /meal-plan` — this field doesn't exist on meal plan items and will be silently ignored or cause errors.
+
 ## Output Format
 
 Use Discord-friendly formatting:
@@ -369,6 +400,7 @@ Use Discord-friendly formatting:
 
 ## Rules
 
+- **NEVER calculate dates yourself.** Always use `data.date_lookup` or `data.next_week_date_lookup` to convert day names (Saturday, Sunday, etc.) to ISO dates. Extract the date after the `→` arrow. This prevents off-by-one errors from mental date arithmetic.
 - Maximum 2-message interview (present defaults → confirm/override → generate)
 - If no template exists, redirect to `meal-plan-setup` skill first
 - If no preferences exist, use sensible defaults (high-protein, varied, 3 Gousto nights)
@@ -380,6 +412,23 @@ Use Discord-friendly formatting:
 - **Always deploy to the fixed URLs** — hadley-meals.surge.sh, hadley-shopping.surge.sh, hadley-recipes.surge.sh
 - After generating the shopping list, always ask about extra staples before finalising
 - UK English throughout
+
+## Error Handling
+
+### Retry Limits
+- Maximum **3 attempts** per API call
+- After 3 failures: **STOP immediately** and report:
+  - Which endpoint failed
+  - HTTP status code
+  - Error message body
+  - What you were trying to do
+- **Never silently retry with modified data** — if a payload fails, diagnose the error before changing anything
+- **Never loop** on the same failing request hoping it will work
+
+### Common Failure Modes
+- `500 Internal Server Error` on `POST /meal-plan` with many items: split into batches of 4 items. Ensure every item in a batch has the same set of optional fields (use empty string `""` for `recipe_url` if some items don't have one)
+- `422 Validation Error`: check field names match the API schema exactly
+- Recipe search returns 0 results: broaden the search query, try partial name matches
 
 ## Critical: Shopping List Completeness
 

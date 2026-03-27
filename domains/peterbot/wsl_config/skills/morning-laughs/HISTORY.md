@@ -188,3 +188,43 @@
 - 2026-03-19: I used to be a tailor, but I just wasn't suited for it.
 - 2026-03-19: Why did the skeleton skip the party? He had no body to go with.
 - 2026-03-19: "It does not matter how slowly you go as long as you do not stop." — Confucius
+
+- 2026-03-20: What do you call a deer with no eyes? No idea.
+- 2026-03-20: I used to run a bakery, but I couldn't make enough dough.
+- 2026-03-20: Why do ducks have tail feathers? To cover their butt quacks.
+- 2026-03-20: "Do what you can, with what you have, where you are." — Theodore Roosevelt
+
+- 2026-03-21: What do you call a group of unorganised cats? A cat-astrophe.
+- 2026-03-21: I used to play hide and seek with mountains, but they always peaked.
+- 2026-03-21: Why don't crabs give to charity? Because they're shellfish... wait, that's oysters. Crabs are just too crabby!
+- 2026-03-21: "The difference between ordinary and extraordinary is that little extra." — Jimmy Johnson
+
+- 2026-03-22: What do you call a cow with no legs? Ground beef.
+- 2026-03-22: I used to have a job collecting leaves. I was raking it in.
+- 2026-03-22: Why do birds fly south for the winter? Because it's too far to walk.
+- 2026-03-22: "Life is either a daring adventure or nothing at all." — Helen Keller
+
+- 2026-03-23: What do you call a knight who's afraid to fight? Sir Render.
+- 2026-03-23: I used to be a watchmaker, but I lost track of time.
+- 2026-03-23: Why did the coffee break up with the sugar? It felt taken for granulated.
+- 2026-03-23: "I am not a product of my circumstances. I am a product of my decisions." — Stephen Covey
+
+- 2026-03-24: What do you call a hippie's wife? Mississippi.
+- 2026-03-24: I used to be a programmer, but I lost my drive. Found it — it was C:.
+- 2026-03-24: Why did the banana go to the doctor? It wasn't peeling well.
+- 2026-03-24: "The measure of who we are is what we do with what we have." — Vince Lombardi
+
+- 2026-03-25: What do you call a snowman in July? A puddle.
+- 2026-03-25: I used to hate facial hair on other people, but then it grew on me... figuratively.
+- 2026-03-25: Why did the teddy bear say no to dessert? Because she was already stuffed.
+- 2026-03-25: "Your time is limited, so don't waste it living someone else's life." — Steve Jobs
+
+- 2026-03-26: What do you call a cheese that isn't feeling well? Bleu cheese.
+- 2026-03-26: I used to be a tennis commentator, but I lost my advantage.
+- 2026-03-26: Why don't vampires ever get invited to parties? Because they're a pain in the neck.
+- 2026-03-26: "Believe in yourself and all that you are. Know that there is something inside you that is greater than any obstacle." — Christian D. Larson
+
+- 2026-03-27: What do you call a tired pea? Sleep-deprived-pea. No wait — a sleepeapod!
+- 2026-03-27: I used to work at a mirror factory. It was something I could really see myself doing.
+- 2026-03-27: Why did the lemon stop rolling down the hill? It ran out of juice.
+- 2026-03-27: "Go confidently in the direction of your dreams. Live the life you have imagined." — Henry David Thoreau

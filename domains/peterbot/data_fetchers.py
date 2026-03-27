@@ -1876,6 +1876,8 @@ async def get_meal_plan_generator_data() -> dict[str, Any]:
         "batch_candidates": batch_data.get("recipes", []),
         "price_data": price_data,
         "week_start": (datetime.now().date() - timedelta(days=datetime.now().date().weekday())).isoformat(),
+        "date_lookup": {day: (datetime.now().date() - timedelta(days=datetime.now().date().weekday()) + timedelta(days=i)).strftime("%A %d %B → %Y-%m-%d") for i, day in enumerate(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"], start=0)},
+        "next_week_date_lookup": {day: (datetime.now().date() - timedelta(days=datetime.now().date().weekday()) + timedelta(days=7+i)).strftime("%A %d %B → %Y-%m-%d") for i, day in enumerate(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"], start=0)},
     }
 
     logger.info(

@@ -89,6 +89,23 @@ MONITORED_SERVICES = {
         "check_type": "router_v2",  # Router V2: on-demand CLI processes (no persistent tmux)
         "critical": True,
     },
+    "peter_channel": {
+        "name": "Discord Channel",
+        "check_type": "tmux",
+        "tmux_session": "peter-channel",
+        "critical": True,
+    },
+    "whatsapp_channel": {
+        "name": "WhatsApp Channel",
+        "url": "http://localhost:8102/health",
+        "check_type": "http_any",
+        "critical": True,
+    },
+    "jobs_channel": {
+        "name": "Jobs Channel",
+        "url": "http://localhost:8103/health",
+        "critical": True,
+    },
 }
 
 # Alert configuration
@@ -451,8 +468,11 @@ KEY_FILES = {
     "HEARTBEAT.md": "domains/peterbot/wsl_config/HEARTBEAT.md",
     "USER.md": "domains/peterbot/wsl_config/USER.md",
     "Bot Config": "domains/peterbot/config.py",
-    "Router": "domains/peterbot/router.py",
-    "Parser": "domains/peterbot/parser.py",
+    "Router V2": "domains/peterbot/router_v2.py",
+    "Scheduler": "domains/peterbot/scheduler.py",
+    "Discord Channel": "peter-channel/src/index.ts",
+    "WhatsApp Channel": "whatsapp-channel/src/index.ts",
+    "Jobs Channel": "jobs-channel/src/index.ts",
 }
 
 # WSL key files
@@ -713,10 +733,23 @@ async def get_system_status():
             },
             "peterbot_session": {
                 "status": "up" if peterbot_up else "down",
-                "mode": "tmux" if peterbot_session else "router_v2",
-                "attached": peterbot_session["attached"] if peterbot_session else False,
+                "mode": "channel" if any(s["name"] == "peter-channel" for s in sessions) else "router_v2",
                 "last_restart": _last_restart_time.get("peterbot_session")
             }
+        },
+        "channels": {
+            "peter_channel": {
+                "status": "up" if any(s["name"] == "peter-channel" for s in sessions) else "down",
+                "type": "discord",
+            },
+            "whatsapp_channel": {
+                "status": "up" if any(s["name"] == "whatsapp-channel" for s in sessions) else "down",
+                "type": "whatsapp",
+            },
+            "jobs_channel": {
+                "status": "up" if any(s["name"] == "jobs-channel" for s in sessions) else "down",
+                "type": "scheduled_jobs",
+            },
         },
         "tmux_sessions": sessions,
         "model_provider": _read_model_provider_status(),

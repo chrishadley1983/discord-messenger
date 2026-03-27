@@ -111,3 +111,11 @@ scripts/scrape_vercel_usage.py
 scripts/split_batches.ps1
 scripts/sql_batches/
 secrets/
+
+# Temp/data files
+.cache
+tmp/
+tabelog_combined.json
+
+# Supabase temp
+supabase/.temp/

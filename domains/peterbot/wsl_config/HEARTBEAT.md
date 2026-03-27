@@ -42,13 +42,16 @@ Chris can add items here for Peter to work on in the background.
 
 (Nothing in progress)
 
+
 ### Awaiting Chris
 
+- [ ] [FIX] school_daily_sync failing — Both Gmail Parser AND Arbor Scraper broken. Gmail: "Unknown error" (26-27 Mar). Arbor: login failed, stuck at home-ui URL (27 Mar), WhatsApp alert sent. Infrastructure job in bot.py (Discord-Messenger), scripts in hadley-bricks at `scripts/school/`. Need to check: Gmail API creds, Arbor login credentials.
 - [ ] [FIX] school_weekly_sync failing — pymupdf missing. Error: `ModuleNotFoundError: No module named 'fitz'`. Need to add `pymupdf` to Discord-Messenger/requirements.txt and run `pip install pymupdf`. Peter confirmed: scripts are in hadley-bricks repo at `scripts/school/`, but they run via bot.py using sys.executable, so the package must be in the bot's Python environment.
 - [ ] [FIX] Claude API balance check broken — Session expired, needs `anthropic_auth.py` re-run. Noticed in 07:03 balance check: "Session expired - run anthropic_auth.py". **Peter cannot action** — requires Chris to run the auth script on his machine.
 
 ### Done
 
+- [x] [PROACTIVE] Research LEGO Creator 3-in-1 sets retiring July 2026 — Completed 2026-03-27. Compiled full list of 9 Creator 3-in-1 sets retiring 31 Jul 2026 with RRP, market data, and sourcing recommendations. Posted to #peterbot.
 - [x] [PROACTIVE] Add parents evening slots to calendar — Completed 2026-03-19. Extracted from Gmail booking confirmations (13 Mar). Added two events to Google Calendar for 1 Apr 2026: 17:20 Emily Scott & Clair Thornton, 17:30 Chloe Adams & Coralie Tringham. Reminders set for 1 day and 1 hour before.
 - [x] [PROACTIVE] Verify flat white recipe — Completed 2026-03-16. Confirmed flat white recipe EXISTS in nutrition favourites: "90ml semi-skimmed milk, 50ml espresso" (44 cal, 3.2g protein). Also correctly embedded in "usual breakfast" favourite. Not in Second Brain separately, but not needed there — nutrition system has it.
 - [x] [SKILL] Recipe skill: add save-by-position handling — Completed 2026-03-15. Updated `recipe-discovery` and `daily-recipes` skills with explicit "save N" position-based save instructions. Skills now document how to match numbers to recipe positions and save by URL.

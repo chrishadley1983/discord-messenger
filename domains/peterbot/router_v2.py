@@ -896,6 +896,7 @@ async def handle_message(
             channel_name,
             knowledge_context=knowledge_context,
             attachment_urls=attachment_urls,
+            sender_number=str(user_id) if channel_name == "WhatsApp" or channel_id == 9999999999 else None,
         )
 
         # 4. Send to LLM (routes to Claude or Kimi based on active provider)

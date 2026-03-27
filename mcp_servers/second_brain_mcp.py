@@ -93,13 +93,16 @@ async def search_knowledge(query: str, limit: int = 5, min_similarity: float = 0
         output = []
         for r in results:
             item = r.item
-            excerpts = "\n".join(f"  > {e}" for e in r.relevant_excerpts[:2])
+            # Build full chunk content — sorted by chunk_index for coherent reading
+            sorted_chunks = sorted(r.chunks, key=lambda c: c.chunk_index)
+            chunk_texts = [c.content for c in sorted_chunks if c.content]
+            full_chunk_content = "\n".join(chunk_texts)
+
             entry = (
-                f"**{item.title or 'Untitled'}** (similarity: {r.best_similarity:.2f})\n"
+                f"**{item.title or 'Untitled'}** (similarity: {r.best_similarity:.2f}, id: {item.id})\n"
                 f"  Type: {item.content_type.value if hasattr(item.content_type, 'value') else item.content_type} | "
                 f"Topics: {', '.join(item.topics or [])}\n"
-                f"  Source: {item.source}\n"
-                f"  Summary: {item.summary or 'N/A'}"
+                f"  Source: {item.source}"
             )
             if item.facts:
                 entry += "\n  Facts:\n" + "\n".join(f"    - {f}" for f in item.facts[:5])
@@ -108,8 +111,11 @@ async def search_knowledge(query: str, limit: int = 5, min_similarity: float = 0
                     f"    - [{c.get('type', 'pattern')}] {c.get('label', '')}: {c.get('detail', '')}"
                     for c in item.concepts[:3]
                 )
-            if excerpts:
-                entry += f"\n  Excerpts:\n{excerpts}"
+            # Prefer full chunk content over summary — chunks have the real data
+            if full_chunk_content:
+                entry += f"\n  Content:\n{full_chunk_content}"
+            elif item.summary and item.summary != 'N/A':
+                entry += f"\n  Summary: {item.summary}"
             output.append(entry)
 
         return f"Found {len(results)} results:\n\n" + "\n\n---\n\n".join(output)
@@ -195,9 +201,17 @@ async def get_item_detail(item_id: str) -> str:
         connections = await db.get_connections_for_item(UUID(item_id))
 
         result = _item_to_dict(item)
-        result["full_text"] = item.full_text
         result["user_note"] = item.user_note
         result["word_count"] = item.word_count
+
+        # If full_text is a stub, assemble content from chunks instead
+        full_text = item.full_text or ""
+        if len(full_text) < 200:
+            chunks = await db.get_chunks_for_item(UUID(item_id))
+            if chunks:
+                sorted_chunks = sorted(chunks, key=lambda c: c.chunk_index)
+                full_text = "\n".join(c.content for c in sorted_chunks if c.content)
+        result["full_text"] = full_text
         result["connections"] = [
             {
                 "connected_to": str(c.item_b_id if str(c.item_a_id) == item_id else c.item_a_id),

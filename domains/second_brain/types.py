@@ -20,6 +20,8 @@ class CaptureType(str, Enum):
     EXPLICIT = "explicit"   # User !save command (base_priority 1.0)
     PASSIVE = "passive"     # Auto-detected URL/idea (base_priority 0.3)
     SEED = "seed"           # Bulk import during bootstrap (base_priority 0.8)
+    IMPORTED = "imported"   # External data import
+    MANUAL = "manual"       # Manual entry
 
 
 class ContentType(str, Enum):
