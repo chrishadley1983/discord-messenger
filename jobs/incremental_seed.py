@@ -39,7 +39,6 @@ ADAPTER_LABELS = {
     "netflix-viewing": "Netflix",
     "travel-bookings": "Travel",
     "withings-health": "Withings",
-    "peter-interactions": "Peter Chat",
     "reddit-saved": "Reddit",
     "school-data": "School",
     "claude-code-history": "Claude Code",
@@ -147,7 +146,7 @@ async def incremental_seed_import(bot=None):
     from domains.second_brain.seed.adapters import (
         calendar, email, github, garmin, garmin_health, bookmarks, email_links,
         hadley_bricks_email, finance_summary, recipes, spotify, netflix, travel,
-        withings, peter_interactions, reddit, school, claude_code_history,
+        withings, reddit, school, claude_code_history,
     )
 
     adapters = get_available_adapters()
@@ -183,7 +182,6 @@ async def incremental_seed_import(bot=None):
     # New adapters
     adapter_limits["garmin-health"] = 7       # 1 week of daily health summaries
     adapter_limits["withings-health"] = 30    # ~1 month of measurements
-    adapter_limits["peter-interactions"] = 50  # Recent Peter chat exchanges
     adapter_limits["school-data"] = 50        # School events, newsletters, spellings
     adapter_limits["claude-code-history"] = 50 # Recent Claude Code conversations
     adapter_limits["reddit-saved"] = 20       # Saved/upvoted/commented posts
@@ -234,8 +232,6 @@ async def incremental_seed_import(bot=None):
                 config = {}  # Defaults to 7 days
             elif adapter_name == "withings-health":
                 config = {"days_back": 30}
-            elif adapter_name == "peter-interactions":
-                config = {"days_back": 7}
             elif adapter_name == "school-data":
                 config = {}  # Defaults to 14-day lookback
             elif adapter_name == "claude-code-history":
