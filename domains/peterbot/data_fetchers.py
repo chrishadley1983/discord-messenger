@@ -956,6 +956,24 @@ async def get_spurs_live_data() -> dict[str, Any]:
                     next_fixture = state.get("next_fixture", "")
                     logger.debug(f"Spurs-live sleeping until {wake_at.strftime('%a %d %b %H:%M')} ({next_fixture})")
                     return {"__skip__": True, "reason": f"Sleeping until {wake_at.strftime('%a %d %b %H:%M')} — {next_fixture}"}
+            elif state.get("date") != today:
+                # Stale state with no wake_at (e.g. FT written but no next fixture found at the time)
+                # Look up next fixture now and sleep until then, avoiding repeated API calls
+                next_fix = await _get_next_spurs_fixture()
+                if next_fix:
+                    wake_at = next_fix["kickoff"] - timedelta(hours=1)
+                    desc = f"{next_fix['home']} vs {next_fix['away']} ({next_fix['competition']})"
+                    try:
+                        state_file.write_text(json.dumps({
+                            "wake_at": wake_at.isoformat(),
+                            "next_fixture": desc,
+                            "next_kickoff": next_fix["kickoff"].isoformat(),
+                        }), encoding="utf-8")
+                    except Exception:
+                        pass
+                    if now < wake_at:
+                        logger.info(f"Spurs-live: stale state, sleeping until {wake_at.strftime('%a %d %b %H:%M')} ({desc})")
+                        return {"__skip__": True, "reason": f"No match today. Next: {desc} — waking {wake_at.strftime('%a %d %b %H:%M')}"}
     except Exception:
         pass
 
