@@ -215,48 +215,74 @@ Include the full x.com URL for each post."""
 
 
 async def _search_reddit(topic: str) -> list[dict]:
-    """Search Reddit using xAI's web_search tool."""
-    if not GROK_API_KEY:
-        return []
+    """Search Reddit directly using .json endpoints (no API key needed)."""
+    import asyncio
 
-    prompt = f"""Search Reddit for recent discussions about: {topic}
-
-Focus on finding posts from:
-- r/ClaudeAI
-- r/LocalLLaMA
-- r/MachineLearning
-- r/artificial
-- r/singularity
-
-Find 10-15 relevant Reddit posts from the last week.
-Include the full reddit.com URL for each post."""
+    # Search across key subreddits + global
+    subreddits = ["ClaudeAI", "ClaudeCode", "LocalLLaMA", "MachineLearning", "artificial", "singularity"]
+    items = []
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.x.ai/v1/responses",
-                headers={
-                    "Authorization": f"Bearer {GROK_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": GROK_MODEL,
-                    "tools": [{"type": "web_search"}],
-                    "input": [{"role": "user", "content": prompt}]
-                },
-                timeout=120
-            )
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
 
-            if response.status_code == 200:
-                data = response.json()
-                return _parse_reddit_response(data)
-            else:
-                logger.error(f"Reddit search error {response.status_code}: {response.text[:200]}")
-                return []
+        async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+            # Global search
+            resp = await client.get("https://www.reddit.com/search.json", params={
+                "q": topic, "sort": "relevance", "t": "week", "limit": 15, "raw_json": 1
+            })
+            if resp.status_code == 200:
+                for child in resp.json().get("data", {}).get("children", []):
+                    d = child.get("data", {})
+                    items.append(_reddit_json_to_item(d))
+
+            await asyncio.sleep(2)
+
+            # Subreddit-specific searches for higher relevance
+            for sub in subreddits:
+                if len(items) >= 20:
+                    break
+                resp = await client.get(f"https://www.reddit.com/r/{sub}/search.json", params={
+                    "q": topic, "sort": "top", "t": "week", "restrict_sr": "on",
+                    "limit": 5, "raw_json": 1
+                })
+                if resp.status_code == 200:
+                    for child in resp.json().get("data", {}).get("children", []):
+                        d = child.get("data", {})
+                        item = _reddit_json_to_item(d)
+                        # Deduplicate by URL
+                        if not any(i["url"] == item["url"] for i in items):
+                            items.append(item)
+                await asyncio.sleep(1)
 
     except Exception as e:
         logger.error(f"Reddit search exception: {e}")
-        return []
+
+    # Sort by score descending, take top 15
+    items.sort(key=lambda x: x.get("score", 0), reverse=True)
+    logger.info(f"Reddit search found {len(items)} items for '{topic}'")
+    return items[:15]
+
+
+def _reddit_json_to_item(d: dict) -> dict:
+    """Convert a Reddit .json listing child to the briefing item format."""
+    subreddit = d.get("subreddit", "unknown")
+    permalink = d.get("permalink", "")
+    url = f"https://reddit.com{permalink}" if permalink else ""
+    title = d.get("title", "")
+    selftext = (d.get("selftext", "") or "")[:200]
+    score = d.get("score", 0)
+    num_comments = d.get("num_comments", 0)
+
+    return {
+        "url": url,
+        "text": title,
+        "subreddit": f"r/{subreddit}",
+        "context": f"Score: {score}, {num_comments} comments. {selftext}".strip(),
+        "score": score,
+        "source": "reddit",
+    }
 
 
 async def _search_web(topic: str) -> list[dict]:
