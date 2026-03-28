@@ -7,6 +7,7 @@ Provides day plan CRUD and daily digest email generation:
 - POST /japan/digest/send — generate & send daily digest email
 """
 
+import asyncio
 import json
 import os
 import platform
@@ -84,6 +85,8 @@ def _supabase_headers() -> dict:
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json",
         "Prefer": "return=representation",
+        "Accept-Profile": "japan",
+        "Content-Profile": "japan",
     }
 
 
@@ -720,9 +723,9 @@ DRIVE_FOLDER_IDS = {
     3: "1dreeeD8l_Ho_938fcr4Jc5vq00eqZiCp",   # Day 03 - Apr 5 - Tokyo
     4: "1PahQ-EkFWreQxqltIlqjHgooPtSNykdM",   # Day 04 - Apr 6 - Tokyo to Osaka
     5: "16rZihI3OlMVVY33nhgb0KFlpCN-gGyx8",   # Day 05 - Apr 7 - Osaka
-    6: "189S8xOMQ4clqReuwp7rCVv_JWVRXenN5",   # Day 06 - Apr 8 - Osaka
+    6: "189S8xOMQ4clqReuwp7rCVv_JWVRXenN5",   # Day 06 - Apr 8 - Osaka (Nara)
     7: "1BzHZG3DRgwDjj67Iv3HNYn5tVvGwlbmb",   # Day 07 - Apr 9 - Osaka
-    8: "1mbBcRNqJITUg6ynWqCWObJeSyFN7jEWj",   # Day 08 - Apr 10 - Osaka to Kyoto
+    8: "1mbBcRNqJITUg6ynWqCWObJeSyFN7jEWj",   # Day 08 - Apr 10 - Himeji to Kyoto
     9: "1k-3-AI3NfCdpROeE0mG7Koy9hU4nFFDc",   # Day 09 - Apr 11 - Kyoto
     10: "1Xp7U-4tKDFkHqHbYUoRKTibwj6aVpP8A",  # Day 10 - Apr 12 - Kyoto
     11: "15d19FZx643eOGLoCtjbbGcIjVp8-z8Fc",   # Day 11 - Apr 13 - Kyoto
@@ -731,7 +734,7 @@ DRIVE_FOLDER_IDS = {
     14: "1hQPiScYYeI9hGgoGqFSxWrTc9SovmmiM",   # Day 14 - Apr 16 - Tokyo
     15: "1LvL2Ay5n17H6ibgkH55XWHhjfYSQ2JeA",   # Day 15 - Apr 17 - Tokyo
     16: "1ipNbZw9P6a8a1wQLMx85rVcjs2yZpG4v",   # Day 16 - Apr 18 - Tokyo
-    17: "1RCA1P62F83Mu6W1yzi2ikA6GhcJzH1Z3",   # Day 17 - Apr 19 - Tokyo Departure
+    17: "1RCA1P62F83Mu6W1yzi2ikA6GhcJzH1Z3",   # Day 17 - Apr 19 - Departure
 }
 DRIVE_FOLDER_EXTRAS = "1oQ01PSG0LTO_AOHlHkCzzUFlL-UrBX4_"  # Highlights & Extras
 
@@ -1108,6 +1111,101 @@ async def add_expense(request: Request):
         "category": expense["category"],
         "description": expense["description"],
         "day_date": day_date,
+    }
+
+
+# ============================================================
+# Photo Book Compilation
+# ============================================================
+
+
+@router.get("/photobook/compile")
+async def photobook_compile():
+    """Compile all photo book data for all 17 days.
+
+    Returns a JSON payload with photos, highlights, diary entries,
+    day plans, and Google Drive thumbnail URLs for each day.
+    Designed to feed into the print-ready HTML templates.
+    """
+    headers = _japan_supabase_headers()
+    days = {}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Fetch all data in parallel
+        photos_resp, highlights_resp, diary_resp, plans_resp = await asyncio.gather(
+            client.get(f"{SUPABASE_URL}/rest/v1/japan_photos",
+                       headers=headers, params={"select": "*", "order": "created_at.asc"}),
+            client.get(f"{SUPABASE_URL}/rest/v1/japan_highlights",
+                       headers=headers, params={"select": "*", "order": "created_at.asc"}),
+            client.get(f"{SUPABASE_URL}/rest/v1/japan_diary",
+                       headers=headers, params={"select": "*", "order": "created_at.asc"}),
+            client.get(f"{SUPABASE_URL}/rest/v1/japan_day_plans",
+                       headers=headers, params={"select": "day_date,city,stay_name,plan_data", "order": "day_date.asc"}),
+        )
+
+    photos = photos_resp.json() if photos_resp.status_code == 200 else []
+    highlights = highlights_resp.json() if highlights_resp.status_code == 200 else []
+    diary_entries = diary_resp.json() if diary_resp.status_code == 200 else []
+    plans = plans_resp.json() if plans_resp.status_code == 200 else []
+
+    # Build plan lookup by day number
+    plan_by_day = {}
+    for p in plans:
+        try:
+            dt = datetime.strptime(p["day_date"], "%Y-%m-%d")
+            day_num = (dt - datetime(2026, 4, 3)).days + 1
+            if 1 <= day_num <= 17:
+                plan_by_day[day_num] = p
+        except (ValueError, KeyError):
+            pass
+
+    # Build per-day structure
+    for d in range(1, 18):
+        plan = plan_by_day.get(d, {})
+        day_photos = [p for p in photos if p.get("day_number") == d]
+
+        # Build Google Drive thumbnail URLs for each photo
+        for photo in day_photos:
+            fid = photo.get("drive_file_id")
+            if fid:
+                photo["thumbnail_url"] = f"https://drive.google.com/thumbnail?id={fid}&sz=w800"
+                photo["full_url"] = f"https://drive.google.com/uc?id={fid}"
+
+        days[d] = {
+            "day_number": d,
+            "date": DAY_TO_DATE.get(d, ""),
+            "city": DAY_TO_CITY.get(d, ""),
+            "stay": plan.get("stay_name", ""),
+            "activities": [
+                item.get("title", "") for item in (plan.get("plan_data") or [])
+                if item.get("title")
+            ],
+            "photos": day_photos,
+            "highlights": [h for h in highlights if h.get("day_number") == d],
+            "diary": [e for e in diary_entries if e.get("day_number") == d],
+            "photo_count": len(day_photos),
+            "highlight_count": len([h for h in highlights if h.get("day_number") == d]),
+            "diary_count": len([e for e in diary_entries if e.get("day_number") == d]),
+        }
+
+    # Summary stats
+    total_photos = sum(d["photo_count"] for d in days.values())
+    total_highlights = sum(d["highlight_count"] for d in days.values())
+    total_diary = sum(d["diary_count"] for d in days.values())
+    days_with_content = sum(1 for d in days.values() if d["photo_count"] > 0 or d["highlight_count"] > 0)
+
+    return {
+        "days": days,
+        "summary": {
+            "total_photos": total_photos,
+            "total_highlights": total_highlights,
+            "total_diary_entries": total_diary,
+            "days_with_content": days_with_content,
+            "days_complete": sum(
+                1 for d in days.values()
+                if d["photo_count"] >= 5 and (d["highlight_count"] > 0 or d["diary_count"] > 0)
+            ),
+        },
     }
 
 

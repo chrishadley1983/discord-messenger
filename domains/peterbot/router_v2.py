@@ -196,10 +196,12 @@ def _windows_to_wsl_path(win_path: Path) -> str:
 async def _download_attachments(
     attachment_urls: list[dict],
 ) -> tuple[list[dict], list[Path]]:
-    """Download image attachments to local temp files.
+    """Download image/audio attachments to local temp files.
 
     Discord CDN URLs expire quickly, so we download images before invoking
     Claude and reference local file paths instead.
+    Audio attachments (voice notes) are transcribed via faster-whisper and
+    the transcription is added as a text field on the attachment dict.
 
     Returns:
         (updated_attachments, temp_files_to_cleanup)
@@ -209,36 +211,55 @@ async def _download_attachments(
     temp_files = []
 
     for att in attachment_urls:
-        is_image = att.get("content_type", "").startswith("image/")
-        if not is_image:
+        content_type = att.get("content_type", "")
+        is_image = content_type.startswith("image/")
+        is_audio = content_type.startswith("audio/")
+
+        if not is_image and not is_audio:
             updated.append(att)
             continue
 
-        # Download image to temp file
-        ext = Path(att.get("filename", "image.jpg")).suffix or ".jpg"
+        # Download to temp file
+        ext = Path(att.get("filename", "file")).suffix or (".jpg" if is_image else ".ogg")
         temp_name = f"{uuid.uuid4().hex[:12]}{ext}"
         temp_path = ATTACHMENT_TEMP_DIR / temp_name
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(att["url"], timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                async with session.get(att["url"], timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     if resp.status == 200:
                         data = await resp.read()
                         temp_path.write_bytes(data)
                         temp_files.append(temp_path)
 
-                        wsl_path = _windows_to_wsl_path(temp_path)
-                        updated.append({
-                            **att,
-                            "local_path": wsl_path,
-                        })
-                        logger.info(f"Downloaded attachment {att['filename']} ({len(data)} bytes)")
+                        if is_image:
+                            wsl_path = _windows_to_wsl_path(temp_path)
+                            updated.append({
+                                **att,
+                                "local_path": wsl_path,
+                            })
+                        elif is_audio:
+                            # Transcribe voice note
+                            try:
+                                from hadley_api.voice_engine import transcribe
+                                source_fmt = ext.lstrip(".") or "ogg"
+                                transcription = await transcribe(data, source_format=source_fmt)
+                                logger.info(f"Voice note transcribed ({len(data)} bytes): {transcription[:100]}")
+                                updated.append({
+                                    **att,
+                                    "transcription": transcription,
+                                })
+                            except Exception as e:
+                                logger.error(f"Voice note transcription failed: {e}")
+                                updated.append({**att, "transcription": "[Voice note — transcription failed]"})
+
+                        logger.info(f"Downloaded attachment {att.get('filename', '?')} ({len(data)} bytes)")
                     else:
                         logger.warning(f"Attachment download failed: HTTP {resp.status}")
-                        updated.append(att)  # Fall back to URL
+                        updated.append(att)
         except Exception as e:
             logger.warning(f"Attachment download failed: {e}")
-            updated.append(att)  # Fall back to URL
+            updated.append(att)
 
     return updated, temp_files
 
@@ -870,12 +891,23 @@ async def handle_message(
     # 1. Add to recent buffer (per-channel)
     memory.add_to_buffer("user", message, channel_id)
 
-    # 1b. Download image attachments to local files (Discord CDN URLs expire)
+    # 1b. Download image/audio attachments to local files (Discord CDN URLs expire)
     temp_files = []
     if attachment_urls:
-        has_images = any(a.get("content_type", "").startswith("image/") for a in attachment_urls)
-        if has_images:
+        has_media = any(
+            a.get("content_type", "").startswith(("image/", "audio/"))
+            for a in attachment_urls
+        )
+        if has_media:
             attachment_urls, temp_files = await _download_attachments(attachment_urls)
+            # Prepend voice note transcriptions to the user message
+            transcriptions = [
+                a["transcription"] for a in attachment_urls
+                if a.get("transcription") and a["transcription"] != "[Voice note — transcription failed]"
+            ]
+            if transcriptions:
+                voice_text = "\n".join(transcriptions)
+                message = f"[Voice note transcription]: {voice_text}\n\n{message}" if message.strip() else f"[Voice note transcription]: {voice_text}"
 
     try:
         # 2. Fetch Second Brain knowledge context (graceful degradation)

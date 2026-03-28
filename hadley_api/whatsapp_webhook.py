@@ -167,18 +167,97 @@ async def _download_audio(message_key: dict) -> bytes | None:
         return None
 
 
+def _resolve_recipient(to: str) -> str | None:
+    """Resolve a recipient to a phone number or group JID.
+
+    Accepts: contact name ("chris"), phone number ("447855620978"),
+    group name ("extended-team"), or group JID ("...@g.us").
+    Returns None if the recipient is not in the known allowlist.
+    """
+    from integrations.whatsapp import CONTACTS, GROUPS
+
+    to_lower = to.lower().strip()
+
+    # 1. Friendly name lookup
+    if to_lower in CONTACTS:
+        return CONTACTS[to_lower]
+    if to_lower in GROUPS:
+        return GROUPS[to_lower]
+
+    # 2. Raw phone number — accept if it's a known contact's number
+    known_numbers = set(CONTACTS.values())
+    if to in known_numbers:
+        return to
+
+    # 3. Raw group JID — accept if it's a known group's JID
+    known_jids = set(GROUPS.values())
+    if to in known_jids:
+        return to
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Recipient management — add/remove groups and contacts (admin-gated)
+# ---------------------------------------------------------------------------
+
+@router.get("/recipients")
+async def list_recipients():
+    """List all known contacts and groups."""
+    from integrations.whatsapp import CONTACTS, GROUPS
+    return {"contacts": CONTACTS, "groups": GROUPS}
+
+
+@router.post("/recipients/groups", dependencies=[Depends(require_auth)])
+async def add_group(name: str, jid: str):
+    """Add a WhatsApp group to the known recipients list.
+
+    Args:
+        name: Friendly name for the group (e.g. "family-chat")
+        jid: WhatsApp group JID (e.g. "120363424758610750@g.us")
+    """
+    from integrations.whatsapp import CONTACTS, GROUPS, _save_recipients, reload_recipients
+
+    if not jid.endswith("@g.us"):
+        return JSONResponse({"error": "Group JID must end with @g.us"}, status_code=400)
+
+    name_lower = name.lower().strip()
+    if not name_lower:
+        return JSONResponse({"error": "Group name cannot be empty"}, status_code=400)
+
+    GROUPS[name_lower] = jid
+    _save_recipients(CONTACTS, GROUPS)
+    reload_recipients()
+    return {"status": "added", "name": name_lower, "jid": jid, "groups": GROUPS}
+
+
+@router.delete("/recipients/groups/{name}", dependencies=[Depends(require_auth)])
+async def remove_group(name: str):
+    """Remove a WhatsApp group from the known recipients list."""
+    from integrations.whatsapp import CONTACTS, GROUPS, _save_recipients, reload_recipients
+
+    name_lower = name.lower().strip()
+    if name_lower not in GROUPS:
+        return JSONResponse({"error": f"Group '{name}' not found"}, status_code=404)
+
+    removed_jid = GROUPS.pop(name_lower)
+    _save_recipients(CONTACTS, GROUPS)
+    reload_recipients()
+    return {"status": "removed", "name": name_lower, "jid": removed_jid, "groups": GROUPS}
+
+
 @router.post("/send", dependencies=[Depends(require_auth)])
 async def whatsapp_send(to: str, message: str):
     """Send a WhatsApp text message via Evolution API.
 
     Args:
-        to: Contact name (chris, abby) or group JID (xxx@g.us)
+        to: Contact name, phone number, group name, or group JID
         message: Message text (Discord markdown auto-converted to WhatsApp format)
     """
     from integrations.whatsapp import send_text, CONTACTS, GROUPS
 
-    # Resolve contact name — reject unknown recipients
-    number = CONTACTS.get(to.lower()) or GROUPS.get(to.lower())
+    # Resolve recipient — reject unknown
+    number = _resolve_recipient(to)
     if not number:
         return JSONResponse(
             {"error": f"Unknown recipient '{to}'. Allowed: {list(CONTACTS.keys()) + list(GROUPS.keys())}"},
@@ -226,8 +305,8 @@ async def whatsapp_send_voice(to: str, message: str):
     """
     from integrations.whatsapp import send_text, send_audio, CONTACTS, GROUPS
 
-    # Resolve contact name — reject unknown recipients
-    number = CONTACTS.get(to.lower()) or GROUPS.get(to.lower())
+    # Resolve recipient — reject unknown
+    number = _resolve_recipient(to)
     if not number:
         return JSONResponse(
             {"error": f"Unknown recipient '{to}'. Allowed: {list(CONTACTS.keys()) + list(GROUPS.keys())}"},
@@ -369,6 +448,39 @@ async def _handle_message(body: dict):
         if image_msg:
             caption = image_msg.get("caption", "")
             logger.info(f"WhatsApp image from {sender_name}: caption='{caption[:50]}'")
+
+            # --- jd/ photo: save directly to photo book ---
+            if caption.strip().startswith("jd/") or caption.strip().startswith("/jd"):
+                try:
+                    base64_data = image_msg.get("base64")
+                    if not base64_data:
+                        base64_data = await _download_media(key)
+                    if base64_data:
+                        import base64 as b64
+                        from pathlib import Path
+                        import uuid
+                        img_dir = Path(__file__).parent.parent / "data" / "tmp" / "whatsapp_images"
+                        img_dir.mkdir(parents=True, exist_ok=True)
+                        ext = "jpg" if "jpeg" in image_msg.get("mimetype", "jpeg") else "png"
+                        img_path = img_dir / f"{uuid.uuid4().hex[:12]}.{ext}"
+                        img_path.write_bytes(b64.b64decode(base64_data))
+                        c = caption.strip()
+                        photo_caption = (c[3:] if c.startswith("jd/") or c.startswith("/jd") else c).strip()
+                        await _handle_jd_photo(
+                            local_path=str(img_path),
+                            caption=photo_caption,
+                            sender_name=sender_name,
+                            reply_to=reply_to,
+                        )
+                    else:
+                        from integrations.whatsapp import send_text
+                        await send_text(reply_to, "❌ Couldn't download that image — try again?")
+                except Exception as e:
+                    logger.error(f"jd/ photo handling failed: {e}")
+                    from integrations.whatsapp import send_text
+                    await send_text(reply_to, f"❌ Photo save failed: {e}")
+                return
+
             try:
                 # Download image via Evolution API
                 base64_data = image_msg.get("base64")
@@ -473,6 +585,21 @@ async def _handle_message(body: dict):
         if not text.strip():
             return
 
+        # --- jd/ command: photo book capture (handled directly, no LLM) ---
+        stripped = text.strip()
+        if stripped.startswith("jd/") or stripped.startswith("/jd"):
+            # Normalise: strip the prefix (either "jd/" or "/jd") to get the content
+            if stripped.startswith("jd/"):
+                jd_content = stripped[3:].strip()
+            else:
+                jd_content = stripped[3:].strip()
+            await _handle_jd_command(
+                text="jd/" + jd_content,  # normalise to jd/ prefix
+                sender_name=sender_name,
+                reply_to=reply_to,
+            )
+            return
+
         logger.info(f"WhatsApp from {sender_name} ({'group' if is_group else 'DM'}): {text[:100]}")
 
         # Queue the message for debounced delivery
@@ -483,6 +610,96 @@ async def _handle_message(body: dict):
             is_group=is_group,
             text=text.strip(),
         )
+
+
+async def _handle_jd_command(text: str, sender_name: str, reply_to: str):
+    """Handle jd/ text command — save as highlight or diary entry directly."""
+    from integrations.whatsapp import send_text
+
+    content = text[3:].strip()  # strip "jd/" prefix
+    logger.info(f"jd/ command from {sender_name}: '{content[:80]}' reply_to={reply_to}")
+
+    if not content:
+        await send_text(reply_to, "Send jd/ followed by a moment, diary entry, or photo")
+        return
+
+    API = "http://127.0.0.1:8100/japan"
+
+    # Count sentences (rough: split on ". " or newlines)
+    sentence_count = len([s for s in content.replace("\n", ". ").split(". ") if s.strip()])
+    logger.info(f"jd/ classified as {'diary' if sentence_count >= 3 else 'highlight'} ({sentence_count} sentences)")
+
+    try:
+        if sentence_count >= 3:
+            # Diary entry (longer text)
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    f"{API}/photobook/diary",
+                    json={"content": content, "source": "text", "sender": sender_name},
+                )
+            if resp.status_code in (200, 201):
+                data = resp.json()
+                word_count = len(content.split())
+                await send_text(reply_to, f"📝 Day {data.get('day_number', '?')} — {word_count} words")
+            else:
+                await send_text(reply_to, f"❌ Save failed: {resp.text[:100]}")
+        else:
+            # Highlight (short text)
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    f"{API}/photobook/highlight",
+                    json={"text": content, "sender": sender_name},
+                )
+            if resp.status_code in (200, 201):
+                data = resp.json()
+                await send_text(reply_to, f"✨ Day {data.get('day_number', '?')}")
+            else:
+                await send_text(reply_to, f"❌ Save failed: {resp.text[:100]}")
+    except Exception as e:
+        logger.error(f"jd/ command failed: {e}", exc_info=True)
+        await send_text(reply_to, f"❌ Error: {e}")
+
+    # Also feed the content into Peter's conversation buffer so he has context
+    try:
+        from domains.peterbot import memory
+        WHATSAPP_VIRTUAL_CHANNEL_ID = 9999999999
+        saved_type = "diary" if sentence_count >= 3 else "highlight"
+        memory.add_to_buffer("user", f"[{sender_name} saved {saved_type} via jd/]: {content}", WHATSAPP_VIRTUAL_CHANNEL_ID)
+    except Exception:
+        pass
+
+
+async def _handle_jd_photo(local_path: str, caption: str, sender_name: str, reply_to: str):
+    """Handle jd/ photo — upload to Google Drive + Supabase via photobook API."""
+    from integrations.whatsapp import send_text
+
+    API = "http://127.0.0.1:8100/japan"
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{API}/photobook/upload",
+                json={
+                    "local_path": local_path,
+                    "caption": caption or "Photo",
+                    "sender": sender_name,
+                },
+            )
+        if resp.status_code in (200, 201):
+            data = resp.json()
+            day = data.get("day_number", "?")
+            await send_text(reply_to, f"📸 Day {day}")
+            # Feed into Peter's buffer
+            try:
+                from domains.peterbot import memory
+                memory.add_to_buffer("user", f"[{sender_name} saved photo via jd/]: {caption or 'Photo'}", 9999999999)
+            except Exception:
+                pass
+        else:
+            await send_text(reply_to, f"❌ Upload failed: {resp.text[:100]}")
+    except Exception as e:
+        logger.error(f"jd/ photo upload failed: {e}")
+        await send_text(reply_to, f"❌ Photo error: {e}")
 
 
 async def _handle_voice_note(
