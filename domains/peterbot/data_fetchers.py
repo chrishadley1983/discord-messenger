@@ -3655,6 +3655,119 @@ async def get_system_health_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
+async def get_orphan_embed_data() -> dict[str, Any]:
+    """Find and embed orphaned Second Brain items (active but no chunks).
+
+    Runs the full pipeline: fetch orphan IDs via RPC, chunk text, generate
+    embeddings via HuggingFace, insert chunks. Returns summary for Peter.
+    """
+    import httpx
+    from config import SUPABASE_URL, SUPABASE_KEY
+
+    rest_url = f"{SUPABASE_URL}/rest/v1"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        # Step 1: Get orphan IDs via server-side RPC
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{rest_url}/rpc/get_orphaned_item_ids",
+                headers=headers,
+                json={},
+            )
+            resp.raise_for_status()
+            orphan_ids = [row["id"] for row in resp.json()]
+
+        if not orphan_ids:
+            return {"orphan_count": 0, "embedded": 0, "skipped": 0, "summary": ""}
+
+        # Step 2: Fetch item data in batches
+        all_items = []
+        for i in range(0, len(orphan_ids), 100):
+            batch_ids = orphan_ids[i:i + 100]
+            ids_filter = ",".join(f'"{uid}"' for uid in batch_ids)
+            url = f"{rest_url}/knowledge_items?id=in.({ids_filter})&select=id,title,full_text,summary,content_type&order=created_at.asc"
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(url, headers=headers)
+                resp.raise_for_status()
+                all_items.extend(resp.json())
+
+        # Step 3: Chunk + embed in batches of 20
+        from domains.second_brain.chunk import chunk_text, chunk_for_embedding
+        from domains.second_brain.embed import generate_embeddings_batch
+        from domains.second_brain.db import create_knowledge_chunks
+
+        total_embedded = 0
+        total_skipped = 0
+        BATCH_SIZE = 20
+
+        for batch_start in range(0, len(all_items), BATCH_SIZE):
+            batch = all_items[batch_start:batch_start + BATCH_SIZE]
+
+            item_chunks = []
+            all_embed_texts = []
+
+            for item in batch:
+                text = item.get("full_text") or item.get("summary") or ""
+                if not text.strip():
+                    total_skipped += 1
+                    continue
+                chunks = chunk_text(text)
+                if not chunks:
+                    total_skipped += 1
+                    continue
+                embed_texts = chunk_for_embedding(text, item.get("title"))
+                item_chunks.append((item, chunks, len(embed_texts)))
+                all_embed_texts.extend(embed_texts)
+
+            if not all_embed_texts:
+                continue
+
+            embeddings = await generate_embeddings_batch(all_embed_texts)
+
+            embed_idx = 0
+            for item, chunks, n_embeds in item_chunks:
+                chunk_embeddings = embeddings[embed_idx:embed_idx + n_embeds]
+                embed_idx += n_embeds
+                chunk_data = [
+                    {
+                        "index": i,
+                        "text": chunk.text,
+                        "embedding": emb,
+                        "start_word": chunk.start_word,
+                        "end_word": chunk.end_word,
+                    }
+                    for i, (chunk, emb) in enumerate(zip(chunks, chunk_embeddings))
+                ]
+                ok = await create_knowledge_chunks(item["id"], chunk_data)
+                if ok:
+                    total_embedded += 1
+                else:
+                    total_skipped += 1
+
+        # Build type breakdown
+        from collections import Counter
+        type_counts = Counter(item.get("content_type", "unknown") for item in all_items)
+        breakdown = ", ".join(f"{ct}: {n}" for ct, n in type_counts.most_common(5))
+
+        return {
+            "orphan_count": len(orphan_ids),
+            "embedded": total_embedded,
+            "skipped": total_skipped,
+            "breakdown": breakdown,
+            "summary": f"Embedded {total_embedded} orphaned items ({breakdown})"
+                       + (f", {total_skipped} skipped (no text)" if total_skipped else ""),
+        }
+
+    except Exception as e:
+        logger.error(f"Orphan embed failed: {e}")
+        return {"error": str(e), "orphan_count": -1, "embedded": 0, "skipped": 0, "summary": f"Error: {e}"}
+
+
 async def get_pocket_money_weekly_data() -> dict[str, Any]:
     """Fetch pocket money grid calculation from IHD dashboard.
 
@@ -3675,6 +3788,192 @@ async def get_pocket_money_weekly_data() -> dict[str, Any]:
                 return {"error": f"API returned {resp.status_code}"}
     except Exception as e:
         logger.error(f"Pocket money data fetch error: {e}")
+        return {"error": str(e)}
+
+
+# ============================================================
+# Life Admin Agent Data Fetchers
+# ============================================================
+
+
+async def get_life_admin_scan_data() -> dict[str, Any]:
+    """Fetch alert and dashboard data for life-admin-scan skill."""
+    try:
+        alerts_result, dashboard_result = await asyncio.gather(
+            _hadley_request("/life-admin/alerts"),
+            _hadley_request("/life-admin/dashboard"),
+            return_exceptions=True,
+        )
+
+        # Handle individual failures
+        if isinstance(alerts_result, Exception):
+            logger.warning(f"Life admin alerts fetch failed: {alerts_result}")
+            alerts_result = {"error": str(alerts_result)}
+        if isinstance(dashboard_result, Exception):
+            logger.warning(f"Life admin dashboard fetch failed: {dashboard_result}")
+            dashboard_result = {"error": str(dashboard_result)}
+
+        now = datetime.now(UK_TZ)
+
+        # Structure alerts by priority
+        alerts_by_priority = {
+            "overdue": [],
+            "critical": [],
+            "high": [],
+            "medium": [],
+            "low": [],
+        }
+        if isinstance(alerts_result, dict) and "error" not in alerts_result:
+            for alert in alerts_result.get("alerts", []):
+                priority = alert.get("alert_priority", "medium")
+                if alert.get("overdue"):
+                    alerts_by_priority["overdue"].append(alert)
+                elif priority in alerts_by_priority:
+                    alerts_by_priority[priority].append(alert)
+
+        # Build summary from dashboard data
+        summary = {}
+        if isinstance(dashboard_result, dict) and "error" not in dashboard_result:
+            summary = {
+                "total_active": dashboard_result.get("total_active", 0),
+                "due_this_week": dashboard_result.get("due_this_week", 0),
+                "due_this_month": dashboard_result.get("due_this_month", 0),
+                "overdue": dashboard_result.get("overdue", 0),
+            }
+
+        return {
+            "alerts": alerts_by_priority,
+            "summary": summary,
+            "date": now.strftime("%Y-%m-%d"),
+        }
+    except Exception as e:
+        logger.error(f"Life admin scan data fetch error: {e}")
+        return {"error": str(e)}
+
+
+async def get_life_admin_email_scan_data() -> dict[str, Any]:
+    """Fetch Gmail emails and existing obligations for life-admin-email-scan skill."""
+    try:
+        # Run all Gmail searches and obligation fetch in parallel
+        (
+            insurance_result,
+            dvla_result,
+            mot_result,
+            council_result,
+            utility_result,
+            passport_result,
+            domain_result,
+            school_result,
+            warranty_result,
+            obligations_result,
+        ) = await asyncio.gather(
+            _hadley_request("/gmail/search?q=subject:(renewal OR premium OR policy) newer_than:2d&max_results=10"),
+            _hadley_request("/gmail/search?q=from:dvla newer_than:7d&max_results=5"),
+            _hadley_request("/gmail/search?q=subject:(MOT OR service OR booking) from:(garage OR halfords OR kwik-fit) newer_than:7d&max_results=5"),
+            _hadley_request("/gmail/search?q=from:(council OR .gov.uk) subject:(council tax OR bill) newer_than:7d&max_results=5"),
+            _hadley_request("/gmail/search?q=subject:(bill OR statement OR renewal) from:(british gas OR octopus OR bulb OR sky OR bt) newer_than:2d&max_results=10"),
+            _hadley_request("/gmail/search?q=from:hmpo subject:passport newer_than:30d&max_results=3"),
+            _hadley_request("/gmail/search?q=subject:(domain renewal OR domain expir) newer_than:7d&max_results=5"),
+            _hadley_request("/gmail/search?q=from:(school OR parentpay) subject:(payment OR meal OR trip) newer_than:2d&max_results=5"),
+            _hadley_request("/gmail/search?q=subject:(warranty OR guarantee OR registration) newer_than:7d&max_results=5"),
+            _hadley_request("/life-admin/obligations"),
+            return_exceptions=True,
+        )
+
+        now = datetime.now(UK_TZ)
+
+        # Build email results dict, handling individual failures
+        email_categories = {
+            "insurance": insurance_result,
+            "dvla": dvla_result,
+            "mot_service": mot_result,
+            "council": council_result,
+            "utility": utility_result,
+            "passport": passport_result,
+            "domain": domain_result,
+            "school": school_result,
+            "warranty": warranty_result,
+        }
+
+        email_results = {}
+        for category, result in email_categories.items():
+            if isinstance(result, Exception):
+                logger.warning(f"Life admin email scan '{category}' failed: {result}")
+                email_results[category] = []
+            elif isinstance(result, dict) and "error" in result:
+                logger.warning(f"Life admin email scan '{category}' error: {result['error']}")
+                email_results[category] = []
+            else:
+                email_results[category] = result.get("emails", result) if isinstance(result, dict) else result
+
+        # Handle obligations result
+        existing_obligations = []
+        if isinstance(obligations_result, Exception):
+            logger.warning(f"Life admin obligations fetch failed: {obligations_result}")
+        elif isinstance(obligations_result, dict) and "error" not in obligations_result:
+            existing_obligations = obligations_result.get("obligations", obligations_result)
+
+        return {
+            "email_results": email_results,
+            "existing_obligations": existing_obligations,
+            "scan_timestamp": now.strftime("%Y-%m-%d %H:%M"),
+        }
+    except Exception as e:
+        logger.error(f"Life admin email scan data fetch error: {e}")
+        return {"error": str(e)}
+
+
+async def get_life_admin_compare_data() -> dict[str, Any]:
+    """Fetch all active obligations for life-admin-compare conversational skill."""
+    try:
+        obligations_result = await _hadley_request("/life-admin/obligations")
+
+        now = datetime.now(UK_TZ)
+
+        obligations = []
+        if isinstance(obligations_result, dict) and "error" not in obligations_result:
+            obligations = obligations_result.get("obligations", obligations_result)
+
+        return {
+            "obligations": obligations,
+            "date": now.strftime("%Y-%m-%d"),
+        }
+    except Exception as e:
+        logger.error(f"Life admin compare data fetch error: {e}")
+        return {"error": str(e)}
+
+
+async def get_life_admin_dashboard_data() -> dict[str, Any]:
+    """Fetch dashboard and scan history for life-admin-dashboard weekly skill."""
+    try:
+        dashboard_result, scans_result = await asyncio.gather(
+            _hadley_request("/life-admin/dashboard"),
+            _hadley_request("/life-admin/scans?limit=7"),
+            return_exceptions=True,
+        )
+
+        now = datetime.now(UK_TZ)
+
+        # Handle individual failures
+        dashboard = {}
+        if isinstance(dashboard_result, Exception):
+            logger.warning(f"Life admin dashboard fetch failed: {dashboard_result}")
+        elif isinstance(dashboard_result, dict) and "error" not in dashboard_result:
+            dashboard = dashboard_result
+
+        recent_scans = []
+        if isinstance(scans_result, Exception):
+            logger.warning(f"Life admin scans fetch failed: {scans_result}")
+        elif isinstance(scans_result, dict) and "error" not in scans_result:
+            recent_scans = scans_result.get("scans", scans_result)
+
+        return {
+            "dashboard": dashboard,
+            "recent_scans": recent_scans,
+            "date": now.strftime("%Y-%m-%d"),
+        }
+    except Exception as e:
+        logger.error(f"Life admin dashboard data fetch error: {e}")
         return {"error": str(e)}
 
 
@@ -3764,4 +4063,11 @@ SKILL_DATA_FETCHERS = {
     "system-health": get_system_health_data,
     # Pocket money weekly
     "pocket-money-weekly": get_pocket_money_weekly_data,
+    # Second Brain orphan embedding
+    "orphan-embed": get_orphan_embed_data,
+    # Life Admin
+    "life-admin-scan": get_life_admin_scan_data,
+    "life-admin-email-scan": get_life_admin_email_scan_data,
+    "life-admin-compare": get_life_admin_compare_data,
+    "life-admin-dashboard": get_life_admin_dashboard_data,
 }

@@ -10,9 +10,13 @@ Run `!reload-schedule` after editing to apply changes.
 | Job | Skill | Schedule | Channel | Enabled |
 |-----|-------|----------|---------|---------|
 | Parser Improvement | parser-improve | 02:00 UK | #peter-heartbeat!quiet | yes |
+| Orphan Embed | orphan-embed | 03:00 UK | #alerts | yes |
 | Morning Laughs | morning-laughs | 06:30 UK | #peterbot | yes |
 | Morning Quality Report | morning-quality-report | 06:45 UK | #peter-heartbeat | yes |
 | System Health | system-health | 06:50 UK | #alerts | yes |
+| Life Admin Scan | life-admin-scan | 08:30 UK | #alerts+WhatsApp:chris | yes |
+| Life Admin Email Scan | life-admin-email-scan | 03:30 UK | #peter-heartbeat!quiet | yes |
+| Life Admin Dashboard | life-admin-dashboard | Sunday 09:15 UK | #peterbot | yes |
 | Morning Briefing | morning-briefing | 07:01 UK | #ai-briefings | yes |
 | Morning News | news | 07:02 UK | #news | yes |
 | Kids Daily Briefing | kids-daily | 07:25 UK | #peterbot+WhatsApp:group | yes |

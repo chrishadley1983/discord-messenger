@@ -502,6 +502,25 @@ Uses the same `.env` as the main Discord bot:
 - `PUT /model/switch` - Switch provider: `{"provider": "claude"|"kimi", "reason": "manual"}`
 - `PUT /model/auto-switch` - Toggle auto-recovery: `{"enabled": true|false}`
 
+### Life Admin
+
+Proactive life admin obligation tracking and alerting.
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | /life-admin/obligations | No | List obligations (query: status, category) |
+| GET | /life-admin/obligations/{id} | No | Get single obligation |
+| POST | /life-admin/obligations | Yes | Create obligation |
+| PATCH | /life-admin/obligations/{id} | Yes | Update obligation |
+| DELETE | /life-admin/obligations/{id} | Yes | Delete obligation |
+| POST | /life-admin/obligations/{id}/action | Yes | Mark as actioned (auto-advances recurrence) |
+| POST | /life-admin/obligations/{id}/snooze | Yes | Snooze until date |
+| GET | /life-admin/alerts | No | Computed alerts by urgency tier |
+| GET | /life-admin/dashboard | No | All obligations grouped by status |
+| POST | /life-admin/alerts/record | Yes | Record alert sent (prevents re-sending) |
+| POST | /life-admin/scans | Yes | Record email scan result |
+| GET | /life-admin/scans | No | Recent scan history |
+
 ### System Health (Job Monitoring)
 
 - `GET /jobs/health?hours=24` - Unified job health across DM + HB. Returns per-system stats: total, success, errors, success_rate, failures[], per_job[]. DM data from SQLite job_history.db, HB data from Supabase job_execution_history via HB API proxy.
