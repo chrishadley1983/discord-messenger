@@ -481,18 +481,34 @@ async def on_ready():
     # Second Brain health check — daily at 7:05am UK (staggered from 07:00 to avoid collision)
     ALERTS_CHANNEL_ID = 1466019126194606286
 
+    async def post_to_discord(channel_id: int, text: str):
+        """Post a text message via peter-channel HTTP, fallback to bot client."""
+        import httpx
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    "http://127.0.0.1:8104/post",
+                    json={"channel_id": str(channel_id), "chunks": [text]},
+                    timeout=15,
+                )
+                if resp.status_code == 200:
+                    return
+                logger.warning(f"peter-channel returned {resp.status_code}, falling back to bot client")
+        except Exception as e:
+            logger.warning(f"peter-channel HTTP failed ({e}), falling back to bot client")
+        # Fallback: use bot's discord.py client
+        channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
+        if channel:
+            await channel.send(text)
+
     async def daily_health_check():
         """Post daily health status to #alerts."""
         try:
             from domains.second_brain.health import get_health_report, format_daily_discord
             report = await get_health_report()
             message = format_daily_discord(report)
-            channel = bot.get_channel(ALERTS_CHANNEL_ID)
-            if not channel:
-                channel = await bot.fetch_channel(ALERTS_CHANNEL_ID)
-            if channel:
-                await channel.send(message)
-                logger.info("Posted daily health check to #alerts")
+            await post_to_discord(ALERTS_CHANNEL_ID, message)
+            logger.info("Posted daily health check to #alerts")
         except Exception as e:
             logger.error(f"Daily health check failed: {e}")
 
@@ -518,12 +534,8 @@ async def on_ready():
             report = await get_health_report()
             digest_data = await generate_weekly_digest()
             message = format_weekly_discord(report, digest_data)
-            channel = bot.get_channel(ALERTS_CHANNEL_ID)
-            if not channel:
-                channel = await bot.fetch_channel(ALERTS_CHANNEL_ID)
-            if channel:
-                await channel.send(message)
-                logger.info("Posted weekly health digest to #alerts")
+            await post_to_discord(ALERTS_CHANNEL_ID, message)
+            logger.info("Posted weekly health digest to #alerts")
         except Exception as e:
             logger.error(f"Weekly health digest failed: {e}")
 
@@ -546,9 +558,7 @@ async def on_ready():
     # Claude Code domain startup - restore active session
     startup_msg = claude_code_startup()
     if startup_msg:
-        channel = bot.get_channel(CLAUDE_CODE_CHANNEL)
-        if channel:
-            await channel.send(startup_msg)
+        await post_to_discord(CLAUDE_CODE_CHANNEL, startup_msg)
 
     # Peterbot domain startup - start memory retry task
     peterbot_startup()
@@ -733,13 +743,7 @@ async def on_message(message):
     # channel MCP server (Peter H bot) — skip router_v2 processing here.
     _PETERBOT_USE_CHANNEL = os.environ.get("PETERBOT_USE_CHANNEL", "0") == "1"
     if message.channel.id in PETERBOT_CHANNEL_IDS and _PETERBOT_USE_CHANNEL:
-        # Smart fallback: check if Peter H bot is actually online in the guild
-        # If the channel session crashed, Peter H goes offline and we fall through to router_v2
-        _PETER_H_BOT_ID = 1487089363757043893
-        peter_h = message.guild.get_member(_PETER_H_BOT_ID) if message.guild else None
-        if peter_h and peter_h.status != discord.Status.offline:
-            return  # Channel is alive, let Peter H handle it
-        logger.warning("Peter H bot offline — falling back to router_v2 for Discord messages")
+        return  # Peter H handles all chat — no fallback to router_v2
     if message.channel.id in PETERBOT_CHANNEL_IDS:
         async with message.channel.typing():
             # Check if buffer needs populating from Discord history (e.g., after restart)

@@ -14,12 +14,15 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { createServer, IncomingMessage, ServerResponse } from "http";
 import {
   Client,
   Events,
   GatewayIntentBits,
   Partials,
   TextChannel,
+  EmbedBuilder,
+  AttachmentBuilder,
 } from "discord.js";
 
 // ---------------------------------------------------------------------------
@@ -92,6 +95,11 @@ const mcp = new Server(
 
 const lastUserMessage = new Map<string, string>();
 
+// Message volume tracking for cost visibility
+let messagesIn = 0;   // Messages received from Discord
+let messagesOut = 0;  // Messages sent via reply tool
+const sessionStart = new Date().toISOString();
+
 // Hadley API base URL (accessible from WSL via host gateway)
 const HADLEY_API = "http://172.19.64.1:8100";
 
@@ -147,6 +155,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   for (const chunk of chunks) {
     await channel.send(chunk);
   }
+  messagesOut++;
 
   // Fire-and-forget: capture conversation to Second Brain
   const userMsg = lastUserMessage.get(chat_id);
@@ -277,12 +286,64 @@ discord.on(Events.MessageCreate, async (message) => {
   // Track last user message per channel (for Second Brain capture in reply tool)
   lastUserMessage.set(message.channelId, content);
 
+  // Fetch recent channel history so Claude has context of what was previously
+  // said in this channel — critical for replies to scheduled job output that
+  // bypasses Claude's session (posted directly via HTTP :8104).
+  let recentHistory = "";
+  try {
+    const channel = message.channel as TextChannel;
+    const history = await channel.messages.fetch({ limit: 6, before: message.id });
+    if (history.size > 0) {
+      const lines: string[] = [];
+      // Reverse to chronological order (oldest first)
+      const sorted = [...history.values()].reverse();
+      for (const msg of sorted) {
+        const who = msg.author.bot ? "Peter" : msg.author.username;
+        const text = msg.content || "";
+        if (!text.trim()) continue;
+        // Truncate long messages (scheduled job output can be huge)
+        // 1500 chars keeps enough context for skill follow-ups (e.g. pocket money grid)
+        const truncated = text.length > 1500 ? text.slice(0, 1500) + "..." : text;
+        lines.push(`${who}: ${truncated}`);
+      }
+      if (lines.length > 0) {
+        recentHistory = "\n\n[Recent channel history for context]\n" + lines.join("\n");
+      }
+    }
+  } catch (err) {
+    log(`Failed to fetch channel history: ${err}`);
+  }
+
+  // Check for active skill context from a recent conversational scheduled job.
+  // When a job like pocket-money-weekly posts output, Chris may reply in this
+  // channel. The skill instructions tell Claude how to handle the follow-up
+  // (e.g. how to credit balances). Without this, Claude has no skill context.
+  let skillContext = "";
+  try {
+    if (existsSync(ACTIVE_SKILL_CONTEXT_PATH)) {
+      const raw = readFileSync(ACTIVE_SKILL_CONTEXT_PATH, "utf-8");
+      const ctx = JSON.parse(raw);
+      const age = (Date.now() - new Date(ctx.timestamp).getTime()) / 60000;
+      const ttl = ctx.ttl_minutes || 60;
+      if (age <= ttl) {
+        skillContext =
+          `\n\n[Active scheduled skill: ${ctx.skill}]\n` +
+          `This skill recently posted output to this channel. ` +
+          `The user may be responding to it. Follow the skill instructions below to handle their reply.\n\n` +
+          ctx.skill_content;
+        log(`Injected active skill context: ${ctx.skill} (${Math.round(age)}m old)`);
+      }
+    }
+  } catch (err) {
+    log(`Failed to read active skill context: ${err}`);
+  }
+
   // Push into Claude Code session
   try {
     await mcp.notification({
       method: "notifications/claude/channel",
       params: {
-        content,
+        content: content + recentHistory + skillContext,
         meta: {
           chat_id: message.channelId,
           channel_name: (message.channel as TextChannel).name || "unknown",
@@ -292,6 +353,7 @@ discord.on(Events.MessageCreate, async (message) => {
         },
       },
     });
+    messagesIn++;
     log(`Forwarded message from ${message.author.username}: ${content.slice(0, 80)}...`);
   } catch (err) {
     log(`Failed to forward message: ${err}`);
@@ -302,7 +364,15 @@ discord.on(Events.MessageCreate, async (message) => {
 // Start
 // ---------------------------------------------------------------------------
 
-import { appendFileSync } from "fs";
+import { appendFileSync, readFileSync, existsSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
+
+const __filename_local = fileURLToPath(import.meta.url);
+const __dirname_local = dirname(__filename_local);
+const PROJECT_ROOT = resolve(__dirname_local, "..", "..");
+const ACTIVE_SKILL_CONTEXT_PATH = resolve(PROJECT_ROOT, "data", "active_skill_context.json");
+
 const LOG_FILE = "/tmp/peter-channel-app.log";
 function log(msg: string) {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -310,8 +380,131 @@ function log(msg: string) {
   try { appendFileSync(LOG_FILE, line + "\n"); } catch {}
 }
 
+// ---------------------------------------------------------------------------
+// HTTP server — scheduler.py posts pre-processed messages here for delivery
+// ---------------------------------------------------------------------------
+
+const HTTP_PORT = parseInt(process.env.HTTP_PORT || "8104", 10);
+
+function parseBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    req.on("error", reject);
+  });
+}
+
+interface PostRequest {
+  channel_id: string;
+  chunks: string[];
+  embed?: Record<string, any>;
+  embeds?: Record<string, any>[];
+  files?: Array<{ data: string; filename: string }>;
+}
+
+const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+  // Health check
+  if (req.method === "GET" && req.url === "/health") {
+    const discordOk = discord.isReady();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      status: "ok",
+      discord: discordOk ? "connected" : "disconnected",
+      session_start: sessionStart,
+      messages_in: messagesIn,
+      messages_out: messagesOut,
+    }));
+    return;
+  }
+
+  // Post message to Discord channel
+  if (req.method === "POST" && req.url === "/post") {
+    let body: PostRequest;
+    try {
+      body = JSON.parse(await parseBody(req));
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "invalid JSON" }));
+      return;
+    }
+
+    const { channel_id, chunks, embed, embeds, files } = body;
+    if (!channel_id || !chunks || !Array.isArray(chunks)) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "channel_id and chunks[] required" }));
+      return;
+    }
+
+    try {
+      const channel = await discord.channels.fetch(channel_id);
+      if (!channel || !(channel instanceof TextChannel)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `Channel ${channel_id} not found or not a text channel` }));
+        return;
+      }
+
+      let messagesSent = 0;
+
+      // Build file attachments from base64
+      const attachments: AttachmentBuilder[] = [];
+      if (files && files.length > 0) {
+        for (const f of files) {
+          attachments.push(new AttachmentBuilder(Buffer.from(f.data, "base64"), { name: f.filename }));
+        }
+      }
+
+      // Send text chunks
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        if (!chunk.trim()) continue;
+
+        if (i === 0) {
+          // First chunk: attach embed and files
+          const opts: any = {};
+          if (embed) opts.embeds = [new EmbedBuilder(embed)];
+          if (attachments.length > 0) opts.files = attachments;
+          await channel.send({ content: chunk, ...opts });
+        } else {
+          await channel.send(chunk);
+        }
+        messagesSent++;
+      }
+
+      // Send additional embeds after all text chunks
+      if (embeds && embeds.length > 0) {
+        for (const e of embeds) {
+          await channel.send({ embeds: [new EmbedBuilder(e)] });
+          messagesSent++;
+        }
+      }
+
+      log(`POST /post: sent ${messagesSent} messages to ${channel_id}`);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, messages_sent: messagesSent }));
+    } catch (err) {
+      log(`POST /post error: ${err}`);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
+  res.writeHead(404);
+  res.end("not found");
+});
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
 async function main() {
   log("Starting peter-channel...");
+
+  // Start HTTP server for scheduler delivery
+  httpServer.listen(HTTP_PORT, "127.0.0.1", () => {
+    log(`HTTP server listening on 127.0.0.1:${HTTP_PORT}`);
+  });
 
   // Start Discord login first (non-blocking — gateway handshake runs in background)
   const discordReady = discord.login(DISCORD_TOKEN);

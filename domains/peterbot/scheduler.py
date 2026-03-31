@@ -145,6 +145,9 @@ class PeterbotScheduler:
         # News article history log for deduplication
         self._news_history_path = Path(__file__).parent.parent.parent / "data" / "news_history.jsonl"
 
+        # Active skill context for cross-channel injection (conversational jobs)
+        self._active_skill_context_path = Path(__file__).parent.parent.parent / "data" / "active_skill_context.json"
+
     def set_data_fetchers(self, fetchers: dict[str, Callable]):
         """Set data fetcher functions for skills."""
         self.data_fetchers = fetchers
@@ -206,6 +209,40 @@ class PeterbotScheduler:
             parts.append("")
 
         return "\n".join(parts)
+
+    def _is_conversational_skill(self, skill_name: str) -> bool:
+        """Check if a skill is marked conversational (expects follow-up replies)."""
+        skill_path = self.skills_path / skill_name / "SKILL.md"
+        if not skill_path.exists():
+            return False
+        try:
+            content = skill_path.read_text(encoding="utf-8")
+            frontmatter = self._parse_skill_frontmatter(content)
+            return bool(frontmatter and frontmatter.get("conversational", False))
+        except Exception:
+            return False
+
+    def _write_active_skill_context(self, job: JobConfig, skill_content: str) -> None:
+        """Write active skill context for cross-channel injection.
+
+        When a conversational scheduled job posts output, peter-channel needs
+        the skill instructions to handle follow-up replies from Chris.
+        This file bridges that gap.
+        """
+        context = {
+            "skill": job.skill,
+            "channel": job.channel,
+            "timestamp": datetime.now(UK_TZ).isoformat(),
+            "ttl_minutes": 60,
+            "skill_content": skill_content,
+        }
+        try:
+            self._active_skill_context_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._active_skill_context_path, "w", encoding="utf-8") as f:
+                json.dump(context, f, indent=2)
+            logger.info(f"Wrote active skill context for {job.skill}")
+        except Exception as e:
+            logger.warning(f"Failed to write active skill context: {e}")
 
     def load_schedule(self) -> int:
         """Load schedule from SCHEDULE.md and register jobs.
@@ -799,6 +836,11 @@ class PeterbotScheduler:
                 if job.skill == "news":
                     self._save_news_history(response)
 
+                # 8c. Write active skill context for conversational jobs
+                # so peter-channel can inject skill instructions on follow-up replies
+                if self._is_conversational_skill(job.skill):
+                    self._write_active_skill_context(job, skill_content)
+
                 if health_tracker:
                     health_tracker.record_job_result(
                         job.name, success=True, duration_seconds=duration,
@@ -1135,8 +1177,62 @@ class PeterbotScheduler:
             clean_message = message.replace("---HEARTBEAT---", "").replace("---PETERBOT---", "\n\n")
             await self._post_single_channel(job.channel, clean_message, job, files=files)
 
+    async def _post_via_peter_channel(self, channel_id: int, processed, files: list = None) -> bool:
+        """Post pre-processed message via peter-channel's HTTP endpoint.
+
+        Returns True on success, False on failure (caller should fallback).
+        """
+        import httpx
+        import base64
+        import os
+
+        payload = {
+            "channel_id": str(channel_id),
+            "chunks": [c for c in processed.chunks if c.strip()],
+        }
+
+        if processed.embed:
+            payload["embed"] = processed.embed
+        if processed.embeds:
+            payload["embeds"] = processed.embeds
+
+        # Encode file attachments as base64
+        if files:
+            file_attachments = []
+            for filepath, filename in files:
+                if os.path.exists(filepath):
+                    try:
+                        with open(filepath, "rb") as f:
+                            file_attachments.append({
+                                "data": base64.b64encode(f.read()).decode("ascii"),
+                                "filename": filename,
+                            })
+                    except Exception as e:
+                        logger.warning(f"Failed to read file {filepath}: {e}")
+            if file_attachments:
+                payload["files"] = file_attachments
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    "http://127.0.0.1:8104/post",
+                    json=payload,
+                    timeout=30,
+                )
+                if resp.status_code == 200:
+                    return True
+                else:
+                    logger.warning(f"peter-channel returned {resp.status_code}: {resp.text}")
+                    return False
+        except Exception as e:
+            logger.warning(f"peter-channel HTTP failed: {e}")
+            return False
+
     async def _post_single_channel(self, channel_name: str, message: str, job: JobConfig, files: list = None):
         """Post message to a single Discord channel.
+
+        Tries peter-channel HTTP first (Peter H bot), falls back to bot.py's
+        discord.py client (legacy Peter) if peter-channel is unavailable.
 
         Args:
             channel_name: Target channel name (e.g., "#peterbot")
@@ -1158,14 +1254,6 @@ class PeterbotScheduler:
                 logger.error(f"Unknown channel: {channel_name}")
                 return
 
-        channel = self.bot.get_channel(channel_id)
-        if not channel:
-            try:
-                channel = await self.bot.fetch_channel(channel_id)
-            except Exception as e:
-                logger.error(f"Could not find channel {channel_name} ({channel_id}): {e}")
-                return
-
         # Process through Response Pipeline (sanitise → classify → format → chunk)
         # When using v2, output is clean JSON — skip sanitiser
         processed = process_response(
@@ -1173,6 +1261,23 @@ class PeterbotScheduler:
             {'user_prompt': f'[Scheduled: {job.skill}]'},
             pre_sanitised=True,
         )
+
+        # Try peter-channel HTTP first (delivers via Peter H bot)
+        success = await self._post_via_peter_channel(channel_id, processed, files=files)
+        if success:
+            logger.debug(f"Posted to {channel_name} via peter-channel (type={processed.response_type.value}, files={len(files)})")
+            return
+
+        # Fallback: use bot.py's discord.py client (legacy Peter)
+        logger.warning(f"Falling back to bot.py for {channel_name}")
+
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+            except Exception as e:
+                logger.error(f"Could not find channel {channel_name} ({channel_id}): {e}")
+                return
 
         # Build Discord file attachments
         discord_files = []
@@ -1207,7 +1312,7 @@ class PeterbotScheduler:
             embed_obj = discord.Embed.from_dict(embed_data)
             await channel.send(embed=embed_obj)
 
-        logger.debug(f"Posted to {channel_name} (type={processed.response_type.value}, files={len(files)})")
+        logger.debug(f"Posted to {channel_name} via bot.py fallback (type={processed.response_type.value}, files={len(files)})")
 
     async def _capture_to_memory(self, job: JobConfig, response: str):
         """Legacy scheduled job memory capture — disabled.
