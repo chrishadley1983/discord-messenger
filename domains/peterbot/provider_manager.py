@@ -178,6 +178,49 @@ def set_active_provider(provider: str, reason: str) -> None:
     _write_state(state)
     logger.info(f"Provider switched: {old_provider} → {provider} (reason: {reason})")
 
+    # Alert on failover (fire-and-forget with delivery guarantee)
+    if "auto_failover" in reason:
+        _send_failover_alert(old_provider, provider, reason)
+
+
+# Deduplication: suppress repeat alerts within 60 seconds per transition
+_last_failover_alert: dict[str, float] = {}
+_FAILOVER_ALERT_COOLDOWN = 60  # seconds
+
+
+def _send_failover_alert(old_provider: str, new_provider: str, reason: str) -> None:
+    """Post failover alert to Discord #alerts. Deduped with 60s cooldown."""
+    try:
+        import threading
+        import httpx as _httpx
+
+        # Dedup: skip if same transition alerted recently
+        transition_key = f"{old_provider}->{new_provider}"
+        now = time.time()
+        last = _last_failover_alert.get(transition_key, 0)
+        if now - last < _FAILOVER_ALERT_COOLDOWN:
+            logger.info(f"Failover alert suppressed (cooldown): {transition_key}")
+            return
+        _last_failover_alert[transition_key] = now
+
+        webhook_url = os.environ.get("DISCORD_WEBHOOK_ALERTS", "")
+        if not webhook_url:
+            return
+
+        msg = f"⚠️ **Provider failover**: {old_provider} → {new_provider}. Reason: {reason}"
+
+        def _post():
+            try:
+                _httpx.post(webhook_url, json={"content": msg, "username": "Provider Monitor"}, timeout=10)
+            except Exception as e:
+                logger.warning(f"Failover alert delivery failed: {e}")
+
+        t = threading.Thread(target=_post, daemon=False)
+        t.start()
+        t.join(timeout=5)  # Wait up to 5s for delivery before continuing
+    except Exception as e:
+        logger.warning(f"Failover alert error: {e}")
+
 
 def get_provider_status() -> dict:
     """Get full provider status for API/dashboard."""
