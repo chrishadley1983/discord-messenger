@@ -85,21 +85,38 @@ async def _amazon_revenue(start: str, end: str) -> dict:
         "transaction_type": "eq.Shipment",
         "posted_date": f"gte.{start}",
         "and": f"(posted_date.lte.{end})",
-        "select": "gross_sales_amount,total_fees,total_amount",
+        "select": "amazon_order_id,gross_sales_amount,total_fees,total_amount",
     }, paginate=True)
+
+    # Deduplicate by amazon_order_id — the sync can import both the order
+    # event and the settlement event as separate rows with different
+    # posted_date but identical amounts.
+    seen_orders: dict[str, dict] = {}
+    for t in sales:
+        oid = t.get("amazon_order_id") or id(t)
+        if oid not in seen_orders:
+            seen_orders[oid] = t
+    sales = list(seen_orders.values())
 
     gross = sum(safe_float(t.get("gross_sales_amount")) for t in sales)
     fees = sum(abs(safe_float(t.get("total_fees"))) for t in sales)
     net_settlements = sum(safe_float(t.get("total_amount")) for t in sales)
 
-    # Refunds
+    # Refunds (also deduplicate by order ID)
     refunds = await public_query("amazon_transactions", {
         **_user_filter(),
         "transaction_type": "in.(Refund,GuaranteeClaimRefund)",
         "posted_date": f"gte.{start}",
         "and": f"(posted_date.lte.{end})",
-        "select": "total_amount",
+        "select": "amazon_order_id,total_amount",
     }, paginate=True)
+
+    seen_refunds: dict[str, dict] = {}
+    for t in refunds:
+        oid = t.get("amazon_order_id") or id(t)
+        if oid not in seen_refunds:
+            seen_refunds[oid] = t
+    refunds = list(seen_refunds.values())
 
     refund_total = sum(abs(safe_float(t.get("total_amount"))) for t in refunds)
 

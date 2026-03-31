@@ -337,5 +337,30 @@ async def save_to_brain(content: str, note: str = "", tags: str = "") -> str:
         return f"Save failed: {e}"
 
 
+@mcp.tool()
+async def delete_item(item_id: str) -> str:
+    """Delete (archive) an item from Chris's knowledge base.
+
+    Use when Chris wants to remove outdated or incorrect items from the second brain.
+    This performs a soft delete (archive) so the item can be recovered if needed.
+
+    Args:
+        item_id: UUID of the knowledge item to delete (from search_knowledge or list_items results)
+    """
+    try:
+        item = await db.get_knowledge_item(UUID(item_id))
+        if not item:
+            return f"Item {item_id} not found."
+
+        title = item.title or "Untitled"
+        await db.archive_knowledge_item(UUID(item_id))
+        return f"Deleted (archived): **{title}** ({item_id})"
+
+    except ValueError:
+        return f"Invalid UUID: {item_id}"
+    except Exception as e:
+        return f"Failed to delete item: {e}"
+
+
 if __name__ == "__main__":
     mcp.run()
