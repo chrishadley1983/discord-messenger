@@ -42,6 +42,11 @@ const HADLEY_AUTH_KEY = process.env.HADLEY_AUTH_KEY || "";
 
 const lastUserMessage = new Map<string, string>();
 
+// Message volume tracking
+let messagesIn = 0;
+let messagesOut = 0;
+const sessionStart = new Date().toISOString();
+
 // Chris's WhatsApp number — used for is_admin flag (self-modification gate)
 const ADMIN_WHATSAPP_NUMBERS = new Set(["447855620978"]);
 
@@ -172,6 +177,7 @@ async function handleReply(phone: string, text: string) {
       return { content: [{ type: "text" as const, text: `Send failed: ${resp.status}` }] };
     }
 
+    messagesOut++;
     log(`Reply sent to ${phone}: ${text.trim().slice(0, 80)}...`);
   } catch (err) {
     log(`Reply error: ${err}`);
@@ -249,7 +255,12 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   // Health check
   if (req.method === "GET" && req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok" }));
+    res.end(JSON.stringify({
+      status: "ok",
+      session_start: sessionStart,
+      messages_in: messagesIn,
+      messages_out: messagesOut,
+    }));
     return;
   }
 
@@ -296,6 +307,7 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
       },
     });
 
+    messagesIn++;
     log(`Forwarded WhatsApp from ${sender_name}: ${text.slice(0, 80)}...`);
     res.writeHead(200);
     res.end(JSON.stringify({ status: "forwarded" }));

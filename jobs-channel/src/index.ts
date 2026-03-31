@@ -40,6 +40,11 @@ function log(msg: string) {
 const HTTP_PORT = parseInt(process.env.HTTP_PORT || "8103", 10);
 const JOB_TIMEOUT_MS = parseInt(process.env.JOB_TIMEOUT_MS || "180000", 10); // 3 min default
 
+// Message volume tracking
+let jobsIn = 0;
+let jobsOut = 0;
+const sessionStart = new Date().toISOString();
+
 // ---------------------------------------------------------------------------
 // Synchronous coordination: pending jobs
 // ---------------------------------------------------------------------------
@@ -161,7 +166,13 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   // Health check
   if (req.method === "GET" && req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", pending_jobs: pendingJobs.size }));
+    res.end(JSON.stringify({
+      status: "ok",
+      pending_jobs: pendingJobs.size,
+      session_start: sessionStart,
+      jobs_in: jobsIn,
+      jobs_out: jobsOut,
+    }));
     return;
   }
 
@@ -188,6 +199,7 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   }
 
   const jobId = randomUUID();
+  jobsIn++;
   log(`Job received: ${skill} (${jobId})`);
 
   try {
@@ -224,6 +236,7 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
     // Wait for reply tool to resolve the promise
     const response = await responsePromise;
 
+    jobsOut++;
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ response }));
   } catch (err) {

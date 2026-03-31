@@ -54,7 +54,10 @@ _DASHBOARD_AUTH_KEY = os.getenv("HADLEY_AUTH_KEY", "")
 def require_auth(x_api_key: str = Header(default="")):
     """Reject requests without a valid API key on protected endpoints."""
     if not _DASHBOARD_AUTH_KEY:
-        return  # No key configured — fail open (dev mode)
+        raise HTTPException(
+            status_code=503,
+            detail="HADLEY_AUTH_KEY not configured — refusing to serve without auth",
+        )
     if x_api_key != _DASHBOARD_AUTH_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
@@ -103,19 +106,23 @@ MONITORED_SERVICES = {
     },
     "peter_channel": {
         "name": "Discord Channel",
-        "check_type": "tmux",
-        "tmux_session": "peter-channel",
+        "url": "http://localhost:8104/health",
+        "check_type": "http_any",
+        "tmux_session": "peter-channel",  # fallback check
         "critical": True,
     },
     "whatsapp_channel": {
         "name": "WhatsApp Channel",
         "url": "http://localhost:8102/health",
         "check_type": "http_any",
+        "tmux_session": "whatsapp-channel",
         "critical": True,
     },
     "jobs_channel": {
         "name": "Jobs Channel",
         "url": "http://localhost:8103/health",
+        "check_type": "http_any",
+        "tmux_session": "jobs-channel",
         "critical": True,
     },
 }
@@ -768,6 +775,48 @@ async def get_system_status():
     }
 
 
+@app.get("/api/channel-stats")
+async def get_channel_stats():
+    """Live channel statistics — message volumes, session uptime, restart history."""
+    import httpx as _httpx
+
+    channels = {
+        "peter-channel": "http://localhost:8104/health",
+        "whatsapp-channel": "http://localhost:8102/health",
+        "jobs-channel": "http://localhost:8103/health",
+    }
+
+    stats = {}
+    async with _httpx.AsyncClient(timeout=5) as client:
+        for name, url in channels.items():
+            try:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    stats[name] = resp.json()
+                    stats[name]["responsive"] = True
+                else:
+                    stats[name] = {"responsive": False, "status_code": resp.status_code}
+            except Exception as e:
+                stats[name] = {"responsive": False, "error": str(e)}
+
+    # Read restart history from JSONL
+    restart_events = []
+    restarts_file = Path(__file__).parent.parent / "data" / "channel_restarts.jsonl"
+    if restarts_file.exists():
+        try:
+            lines = restarts_file.read_text(encoding="utf-8").strip().split("\n")
+            for line in lines[-50:]:  # Last 50 events
+                if line.strip():
+                    restart_events.append(json.loads(line))
+        except Exception:
+            pass
+
+    return {
+        "channels": stats,
+        "recent_restarts": restart_events,
+    }
+
+
 @app.get("/api/service-status")
 async def get_service_status():
     """Get detailed process status for all managed services."""
@@ -992,6 +1041,35 @@ async def restart_service_endpoint(request: Request, service: str):
         run_wsl_command("tmux send-keys -t claude-peterbot 'source ~/.profile && claude --permission-mode bypassPermissions' Enter")
         _save_restart_time(service)  # Record restart time
         return {"status": "restarting", "message": "Peterbot session recreated"}
+
+    elif service in ("peter_channel", "whatsapp_channel", "jobs_channel"):
+        # Restart a channel tmux session in WSL
+        channel_map = {
+            "peter_channel": {
+                "tmux": "peter-channel",
+                "script": "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/peter-channel/launch.sh",
+            },
+            "whatsapp_channel": {
+                "tmux": "whatsapp-channel",
+                "script": "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/whatsapp-channel/launch.sh",
+            },
+            "jobs_channel": {
+                "tmux": "jobs-channel",
+                "script": "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/jobs-channel/launch.sh",
+            },
+        }
+        ch = channel_map[service]
+        tmux_name = ch["tmux"]
+        launch_script = ch["script"]
+
+        # Kill existing session (if any)
+        run_wsl_command(f"tmux kill-session -t {tmux_name} 2>/dev/null || true")
+        import time; time.sleep(2)
+
+        # Relaunch in a new tmux session
+        run_wsl_command(f'tmux new-session -d -s {tmux_name} "bash \\"{launch_script}\\""')
+        _save_restart_time(service)
+        return {"status": "restarting", "message": f"{tmux_name} session recreated"}
 
     elif service == "peter_dashboard":
         # Self-restart: respond first, then exit after a short delay.
