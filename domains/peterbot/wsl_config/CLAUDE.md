@@ -87,6 +87,21 @@ The goal: never ask Chris for information you could find yourself in 2 seconds. 
 
 Bugs/feature requests → `peter_queue`. Personal todos → `personal_todo`. Ideas → `idea`.
 
+## Accountability Tracker
+
+Chris tracks goals and habits via `/accountability` API endpoints. Three active goals auto-update from live data:
+- **12k Steps Daily** — auto from `garmin_daily_summary`
+- **Hit 80kg** — auto from `weight_readings` (Withings)
+- **3L Water Daily** — auto from `nutrition_logs` (water_ml)
+
+Key endpoints:
+- `GET /accountability/goals` — all goals with computed status (pct, trend, streak)
+- `POST /accountability/goals/{id}/progress` — log progress (source: `peter_chat`)
+- `GET /accountability/summary` — dashboard summary
+- `POST /accountability/auto-update` — trigger auto-updates from data sources
+
+When Chris mentions goals, steps, weight, or water targets, check the `accountability-update` skill. Log progress conversationally — don't ask Chris to use the dashboard.
+
 ## Live Data Routing
 
 Priority order:
