@@ -852,6 +852,7 @@ const DetailPanel = {
     const panel = document.getElementById('detail-panel');
     if (panel) {
       panel.classList.remove('open');
+      panel.classList.remove('wide');
       State.set({ detailPanelOpen: false, selectedItem: null });
     }
     if (this._backdropHandler) {
@@ -8056,7 +8057,7 @@ const GoalsView = {
     const autoSource = document.getElementById('goal-auto-source').value || null;
 
     if (!title || !targetValue) {
-      Toast.show('Title and target value are required', 'error');
+      Toast.error('Validation', 'Title and target value are required');
       return;
     }
 
@@ -8076,10 +8077,10 @@ const GoalsView = {
     try {
       await API.post(`${this.HADLEY_API}/accountability/goals`, payload);
       Modal.close();
-      Toast.show('Goal created', 'success');
+      Toast.success('Goal', 'Created successfully');
       await this.loadGoals();
     } catch (e) {
-      Toast.show('Failed to create goal: ' + e.message, 'error');
+      Toast.error('Goal', 'Failed to create: ' + (e.message || 'error'));
     }
   },
 
@@ -8108,7 +8109,7 @@ const GoalsView = {
     const note = document.getElementById('log-note').value.trim() || null;
 
     if (isNaN(value)) {
-      Toast.show('Enter a valid number', 'error');
+      Toast.error('Validation', 'Enter a valid number');
       return;
     }
 
@@ -8117,10 +8118,10 @@ const GoalsView = {
         value, source: 'manual', note,
       });
       Modal.close();
-      Toast.show('Progress logged', 'success');
+      Toast.success('Progress', 'Logged successfully');
       await this.loadGoals();
     } catch (e) {
-      Toast.show('Failed to log: ' + e.message, 'error');
+      Toast.error('Progress', 'Failed to log: ' + (e.message || 'error'));
     }
   },
 
@@ -8128,10 +8129,10 @@ const GoalsView = {
     if (!confirm(`Abandon goal "${title}"?`)) return;
     try {
       await API.delete(`${this.HADLEY_API}/accountability/goals/${goalId}`);
-      Toast.show('Goal abandoned', 'success');
+      Toast.success('Goal', 'Abandoned');
       await this.loadGoals();
     } catch (e) {
-      Toast.show('Failed: ' + e.message, 'error');
+      Toast.error('Error', e.message || 'Request failed');
     }
   },
 
@@ -8201,26 +8202,64 @@ const GoalsView = {
           ${statsHtml}
           ${goal.description ? `<p style="color:var(--text-secondary); font-size:13px;">${Utils.escapeHtml(goal.description)}</p>` : ''}
 
+          ${this.renderBarChart(last31, goal)}
+
           <h4 style="margin: 16px 0 8px;">Last 7 Days</h4>
           <table class="goal-detail-table">
             <thead><tr><th>Date</th><th>Value</th><th>Change</th><th>Source</th></tr></thead>
             <tbody>${progressTableRows(last7) || '<tr><td colspan="4" style="text-align:center; color:var(--text-muted);">No data</td></tr>'}</tbody>
           </table>
 
-          <h4 style="margin: 16px 0 8px;">Last 31 Days</h4>
-          <table class="goal-detail-table">
-            <thead><tr><th>Date</th><th>Value</th><th>Change</th><th>Source</th></tr></thead>
-            <tbody>${progressTableRows(last31) || '<tr><td colspan="4" style="text-align:center; color:var(--text-muted);">No data</td></tr>'}</tbody>
-          </table>
+          <details style="margin-top: 12px;">
+            <summary style="cursor:pointer; font-size:13px; font-weight:600; color:var(--text-secondary);">Last 31 Days</summary>
+            <table class="goal-detail-table" style="margin-top:8px;">
+              <thead><tr><th>Date</th><th>Value</th><th>Change</th><th>Source</th></tr></thead>
+              <tbody>${progressTableRows(last31) || '<tr><td colspan="4" style="text-align:center; color:var(--text-muted);">No data</td></tr>'}</tbody>
+            </table>
+          </details>
 
           <h4 style="margin: 16px 0 8px;">Milestones</h4>
           <div class="goal-detail-milestones">${milestoneRows}</div>
         </div>
       `;
+      // Widen panel for chart
+      const panel = document.getElementById('detail-panel');
+      if (panel) panel.classList.add('wide');
       DetailPanel.open(content);
     } catch (e) {
-      Toast.show('Failed to load goal detail: ' + e.message, 'error');
+      Toast.error('Detail', e.message || 'Failed to load');
     }
+  },
+
+  renderBarChart(progress, goal) {
+    if (!progress || progress.length === 0) return '<div style="color:var(--text-muted); font-size:12px; padding:8px 0;">No chart data</div>';
+
+    const values = progress.map(p => parseFloat(p.value)).reverse(); // oldest first
+    const dates = progress.map(p => p.date).reverse();
+    const maxVal = Math.max(...values, parseFloat(goal.target_value) || 1);
+    const target = parseFloat(goal.target_value);
+    const isDown = goal.direction === 'down';
+
+    const bars = values.map((v, i) => {
+      const pct = Math.max(2, (v / maxVal) * 100);
+      const hit = isDown ? v <= target : v >= target;
+      const cls = goal.metric === 'boolean' ? (v >= 1 ? 'target-hit' : 'target-miss') : (hit ? 'target-hit' : '');
+      const day = dates[i] ? dates[i].slice(8, 10) : '';
+      return `<div style="display:flex; flex-direction:column; align-items:center; flex:1; min-width:0;">
+        <div class="goal-bar ${cls}" style="height:${pct}%;" title="${dates[i]}: ${this.formatValue(v, goal.metric)}"></div>
+        <div class="goal-bar-label">${day}</div>
+      </div>`;
+    }).join('');
+
+    // Target line position
+    const targetPct = target > 0 ? Math.min(100, (target / maxVal) * 100) : 0;
+
+    return `
+      <h4 style="margin: 16px 0 8px;">31-Day Chart</h4>
+      <div style="position:relative;">
+        ${targetPct > 0 ? `<div class="goal-chart-target-line" style="position:absolute; bottom:${targetPct}%; left:0; right:0; z-index:1;"><span style="position:absolute; right:0; top:-14px; font-size:9px; color:#f59e0b;">target</span></div>` : ''}
+        <div class="goal-bar-chart">${bars}</div>
+      </div>`;
   },
 
   // ── Boolean Habit Toggle ──────────────────────────────────────────
@@ -8230,10 +8269,10 @@ const GoalsView = {
       await API.post(`${this.HADLEY_API}/accountability/goals/${goalId}/progress`, {
         value: newValue, source: 'manual',
       });
-      Toast.show(newValue === 1 ? 'Done!' : 'Unmarked', 'success');
+      Toast.success('Habit', newValue === 1 ? 'Done!' : 'Unmarked');
       await this.loadGoals();
     } catch (e) {
-      Toast.show('Failed: ' + e.message, 'error');
+      Toast.error('Error', e.message || 'Request failed');
     }
   },
 
@@ -8287,6 +8326,21 @@ const GoalsView = {
         <div class="mood-dots">${dots || '<span style="color:var(--text-muted); font-size:12px;">No data yet</span>'}</div>
         <div class="mood-avg">${weekAvg != null ? `Avg: ${weekAvg} <span style="color:${trendColor};">${trendIcon}</span>` : ''}</div>
       </div>
+      ${history.length > 0 ? `
+        <details class="mood-history-details" style="margin-top:8px;">
+          <summary style="cursor:pointer; font-size:12px; color:var(--text-muted);">History (${history.length} days)</summary>
+          <div class="mood-history">
+            ${history.map(h => {
+              const color = h.score <= 3 ? '#ef4444' : h.score <= 6 ? '#f59e0b' : '#10b981';
+              return `<div class="mood-history-row">
+                <span class="mood-history-date">${h.date}</span>
+                <span class="mood-history-score" style="color:${color};">${h.score}</span>
+                <span class="mood-history-note">${h.note ? Utils.escapeHtml(h.note) : ''}</span>
+              </div>`;
+            }).join('')}
+          </div>
+        </details>
+      ` : ''}
     `;
   },
 
@@ -8295,10 +8349,10 @@ const GoalsView = {
     const note = noteEl ? noteEl.value.trim() : null;
     try {
       await API.post(`${this.HADLEY_API}/accountability/mood`, { score, note: note || null });
-      Toast.show(`Mood: ${score}/10`, 'success');
+      Toast.success('Mood', `Logged ${score}/10`);
       await this.loadMood();
     } catch (e) {
-      Toast.show('Failed to log mood: ' + (e && e.message || 'error'), 'error');
+      Toast.error('Mood', e && e.message || 'Failed to log');
     }
   },
 
@@ -8307,12 +8361,12 @@ const GoalsView = {
     try {
       const data = await API.get(`${this.HADLEY_API}/accountability/mood`);
       const score = data.today ? data.today.score : null;
-      if (!score) { Toast.show('Log a mood score first', 'error'); return; }
+      if (!score) { Toast.error('Mood', 'Log a score first'); return; }
       const note = document.getElementById('mood-note')?.value.trim() || null;
       await API.post(`${this.HADLEY_API}/accountability/mood`, { score, note });
-      Toast.show('Note saved', 'success');
+      Toast.success('Mood', 'Note saved');
     } catch (e) {
-      Toast.show('Failed: ' + e.message, 'error');
+      Toast.error('Error', e.message || 'Request failed');
     }
   },
 
@@ -8359,18 +8413,18 @@ const GoalsView = {
 
   async saveJournal() {
     const content = document.getElementById('journal-content')?.value.trim();
-    if (!content) { Toast.show('Write something first', 'error'); return; }
+    if (!content) { Toast.error('Journal', 'Write something first'); return; }
     try {
       await API.post(`${this.HADLEY_API}/accountability/journal`, { content });
-      Toast.show('Journal saved', 'success');
+      Toast.success('Journal', 'Saved');
     } catch (e) {
-      Toast.show('Failed: ' + e.message, 'error');
+      Toast.error('Error', e.message || 'Request failed');
     }
   },
 
   async refresh() {
     await Promise.all([this.loadGoals(), this.loadMood(), this.loadJournal()]);
-    Toast.show('Refreshed', 'success');
+    Toast.success('Refreshed', 'Data updated');
   },
 };
 
