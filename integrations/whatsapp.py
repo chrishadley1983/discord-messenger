@@ -7,10 +7,12 @@ Replaces Twilio for all WhatsApp sending. Incoming messages are handled
 via webhook (see hadley_api/routers/whatsapp_webhook.py).
 """
 import asyncio
+import json
 import logging
 import os
 import re
 import time
+from pathlib import Path
 
 import requests
 
@@ -25,16 +27,38 @@ EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "peter-whatsapp")
 MAX_RETRIES = 3
 RETRY_BACKOFF = [2, 5, 10]  # seconds between retries
 
-# Known contacts
-CONTACTS = {
-    "chris": "447855620978",
-    "abby": "447856182831",
-}
+# --- Recipient config: loaded from data/whatsapp_recipients.json ---
+_RECIPIENTS_FILE = Path(__file__).parent.parent / "data" / "whatsapp_recipients.json"
 
-# Known groups (JID format: <id>@g.us)
-GROUPS = {
-    "extended-team": "120363424758610750@g.us",
-}
+_FALLBACK_CONTACTS = {"chris": "447855620978", "abby": "447856182831"}
+_FALLBACK_GROUPS = {"extended-team": "120363424758610750@g.us"}
+
+
+def _load_recipients() -> tuple[dict[str, str], dict[str, str]]:
+    """Load contacts and groups from JSON config file."""
+    try:
+        data = json.loads(_RECIPIENTS_FILE.read_text(encoding="utf-8"))
+        return data.get("contacts", _FALLBACK_CONTACTS), data.get("groups", _FALLBACK_GROUPS)
+    except Exception:
+        logger.warning("Could not load whatsapp_recipients.json, using fallback")
+        return _FALLBACK_CONTACTS.copy(), _FALLBACK_GROUPS.copy()
+
+
+def _save_recipients(contacts: dict[str, str], groups: dict[str, str]):
+    """Persist contacts and groups to JSON config file."""
+    _RECIPIENTS_FILE.write_text(
+        json.dumps({"contacts": contacts, "groups": groups}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def reload_recipients():
+    """Reload CONTACTS and GROUPS from disk. Called after add/remove operations."""
+    global CONTACTS, GROUPS
+    CONTACTS, GROUPS = _load_recipients()
+
+
+CONTACTS, GROUPS = _load_recipients()
 
 HEADERS = {
     "apikey": EVOLUTION_API_KEY,
