@@ -2,11 +2,21 @@
 
 READ THIS before drafting replies, summarizing threads, or triaging inbox.
 
+## Critical Rules
+
+- **ALWAYS use Hadley API** for all email operations. NEVER use Gmail MCP for sending.
+- **Never say you can't read attachments** — `/gmail/attachment/text` extracts text from PDFs.
+- When Chris says "check my emails" or "look at an attachment":
+  1. Search with `/gmail/search?q=...`
+  2. Get it with `/gmail/get?id=...` to see attachments listed
+  3. Extract text with `/gmail/attachment/text?message_id=...&attachment_id=...`
+
 ## Capabilities
 
 Peter has Gmail API access via Hadley API:
 - Search: /gmail/search, /gmail/unread, /gmail/starred
 - Read: /gmail/get, /gmail/thread
+- Attachments: /gmail/attachments, /gmail/attachment/text (extracts text from PDF/text)
 - Draft: /gmail/draft (safer — creates draft for Chris to review)
 - Send: /gmail/send (use ONLY when Chris explicitly says "send it")
 
