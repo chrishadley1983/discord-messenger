@@ -18,8 +18,8 @@ cat > /tmp/jobs-channel-mcp.json <<EOF
 {
   "mcpServers": {
     "jobs-channel": {
-      "command": "npx",
-      "args": ["--yes", "tsx", "$CHANNEL_DIR/src/index.ts"],
+      "command": "$CHANNEL_DIR/node_modules/.bin/tsx",
+      "args": ["$CHANNEL_DIR/src/index.ts"],
       "env": {
         "HTTP_PORT": "${HTTP_PORT:-8103}",
         "JOB_TIMEOUT_MS": "${JOB_TIMEOUT_MS:-180000}",
@@ -32,6 +32,9 @@ EOF
 
 cd "$WORKING_DIR"
 
+PROJECT_ROOT="/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger"
+source "$PROJECT_ROOT/scripts/channel-resilience.sh"
+
 RESTART_COUNT=0
 while true; do
   RESTART_COUNT=$((RESTART_COUNT + 1))
@@ -39,17 +42,26 @@ while true; do
   echo "[$(date)] START attempt=$RESTART_COUNT" >> "$RESTART_LOG"
 
   # Auto-accept startup prompts in background
-  bash "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/scripts/auto-accept-prompts.sh" jobs-channel &
+  bash "$PROJECT_ROOT/scripts/auto-accept-prompts.sh" jobs-channel &
 
+  START_TIME=$(date +%s)
+  set +e
   claude \
     --mcp-config /tmp/jobs-channel-mcp.json \
     --dangerously-load-development-channels server:jobs-channel \
     --model claude-opus-4-6 \
     --effort medium \
-    --permission-mode bypassPermissions || true
-
+    --permission-mode bypassPermissions
   EXIT_CODE=$?
-  echo "[$(date)] Session exited (code $EXIT_CODE), restarting in 10s..."
-  echo "[$(date)] EXIT code=$EXIT_CODE attempt=$RESTART_COUNT" >> "$RESTART_LOG"
-  sleep 10
+  set -e
+  END_TIME=$(date +%s)
+  UPTIME=$((END_TIME - START_TIME))
+  echo "[$(date)] EXIT code=$EXIT_CODE uptime=${UPTIME}s attempt=$RESTART_COUNT" >> "$RESTART_LOG"
+
+  if [ "$UPTIME" -ge 300 ]; then
+    mark_healthy
+  fi
+
+  check_context_exhaustion "jobs-channel" "$UPTIME" "$RESTART_COUNT"
+  handle_restart "jobs-channel" "$EXIT_CODE" "$RESTART_COUNT"
 done
