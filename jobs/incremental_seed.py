@@ -9,9 +9,91 @@ Duplicates are automatically skipped by source_url check in runner.
 
 import asyncio
 import os
+import subprocess
+import time as _time
 from dataclasses import dataclass
 
+import requests as _req
+
 from logger import logger
+
+# Chrome CDP config — must use non-default user-data-dir (Chrome 136+ ignores
+# --remote-debugging-port with the default profile)
+CHROME_EXE = os.path.join(
+    os.getenv("PROGRAMFILES", r"C:\Program Files"),
+    "Google", "Chrome", "Application", "chrome.exe",
+)
+CHROME_USER_DATA_DIR = os.path.join(
+    os.getenv("LOCALAPPDATA", ""),
+    "Google", "Chrome-Vinted",
+)
+CDP_PORT = 9222
+CDP_ENDPOINT = f"http://localhost:{CDP_PORT}"
+
+
+def _is_cdp_alive() -> bool:
+    """Check whether Chrome CDP is already responding."""
+    try:
+        return _req.get(f"{CDP_ENDPOINT}/json/version", timeout=3).status_code == 200
+    except Exception:
+        return False
+
+
+def _launch_chrome_cdp() -> subprocess.Popen | None:
+    """Launch Chrome-Vinted headless on port 9222 if not already running.
+
+    Returns the Popen handle (caller must terminate), or None if CDP was
+    already up or Chrome couldn't start.
+    """
+    if _is_cdp_alive():
+        logger.info("Chrome CDP already running on port %s", CDP_PORT)
+        return None
+
+    logger.info("Launching Chrome-Vinted headless for CDP on port %s", CDP_PORT)
+    try:
+        proc = subprocess.Popen(
+            [
+                CHROME_EXE,
+                f"--remote-debugging-port={CDP_PORT}",
+                f"--user-data-dir={CHROME_USER_DATA_DIR}",
+                "--headless=new",
+                "--disable-gpu",
+                "--no-first-run",
+                "--no-default-browser-check",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        logger.error("Failed to launch Chrome CDP: %s", e)
+        return None
+
+    # Wait up to 10s for CDP to become reachable
+    for _ in range(20):
+        _time.sleep(0.5)
+        if _is_cdp_alive():
+            logger.info("Chrome CDP is ready (pid %s)", proc.pid)
+            return proc
+
+    logger.error("Chrome CDP did not become reachable within 10s")
+    proc.terminate()
+    return None
+
+
+def _stop_chrome_cdp(proc: subprocess.Popen | None) -> None:
+    """Terminate a Chrome CDP process we launched."""
+    if proc is None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+        logger.info("Chrome CDP stopped (pid %s)", proc.pid)
+    except Exception as e:
+        logger.warning("Failed to stop Chrome CDP cleanly: %s", e)
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
 # Chrome's live Bookmarks file (JSON format, read directly — no export needed)
 CHROME_BOOKMARKS_PATH = os.path.join(
@@ -186,96 +268,103 @@ async def incremental_seed_import(bot=None):
     adapter_limits["claude-code-history"] = 50 # Recent Claude Code conversations
     adapter_limits["reddit-saved"] = 20       # Saved/upvoted/commented posts
 
+    # Launch Chrome CDP headless for adapters that need it (Reddit, etc.)
+    # Will be terminated after the adapter loop completes.
+    cdp_proc = _launch_chrome_cdp()
+
     results = []
     outcomes: list[_AdapterOutcome] = []
     total_imported = 0
     total_skipped = 0
     total_failed = 0
 
-    for adapter_name, limit in adapter_limits.items():
-        label = ADAPTER_LABELS.get(adapter_name, adapter_name)
+    try:
+        for adapter_name, limit in adapter_limits.items():
+            label = ADAPTER_LABELS.get(adapter_name, adapter_name)
 
-        if adapter_name not in adapters:
-            logger.warning(f"Adapter {adapter_name} not found, skipping")
-            outcomes.append(_AdapterOutcome(label=label, validated=False, validate_error="not registered"))
-            continue
-
-        adapter_class = adapters[adapter_name]
-
-        try:
-            logger.info(f"Running incremental import: {adapter_name} (limit={limit})")
-
-            # Configure adapter for incremental (shorter time window)
-            # Note: adapters auto-skip duplicates via source_url check
-            config = {}
-            if adapter_name == "calendar-events":
-                config = {"years_back": 0.1}  # ~5 weeks back
-            elif adapter_name == "email-import":
-                config = {"years_back": 0.1}  # ~5 weeks back only
-            elif adapter_name == "github-projects":
-                config = {"days_back": 7, "auto_discover": True}
-            elif adapter_name == "garmin-activities":
-                config = {"years_back": 0.02}  # ~1 week of activities
-            elif adapter_name == "bookmarks":
-                config = {"file_path": CHROME_BOOKMARKS_PATH, "fetch_content": True}
-            elif adapter_name == "email-link-scraper":
-                config = {"years_back": 0.1, "per_scraper_limit": 10}
-            elif adapter_name == "hadley-bricks-email":
-                config = {"years_back": 0.1, "per_category_limit": 20}
-            elif adapter_name == "spotify-listening":
-                config = {"include_recent": True, "include_top": True, "recent_limit": 50}
-            elif adapter_name == "netflix-viewing":
-                config = {"max_pages": 2}
-            elif adapter_name == "travel-bookings":
-                config = {"years_back": 0.5, "per_provider_limit": 10, "include_checkin": True}
-            elif adapter_name == "garmin-health":
-                config = {}  # Defaults to 7 days
-            elif adapter_name == "withings-health":
-                config = {"days_back": 30}
-            elif adapter_name == "school-data":
-                config = {}  # Defaults to 14-day lookback
-            elif adapter_name == "claude-code-history":
-                config = {"days_back": 7}
-            elif adapter_name == "reddit-saved":
-                config = {}
-
-            adapter = adapter_class(config)
-
-            # Validate first (tracked separately for summary)
-            is_valid, val_err = await adapter.validate()
-            if not is_valid:
-                logger.warning(f"Adapter {adapter_name} validation failed: {val_err}")
-                outcomes.append(_AdapterOutcome(label=label, validated=False, validate_error=val_err))
+            if adapter_name not in adapters:
+                logger.warning(f"Adapter {adapter_name} not found, skipping")
+                outcomes.append(_AdapterOutcome(label=label, validated=False, validate_error="not registered"))
                 continue
 
-            # Use batched import for adapters with many items (saves embedding API calls)
-            if limit > 10:
-                result = await run_seed_import_batched(adapter, limit=limit, skip_validate=True)
-            else:
-                result = await run_seed_import(adapter, limit=limit, skip_validate=True)
+            adapter_class = adapters[adapter_name]
 
-            results.append(result)
-            total_imported += result.items_imported
-            total_skipped += result.items_skipped
-            total_failed += result.items_failed
+            try:
+                logger.info(f"Running incremental import: {adapter_name} (limit={limit})")
 
-            outcomes.append(_AdapterOutcome(
-                label=label,
-                validated=True,
-                found=result.items_found,
-                imported=result.items_imported,
-                skipped=result.items_skipped,
-                failed=result.items_failed,
-            ))
+                # Configure adapter for incremental (shorter time window)
+                # Note: adapters auto-skip duplicates via source_url check
+                config = {}
+                if adapter_name == "calendar-events":
+                    config = {"years_back": 0.1}  # ~5 weeks back
+                elif adapter_name == "email-import":
+                    config = {"years_back": 0.1}  # ~5 weeks back only
+                elif adapter_name == "github-projects":
+                    config = {"days_back": 7, "auto_discover": True}
+                elif adapter_name == "garmin-activities":
+                    config = {"years_back": 0.02}  # ~1 week of activities
+                elif adapter_name == "bookmarks":
+                    config = {"file_path": CHROME_BOOKMARKS_PATH, "fetch_content": True}
+                elif adapter_name == "email-link-scraper":
+                    config = {"years_back": 0.1, "per_scraper_limit": 10}
+                elif adapter_name == "hadley-bricks-email":
+                    config = {"years_back": 0.1, "per_category_limit": 20}
+                elif adapter_name == "spotify-listening":
+                    config = {"include_recent": True, "include_top": True, "recent_limit": 50}
+                elif adapter_name == "netflix-viewing":
+                    config = {"max_pages": 2}
+                elif adapter_name == "travel-bookings":
+                    config = {"years_back": 0.5, "per_provider_limit": 10, "include_checkin": True}
+                elif adapter_name == "garmin-health":
+                    config = {}  # Defaults to 7 days
+                elif adapter_name == "withings-health":
+                    config = {"days_back": 30}
+                elif adapter_name == "school-data":
+                    config = {}  # Defaults to 14-day lookback
+                elif adapter_name == "claude-code-history":
+                    config = {"days_back": 7}
+                elif adapter_name == "reddit-saved":
+                    config = {}
 
-            logger.info(
-                f"  {adapter_name}: {result.items_imported} imported, "
-                f"{result.items_skipped} skipped, {result.items_failed} failed"
-            )
+                adapter = adapter_class(config)
 
-        except Exception as e:
-            logger.error(f"Adapter {adapter_name} failed: {e}")
-            outcomes.append(_AdapterOutcome(label=label, validated=False, validate_error=str(e)[:30]))
+                # Validate first (tracked separately for summary)
+                is_valid, val_err = await adapter.validate()
+                if not is_valid:
+                    logger.warning(f"Adapter {adapter_name} validation failed: {val_err}")
+                    outcomes.append(_AdapterOutcome(label=label, validated=False, validate_error=val_err))
+                    continue
+
+                # Use batched import for adapters with many items (saves embedding API calls)
+                if limit > 10:
+                    result = await run_seed_import_batched(adapter, limit=limit, skip_validate=True)
+                else:
+                    result = await run_seed_import(adapter, limit=limit, skip_validate=True)
+
+                results.append(result)
+                total_imported += result.items_imported
+                total_skipped += result.items_skipped
+                total_failed += result.items_failed
+
+                outcomes.append(_AdapterOutcome(
+                    label=label,
+                    validated=True,
+                    found=result.items_found,
+                    imported=result.items_imported,
+                    skipped=result.items_skipped,
+                    failed=result.items_failed,
+                ))
+
+                logger.info(
+                    f"  {adapter_name}: {result.items_imported} imported, "
+                    f"{result.items_skipped} skipped, {result.items_failed} failed"
+                )
+
+            except Exception as e:
+                logger.error(f"Adapter {adapter_name} failed: {e}")
+                outcomes.append(_AdapterOutcome(label=label, validated=False, validate_error=str(e)[:30]))
+    finally:
+        _stop_chrome_cdp(cdp_proc)
 
     # --- Provider discovery: flag unknown travel providers ---
     provider_suggestions = []
