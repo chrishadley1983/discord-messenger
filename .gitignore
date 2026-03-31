@@ -1,5 +1,9 @@
-# Environment
+# Environment — block all .env variants
 .env
+.env.*
+!.env.example
+!.env.sops
+.env.clean.tmp
 
 # Python
 __pycache__/
