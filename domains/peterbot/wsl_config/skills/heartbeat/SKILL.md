@@ -20,8 +20,14 @@ Every 30 minutes, check system health and work on to-do items.
 Run these checks:
 - **Session responsive**: Can you execute commands? (You're running, so yes)
 - **Job health**: Check pre-fetched `job_health` data for recent failures
+- **Channel health**: Check pre-fetched `channel_health` data for down channels
 
 **Job health check**: The pre-fetched data includes `job_health` with recent failures from both Discord-Messenger and Hadley Bricks. If any jobs failed in the last 30 minutes, include them in your status output with ⚠️.
+
+**Channel health check**: The pre-fetched data includes `channel_health` with status of peter-channel, whatsapp-channel, and jobs-channel. If any channel is down:
+1. Report it in your heartbeat status with ⚠️
+2. Attempt a restart via the Dashboard API (see Self-Healing section in CLAUDE.md)
+3. Report the restart attempt result
 
 If any check fails → Include failure in status output
 

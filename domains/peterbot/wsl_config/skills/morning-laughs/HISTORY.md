@@ -228,3 +228,23 @@
 - 2026-03-27: I used to work at a mirror factory. It was something I could really see myself doing.
 - 2026-03-27: Why did the lemon stop rolling down the hill? It ran out of juice.
 - 2026-03-27: "Go confidently in the direction of your dreams. Live the life you have imagined." — Henry David Thoreau
+
+- 2026-03-28: What do you call a man who can't stand? Neil.
+- 2026-03-28: I used to be a librarian, but I got booked for something I didn't do.
+- 2026-03-28: Why did the bicycle need a nap? It was two-tired... of everyone's jokes about it.
+- 2026-03-28: "What we achieve inwardly will change outer reality." — Plutarch
+
+- 2026-03-29: What do you call a pile of cats? A meowtain.
+- 2026-03-29: I used to be a vegetable farmer, but I couldn't find the thyme.
+- 2026-03-29: Why did the maths teacher open a window? To get some natural log.
+- 2026-03-29: "We may encounter many defeats but we must not be defeated." — Maya Angelou
+
+- 2026-03-30: What do you call a rabbit that tells jokes? A funny bunny.
+- 2026-03-30: I used to be a plumber, but it was just too draining.
+- 2026-03-30: Why did the scarecrow get promoted? Because he was head and shoulders above the rest.
+- 2026-03-30: "A person who never made a mistake never tried anything new." — Albert Einstein
+
+- 2026-03-31: What do you call a crocodile that likes bowling? An alley-gator.
+- 2026-03-31: I used to be a pilot, but my career never really took off.
+- 2026-03-31: Why did the computer catch a cold? It left its Windows open.
+- 2026-03-31: "You are never too old to set another goal or to dream a new dream." — C.S. Lewis

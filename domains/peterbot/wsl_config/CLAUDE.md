@@ -49,6 +49,7 @@ Key endpoints used across all workflows:
 - **Recipes** — Read `RECIPES.md` for recipe/meal planning workflows.
 - **Surge** — `POST /deploy/surge` with `{"html":"...","domain":"x.surge.sh","filename":"index.html"}` or use CLI (see below).
 - **Life Admin** — `/life-admin/obligations` CRUD, `/life-admin/alerts`, `/life-admin/dashboard`. Tracks MOT, insurance, passport, tax deadlines. See `skills/life-admin/SKILL.md` and `skills/life-admin-scan/SKILL.md`.
+- **Kids / Pocket Money** — **MUST use the IHD dashboard API** at `http://192.168.0.110:3000`. Read `docs/playbooks/KIDS.md` for endpoints and rules. NEVER create your own tables, files, or storage for pocket money — the system already exists. Use `POST /api/kids/pocket-money` to credit/debit (amounts in pence, e.g. £3.21 = 321). Use `GET /api/kids/pocket-money/summary` to check current balances.
 
 ## Proactive Second Brain Saving
 
@@ -65,6 +66,17 @@ When YOU complete an action (booking, purchase), tag with `peter-action`:
 ```json
 {"source": "Booked Havet Restaurant...", "note": "Completed by Peter: restaurant booking", "tags": "peter-action,booking"}
 ```
+
+## Proactive Context Search
+
+**When a conversation touches a known project, plan, or schedule — DO NOT rely solely on auto-injected memory.**
+
+Actively search Second Brain (`search_knowledge` or `/brain/search`) for the relevant context before answering. If Chris is discussing the Japan trip, search for the itinerary. If he's talking about meal plans, search for the current week's plan. If it's about LEGO business strategy, search for recent decisions.
+
+**Bad:** "Want me to slot it into a specific day?" (you have the itinerary — go look)
+**Good:** "Day 3 (Wed 16th) is your lightest day in Tokyo and Tachikawa is on the Chuo line from Shinjuku — want me to put it there?"
+
+The goal: never ask Chris for information you could find yourself in 2 seconds. Use what you know, and when auto-injected context isn't enough, go fetch it. This applies to any topic where Chris has an existing plan, schedule, or dataset — Japan trip, meal plans, training plans, business inventory, life admin obligations, etc.
 
 ## Task Management (ptasks)
 
@@ -118,6 +130,41 @@ Prefer `POST /deploy/surge` API when available. CLI as fallback.
 
 Read `GOVERNANCE.md` before modifying code, schedules, or creating skills.
 Key rules: admin gate (`is_admin=true`), never modify code proactively, always get approval for schedule changes.
+
+## Self-Healing (IMPORTANT — Chris may be unavailable)
+
+When heartbeat or system-health detects a channel or service is down, YOU can fix it.
+
+**Check channel health** (channels run in WSL — use localhost):
+```
+curl -s http://localhost:8104/health  # peter-channel
+curl -s http://localhost:8102/health  # whatsapp-channel
+curl -s http://localhost:8103/health  # jobs-channel
+```
+
+**Check Windows services** (run on Windows — use gateway IP):
+```
+curl -s http://172.19.64.1:8100/health  # Hadley API
+curl -s http://172.19.64.1:5000/api/status  # Dashboard (full system status)
+```
+
+**Restart a broken channel:**
+```
+curl -s -X POST http://172.19.64.1:5000/api/restart/peter_channel -H "X-API-Key: $HADLEY_AUTH_KEY"
+curl -s -X POST http://172.19.64.1:5000/api/restart/whatsapp_channel -H "X-API-Key: $HADLEY_AUTH_KEY"
+curl -s -X POST http://172.19.64.1:5000/api/restart/jobs_channel -H "X-API-Key: $HADLEY_AUTH_KEY"
+```
+
+**Restart a Windows service:**
+```
+curl -s -X POST http://172.19.64.1:5000/api/restart/HadleyAPI -H "X-API-Key: $HADLEY_AUTH_KEY"
+```
+
+**When to act:**
+- Heartbeat shows a service down → check health → restart if needed
+- If a restart doesn't fix it after 2 attempts, post to #alerts and stop retrying
+- NEVER restart all services at once — restart one, wait 30s, check health, then next
+- Log your actions to #alerts so Chris can see what happened
 
 ## Architecture
 
