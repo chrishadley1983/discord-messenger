@@ -64,7 +64,11 @@ Run `!reload-schedule` after editing to apply changes.
 | Paper Builder | paper-builder | Tue 19:30 UK | #peterbot | yes |
 | Practice Allocate | practice-allocate | Tue 21:00 UK | #peterbot | yes |
 | Spelling Test Reminder | spelling-test-generator | Fri 19:00 UK | #peterbot+WhatsApp:chris | yes |
+| Commitment Nudge | commitment-nudge | 19:00 UK | WhatsApp:chris | yes |
 | Pocket Money Weekly | pocket-money-weekly | Sunday 09:32 UK | #peterbot | yes |
+| Flight Price Monitor | flight-prices | 07:15 UK | #alerts | yes |
+| Weekly Accountability | accountability-weekly | Sunday 19:00 UK | WhatsApp:chris | yes |
+| Monthly Accountability | accountability-monthly | 1st 10:30 UK | #food-log+WhatsApp:chris | yes |
 
 ## Interval Jobs
 

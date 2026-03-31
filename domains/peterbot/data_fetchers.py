@@ -2733,8 +2733,33 @@ async def get_heartbeat_data() -> dict[str, Any]:
         logger.warning(f"Heartbeat: failed to fetch job health: {e}")
         job_health["error"] = str(e)
 
+    # Fetch channel health status
+    channel_health = {}
+    channel_endpoints = {
+        "peter-channel": "http://localhost:8104/health",
+        "whatsapp-channel": "http://localhost:8102/health",
+        "jobs-channel": "http://localhost:8103/health",
+    }
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            for name, url in channel_endpoints.items():
+                try:
+                    resp = await client.get(url, timeout=5.0)
+                    channel_health[name] = {"status": "up", "details": resp.json() if resp.status_code == 200 else {}}
+                except Exception:
+                    channel_health[name] = {"status": "down"}
+    except Exception as e:
+        logger.warning(f"Heartbeat: failed to check channel health: {e}")
+        for name in channel_endpoints:
+            channel_health[name] = {"status": "unknown", "error": str(e)}
+
+    down_channels = [n for n, s in channel_health.items() if s.get("status") != "up"]
+    if down_channels:
+        logger.warning(f"Heartbeat: DOWN channels: {', '.join(down_channels)}")
+
     logger.info(f"Heartbeat: {len(tasks)} ptask(s) ready for processing")
-    return {"ptasks": tasks, "count": len(tasks), "job_health": job_health}
+    return {"ptasks": tasks, "count": len(tasks), "job_health": job_health, "channel_health": channel_health}
 
 
 async def get_instagram_prep_data() -> dict[str, Any]:
@@ -3977,6 +4002,162 @@ async def get_life_admin_dashboard_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
+async def get_commitment_nudge_data() -> dict[str, Any]:
+    """Fetch open commitments for the daily nudge skill."""
+    try:
+        from domains.commitments import get_open_commitments
+
+        # Get commitments older than 4 hours (give Chris time to follow through)
+        open_items = await get_open_commitments(min_age_hours=4, limit=10)
+
+        # Filter out items nudged today already
+        now = datetime.now(ZoneInfo("Europe/London"))
+        filtered = []
+        for item in open_items:
+            last_nudged = item.get("last_nudged_at")
+            if last_nudged:
+                from datetime import datetime as dt
+                nudged_dt = dt.fromisoformat(last_nudged.replace("Z", "+00:00"))
+                if (now - nudged_dt).total_seconds() < 18 * 3600:  # Don't re-nudge within 18h
+                    continue
+            # Calculate age in hours
+            detected = dt.fromisoformat(item["detected_at"].replace("Z", "+00:00"))
+            item["age_hours"] = round((now - detected).total_seconds() / 3600)
+            filtered.append(item)
+
+        # Count today's resolved/dismissed for context
+        resolved_today = 0
+        dismissed_today = 0
+
+        return {
+            "open_commitments": filtered[:5],  # Cap at 5 for the nudge
+            "count": len(filtered),
+            "total_open": len(open_items),
+            "resolved_today": resolved_today,
+            "dismissed_today": dismissed_today,
+        }
+    except Exception as e:
+        logger.error(f"Commitment nudge data fetch error: {e}")
+        return {"error": str(e)}
+
+
+async def get_flight_prices_data() -> dict[str, Any]:
+    """Fetch flight price data for flight-prices skill.
+
+    Runs a quick check on the cheapest dates found so far,
+    plus scans new date pairs if budget allows.
+    """
+    try:
+        from services.flight_prices import FlightPriceMonitor
+
+        monitor = FlightPriceMonitor()
+
+        if not monitor.api_key:
+            return {"error": "SERPAPI_KEY not set", "__skip__": True, "reason": "No API key configured"}
+
+        # Run a scan of the next 3 cheapest weekend departures (uses 3 API calls)
+        from services.flight_prices import generate_date_pairs
+        pairs = generate_date_pairs("weekends", window_days=180, trip_lengths=[10, 14])
+
+        # Pick a sample: next 3 upcoming departure dates (6 calls total — 3 dates x 2 trip lengths)
+        # Group by outbound date, take first 3 unique dates
+        seen_dates = set()
+        sample_pairs = []
+        for out, ret in pairs:
+            if out not in seen_dates and len(seen_dates) < 3:
+                seen_dates.add(out)
+            if out in seen_dates:
+                sample_pairs.append((out, ret))
+
+        results = await monitor.check_all_routes(date_pairs=sample_pairs)
+
+        # Get overall cheapest from DB
+        cheapest = monitor.get_cheapest(days_back=30, limit=5)
+        deals = monitor.detect_deals()
+        summary = monitor.get_summary(days_back=7)
+
+        return {
+            "scan_results": {
+                label: {
+                    "results": [
+                        {
+                            "outbound": r["outbound"],
+                            "return": r["return"],
+                            "price_pp": r["cheapest"]["price_pp"],
+                            "price_total": r["cheapest"]["price_total"],
+                            "airline": r["cheapest"]["airline"],
+                            "duration_min": r["cheapest"]["duration_min"],
+                            "insights": r["insights"],
+                        }
+                        for r in data["results"]
+                    ]
+                }
+                for label, data in results.items()
+            },
+            "cheapest_overall": [
+                {
+                    "label": c["label"],
+                    "outbound": c["outbound_date"],
+                    "return": c["return_date"],
+                    "price_pp": c["price_pp"],
+                    "price_total": c["price_total"],
+                    "airline": c["airline"],
+                }
+                for c in cheapest
+            ],
+            "deals": [
+                {
+                    "label": d["label"],
+                    "outbound": d["outbound_date"],
+                    "price_pp": d["price_pp"],
+                    "deal_type": d.get("deal_type"),
+                    "drop_pct": d.get("drop_pct"),
+                }
+                for d in deals
+            ],
+            "summary": summary,
+            "timestamp": datetime.now(UK_TZ).isoformat(),
+        }
+
+    except Exception as e:
+        logger.error(f"Flight prices data fetch error: {e}")
+        return {"error": str(e)}
+
+
+async def get_accountability_weekly_data() -> dict[str, Any]:
+    """Fetch accountability data for weekly report.
+
+    Runs auto-updates first, then generates weekly report data.
+    """
+    try:
+        from domains.accountability.auto_sources import run_auto_updates
+        from domains.accountability.service import get_report_data
+
+        await run_auto_updates()
+        return await get_report_data(period="week")
+
+    except Exception as e:
+        logger.error(f"Accountability weekly data fetch error: {e}")
+        return {"error": str(e)}
+
+
+async def get_accountability_monthly_data() -> dict[str, Any]:
+    """Fetch accountability data for monthly report.
+
+    Runs auto-updates first, then generates monthly report data.
+    """
+    try:
+        from domains.accountability.auto_sources import run_auto_updates
+        from domains.accountability.service import get_report_data
+
+        await run_auto_updates()
+        return await get_report_data(period="month")
+
+    except Exception as e:
+        logger.error(f"Accountability monthly data fetch error: {e}")
+        return {"error": str(e)}
+
+
 # Map skill names to their data fetchers
 # Skills not in this dict use web search (news, etc.)
 SKILL_DATA_FETCHERS = {
@@ -4070,4 +4251,11 @@ SKILL_DATA_FETCHERS = {
     "life-admin-email-scan": get_life_admin_email_scan_data,
     "life-admin-compare": get_life_admin_compare_data,
     "life-admin-dashboard": get_life_admin_dashboard_data,
+    # Commitment Nudge
+    "commitment-nudge": get_commitment_nudge_data,
+    # Flight prices
+    "flight-prices": get_flight_prices_data,
+    # Accountability Tracker
+    "accountability-weekly": get_accountability_weekly_data,
+    "accountability-monthly": get_accountability_monthly_data,
 }

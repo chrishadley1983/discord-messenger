@@ -3435,6 +3435,15 @@ h4 { font-size: var(--text-base); }
 .kb-list-row:hover { background: var(--bg-secondary); }
 .kb-list-row-selected { background: rgba(37, 99, 235, 0.06); outline: 1px solid rgba(37, 99, 235, 0.2); outline-offset: -1px; }
 .kb-list-row-done { opacity: 0.55; }
+.kb-list-row-dragging { opacity: 0.4; }
+
+/* Drop target highlight on status group */
+.kb-list-group-drop-target {
+  background: rgba(37, 99, 235, 0.04);
+  border-radius: 8px;
+  outline: 2px dashed var(--accent-color);
+  outline-offset: -2px;
+}
 
 /* Checkbox */
 .kb-checkbox {
@@ -3593,15 +3602,16 @@ h4 { font-size: var(--text-base); }
 /* Quick actions dropdown */
 .kb-quick-menu {
   position: fixed;
-  z-index: 1000;
+  z-index: 9999;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.15), 0 4px 12px rgba(0,0,0,0.1);
   padding: 4px;
-  min-width: 180px;
+  min-width: 200px;
   max-height: 400px;
   overflow-y: auto;
+  backdrop-filter: blur(8px);
 }
 
 .kb-qm-item {
@@ -4892,4 +4902,177 @@ h4 { font-size: var(--text-base); }
   word-break: break-word;
   max-height: 200px;
   overflow-y: auto;
+}
+
+
+/* =============================================================================
+   GOALS / ACCOUNTABILITY TRACKER
+   ============================================================================= */
+
+.goals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.goal-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.goal-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.goal-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.goal-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.goal-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.goal-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.goal-category-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  text-transform: capitalize;
+}
+
+.goal-values {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-family: var(--font-mono);
+}
+
+.goal-current {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.goal-separator {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.goal-target {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.goal-pct {
+  font-size: 14px;
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.goal-trend {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.goal-progress-bar {
+  height: 8px;
+  background: var(--bg-hover);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.goal-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+  min-width: 2px;
+}
+
+.goal-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.goal-streak {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.goal-hit-rate {
+  color: var(--text-muted);
+}
+
+.goal-on-track {
+  font-weight: 600;
+}
+
+.goal-deadline {
+  color: var(--text-muted);
+}
+
+/* Heatmap — 30-day mini calendar */
+.goal-heatmap {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  min-height: 10px;
+}
+
+.heatmap-cell {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.heatmap-hit {
+  background: #10b981;
+}
+
+.heatmap-miss {
+  background: #ef4444;
+  opacity: 0.5;
+}
+
+.heatmap-empty {
+  background: var(--bg-hover);
+}
+
+.goal-card-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 768px) {
+  .goals-grid {
+    grid-template-columns: 1fr;
+  }
 }

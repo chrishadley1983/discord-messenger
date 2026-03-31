@@ -45,6 +45,12 @@ from hadley_api.spelling_routes import router as spelling_router
 app.include_router(spelling_router)
 from hadley_api.japan_routes import router as japan_router
 app.include_router(japan_router)
+from hadley_api.commitment_routes import router as commitment_router
+app.include_router(commitment_router)
+from hadley_api.flight_routes import router as flight_router
+app.include_router(flight_router)
+from hadley_api.accountability_routes import router as accountability_router
+app.include_router(accountability_router)
 try:
     from hadley_api.finance_routes import router as finance_router
     app.include_router(finance_router)
@@ -138,18 +144,17 @@ async def channel_status():
             )
             results[name]["restart_count"] = int(log_check.stdout.strip() or "0")
 
-            # Check HTTP port for whatsapp/jobs channels
-            if name == "whatsapp-channel":
+            # Check HTTP port for channels with HTTP servers
+            http_ports = {
+                "peter-channel": 8104,
+                "whatsapp-channel": 8102,
+                "jobs-channel": 8103,
+            }
+            if name in http_ports:
                 try:
                     import httpx
-                    r = await asyncio.to_thread(lambda: httpx.get("http://127.0.0.1:8102/health", timeout=3))
-                    results[name]["http"] = "ok"
-                except Exception:
-                    results[name]["http"] = "unreachable"
-            elif name == "jobs-channel":
-                try:
-                    import httpx
-                    r = await asyncio.to_thread(lambda: httpx.get("http://127.0.0.1:8103/health", timeout=3))
+                    port = http_ports[name]
+                    r = await asyncio.to_thread(lambda p=port: httpx.get(f"http://127.0.0.1:{p}/health", timeout=3))
                     results[name]["http"] = "ok"
                 except Exception:
                     results[name]["http"] = "unreachable"

@@ -6351,7 +6351,11 @@ const TasksView = {
       const rows = isCollapsed ? '' : tasks.map(t => this._renderListRow(t, rowIndex++)).join('');
 
       return `
-        <div class="kb-list-group" data-status="${status}">
+        <div class="kb-list-group" data-status="${status}"
+             ondragover="TasksView.onListDragOver(event)"
+             ondragenter="TasksView.onListDragEnter(event, '${status}')"
+             ondragleave="TasksView.onListDragLeave(event)"
+             ondrop="TasksView.onListDrop(event, '${status}')">
           <div class="kb-list-group-header" onclick="TasksView.toggleGroup('${status}')" style="--group-color: ${col.color};">
             <div class="kb-list-group-left">
               <svg class="kb-list-chevron ${isCollapsed ? '' : 'kb-list-chevron-open'}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
@@ -6390,7 +6394,10 @@ const TasksView = {
 
     return `
       <div class="kb-list-row ${isDone ? 'kb-list-row-done' : ''} ${isSelected ? 'kb-list-row-selected' : ''}"
-           data-task-id="${task.id}" data-row-index="${index}">
+           data-task-id="${task.id}" data-row-index="${index}"
+           draggable="true"
+           ondragstart="TasksView.onListRowDragStart(event, '${task.id}')"
+           ondragend="TasksView.onListRowDragEnd(event)">
         <button class="kb-checkbox ${isDone ? 'kb-checkbox-checked' : ''}"
                 onclick="event.stopPropagation(); TasksView.toggleComplete('${task.id}')"
                 style="--check-color: ${prio.color};"
@@ -6430,6 +6437,54 @@ const TasksView = {
     }
     this._persistState();
     this._renderContent();
+  },
+
+  // ===========================================================================
+  // LIST VIEW — Drag and Drop between status groups
+  // ===========================================================================
+  onListRowDragStart(e, taskId) {
+    this._dragTaskId = taskId;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', taskId);
+    e.target.classList.add('kb-list-row-dragging');
+  },
+
+  onListRowDragEnd(e) {
+    this._dragTaskId = null;
+    e.target.classList.remove('kb-list-row-dragging');
+    document.querySelectorAll('.kb-list-group-drop-target').forEach(el => el.classList.remove('kb-list-group-drop-target'));
+  },
+
+  onListDragOver(e) {
+    if (!this._dragTaskId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  },
+
+  onListDragEnter(e, targetStatus) {
+    if (!this._dragTaskId) return;
+    e.preventDefault();
+    const task = this._tasks.find(t => t.id === this._dragTaskId);
+    if (task && task.status === targetStatus) return;
+    const group = e.target.closest('.kb-list-group');
+    if (group) group.classList.add('kb-list-group-drop-target');
+  },
+
+  onListDragLeave(e) {
+    const group = e.target.closest('.kb-list-group');
+    if (group && !group.contains(e.relatedTarget)) {
+      group.classList.remove('kb-list-group-drop-target');
+    }
+  },
+
+  async onListDrop(e, targetStatus) {
+    e.preventDefault();
+    const group = e.target.closest('.kb-list-group');
+    if (group) group.classList.remove('kb-list-group-drop-target');
+    if (!this._dragTaskId) return;
+    const task = this._tasks.find(t => t.id === this._dragTaskId);
+    if (!task || task.status === targetStatus) return;
+    await this.quickSetStatus(this._dragTaskId, targetStatus);
   },
 
   // ===========================================================================
@@ -7653,7 +7708,410 @@ const MealPlanView = {
 
 
 // =============================================================================
-// 7b. SUBSCRIPTIONS VIEW
+// 7b. GOALS / ACCOUNTABILITY VIEW
+// =============================================================================
+
+const GoalsView = {
+  title: 'Goals',
+  HADLEY_API: '/api/hadley/proxy',
+  _data: null,
+
+  async render(container) {
+    container.innerHTML = `
+      <div class="animate-fade-in">
+        <div class="flex items-center justify-between mb-lg">
+          <h2 style="margin:0; font-size:18px; font-weight:600;">Accountability Tracker</h2>
+          <div class="flex items-center gap-sm">
+            <button class="btn btn-sm btn-primary" onclick="GoalsView.showAddModal()">
+              ${Icons.plus || '+'} Add Goal
+            </button>
+            <button class="btn btn-sm btn-secondary" onclick="GoalsView.refresh()">
+              ${Icons.refresh} Refresh
+            </button>
+          </div>
+        </div>
+
+        <div id="goals-grid" class="goals-grid">
+          <div style="padding: 40px; text-align: center; color: var(--text-muted);">Loading goals...</div>
+        </div>
+      </div>
+    `;
+    await this.loadGoals();
+  },
+
+  async loadGoals() {
+    try {
+      const data = await API.get(`${this.HADLEY_API}/accountability/goals`);
+      this._data = data;
+      this.renderGoals(data.goals || []);
+    } catch (e) {
+      document.getElementById('goals-grid').innerHTML = `
+        <div style="padding: 40px; text-align: center; color: var(--text-danger);">
+          Failed to load goals: ${e.message}
+        </div>`;
+    }
+  },
+
+  renderGoals(goals) {
+    const grid = document.getElementById('goals-grid');
+    if (!goals.length) {
+      grid.innerHTML = `
+        <div style="padding: 60px; text-align: center; color: var(--text-muted);">
+          <div style="font-size: 48px; margin-bottom: 16px;">&#127919;</div>
+          <div style="font-size: 16px; margin-bottom: 8px;">No goals yet</div>
+          <div style="font-size: 13px;">Add your first goal to start tracking.</div>
+        </div>`;
+      return;
+    }
+    grid.innerHTML = goals.map(g => this.renderGoalCard(g)).join('');
+    // Load heatmaps after cards render
+    goals.forEach(g => this.loadHeatmap(g.id));
+  },
+
+  renderGoalCard(goal) {
+    const c = goal.computed || {};
+    const pct = c.pct || 0;
+    const isHabit = goal.goal_type === 'habit';
+    const direction = goal.direction || 'up';
+
+    // Category badge colors
+    const catColors = {
+      fitness: '#3b82f6', health: '#10b981', finance: '#f59e0b',
+      learning: '#8b5cf6', general: '#6b7280'
+    };
+    const catColor = catColors[goal.category] || catColors.general;
+
+    // Category icons
+    const catIcons = {
+      fitness: '&#127939;', health: '&#9878;&#65039;', finance: '&#128176;',
+      learning: '&#128218;', general: '&#127919;'
+    };
+    const catIcon = catIcons[goal.category] || catIcons.general;
+
+    // Format current/target values
+    const cur = this.formatValue(goal.current_value, goal.metric);
+    const tgt = this.formatValue(goal.target_value, goal.metric);
+
+    // Progress bar color
+    const barColor = pct >= 100 ? '#10b981' : pct >= 70 ? '#3b82f6' : pct >= 40 ? '#f59e0b' : '#ef4444';
+
+    // Trend indicator
+    const trendIcon = c.trend === '\u2191' ? '\u2191' : c.trend === '\u2193' ? '\u2193' : '\u2192';
+    const trendColor = (direction === 'up')
+      ? (c.trend === '\u2191' ? '#10b981' : c.trend === '\u2193' ? '#ef4444' : '#6b7280')
+      : (c.trend === '\u2193' ? '#10b981' : c.trend === '\u2191' ? '#ef4444' : '#6b7280');
+
+    // Streak display
+    let streakHtml = '';
+    if (isHabit && c.current_streak > 0) {
+      const fires = c.current_streak >= 100 ? '\uD83D\uDD25\uD83D\uDD25\uD83D\uDD25' : c.current_streak >= 30 ? '\uD83D\uDD25\uD83D\uDD25' : c.current_streak >= 3 ? '\uD83D\uDD25' : '';
+      streakHtml = `<span class="goal-streak">${c.current_streak}d ${fires}</span>`;
+    }
+
+    // Hit rate for habits
+    let hitRateHtml = '';
+    if (isHabit && c.hit_rate_7) {
+      hitRateHtml = `<span class="goal-hit-rate">${c.hit_rate_7.hits}/${c.hit_rate_7.days} this week</span>`;
+    }
+
+    // On-track for target goals
+    let onTrackHtml = '';
+    if (!isHabit && c.on_track !== null && c.on_track !== undefined) {
+      const otColor = c.on_track >= 90 ? '#10b981' : c.on_track >= 70 ? '#f59e0b' : '#ef4444';
+      onTrackHtml = `<span class="goal-on-track" style="color:${otColor}">On-track: ${c.on_track}%</span>`;
+    }
+
+    // Deadline countdown
+    let deadlineHtml = '';
+    if (goal.deadline) {
+      const daysLeft = Math.ceil((new Date(goal.deadline) - new Date()) / 86400000);
+      if (daysLeft > 0) {
+        deadlineHtml = `<span class="goal-deadline">${daysLeft}d left</span>`;
+      } else {
+        deadlineHtml = `<span class="goal-deadline" style="color:#ef4444">Overdue</span>`;
+      }
+    }
+
+    // Heatmap for last 30 days
+    const heatmapHtml = this.renderHeatmap(goal);
+
+    return `
+      <div class="goal-card" data-goal-id="${goal.id}">
+        <div class="goal-card-header">
+          <div class="goal-title-row">
+            <span class="goal-icon">${catIcon}</span>
+            <span class="goal-title">${Utils.escapeHtml(goal.title)}</span>
+          </div>
+          <span class="goal-category-badge" style="background:${catColor}20; color:${catColor};">${goal.category}</span>
+        </div>
+
+        <div class="goal-values">
+          <span class="goal-current">${cur}</span>
+          <span class="goal-separator">/</span>
+          <span class="goal-target">${tgt}</span>
+          <span class="goal-pct" style="color:${barColor};">${Math.round(pct)}%</span>
+          <span class="goal-trend" style="color:${trendColor};">${trendIcon}</span>
+        </div>
+
+        <div class="goal-progress-bar">
+          <div class="goal-progress-fill" style="width:${Math.min(pct, 100)}%; background:${barColor};"></div>
+        </div>
+
+        <div class="goal-meta">
+          ${streakHtml}${hitRateHtml}${onTrackHtml}${deadlineHtml}
+        </div>
+
+        ${heatmapHtml}
+
+        <div class="goal-card-actions">
+          <button class="btn btn-sm btn-primary" onclick="GoalsView.showLogModal('${goal.id}', '${Utils.escapeHtml(goal.title).replace(/'/g, "\\\\'")}', '${goal.metric}')">
+            Log Progress
+          </button>
+          <button class="btn btn-sm btn-secondary" onclick="GoalsView.deleteGoal('${goal.id}', '${Utils.escapeHtml(goal.title).replace(/'/g, "\\\\'")}')">
+            ${Icons.x}
+          </button>
+        </div>
+      </div>
+    `;
+  },
+
+  renderHeatmap(goal) {
+    // We don't have per-day data in the summary endpoint, so show a placeholder
+    // that gets populated when we fetch progress detail
+    return `<div class="goal-heatmap" id="heatmap-${goal.id}" title="30-day activity"></div>`;
+  },
+
+  async loadHeatmap(goalId) {
+    try {
+      const data = await API.get(`${this.HADLEY_API}/accountability/goals/${goalId}/progress?days=30`);
+      const el = document.getElementById(`heatmap-${goalId}`);
+      if (!el || !data.progress) return;
+
+      const today = new Date();
+      const dayMap = {};
+      for (const p of data.progress) {
+        dayMap[p.date] = parseFloat(p.value);
+      }
+
+      let html = '';
+      for (let i = 29; i >= 0; i--) {
+        const d = new Date(today);
+        d.setDate(d.getDate() - i);
+        const key = d.toISOString().slice(0, 10);
+        const val = dayMap[key];
+        const cls = val !== undefined ? (val > 0 ? 'heatmap-hit' : 'heatmap-miss') : 'heatmap-empty';
+        html += `<div class="heatmap-cell ${cls}" title="${key}: ${val !== undefined ? val : 'no data'}"></div>`;
+      }
+      el.innerHTML = html;
+    } catch (e) {
+      // Silently fail — heatmap is non-critical
+    }
+  },
+
+  formatValue(value, metric) {
+    const v = parseFloat(value) || 0;
+    switch (metric) {
+      case 'steps': return v.toLocaleString('en-GB');
+      case 'gbp': return '\u00a3' + v.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+      case 'kg': return v.toFixed(1) + 'kg';
+      case 'ml': return v.toLocaleString('en-GB') + 'ml';
+      case 'kcal': return v.toLocaleString('en-GB') + 'kcal';
+      default: return v.toLocaleString('en-GB');
+    }
+  },
+
+  showAddModal() {
+    Modal.open({
+      title: 'Add Goal',
+      content: `
+        <div class="form-group">
+          <label>Title</label>
+          <input type="text" id="goal-title" class="form-input" placeholder="e.g. 10k steps daily">
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <select id="goal-type" class="form-input" onchange="GoalsView.toggleHabitFields()">
+            <option value="habit">Habit (recurring)</option>
+            <option value="target">Target (one-off)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Category</label>
+          <select id="goal-category" class="form-input">
+            <option value="fitness">Fitness</option>
+            <option value="health">Health</option>
+            <option value="finance">Finance</option>
+            <option value="learning">Learning</option>
+            <option value="general">General</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Metric</label>
+          <select id="goal-metric" class="form-input">
+            <option value="steps">Steps</option>
+            <option value="kcal">Calories (kcal)</option>
+            <option value="ml">Millilitres (ml)</option>
+            <option value="kg">Kilograms (kg)</option>
+            <option value="gbp">Pounds (\u00a3)</option>
+            <option value="count">Count</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Target Value</label>
+          <input type="number" id="goal-target" class="form-input" placeholder="e.g. 10000" step="any">
+        </div>
+        <div class="form-group">
+          <label>Starting Value</label>
+          <input type="number" id="goal-start" class="form-input" placeholder="0" value="0" step="any">
+        </div>
+        <div class="form-group">
+          <label>Direction</label>
+          <select id="goal-direction" class="form-input">
+            <option value="up">Up (higher is better)</option>
+            <option value="down">Down (lower is better)</option>
+          </select>
+        </div>
+        <div id="habit-fields">
+          <div class="form-group">
+            <label>Frequency</label>
+            <select id="goal-frequency" class="form-input">
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          </div>
+        </div>
+        <div id="target-fields" style="display:none;">
+          <div class="form-group">
+            <label>Deadline</label>
+            <input type="date" id="goal-deadline" class="form-input">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Auto-Source (optional)</label>
+          <select id="goal-auto-source" class="form-input">
+            <option value="">Manual only</option>
+            <option value="garmin_steps">Garmin Steps</option>
+            <option value="garmin_sleep">Garmin Sleep</option>
+            <option value="nutrition_calories">Nutrition Calories</option>
+            <option value="nutrition_water">Nutrition Water</option>
+            <option value="nutrition_protein">Nutrition Protein</option>
+            <option value="weight">Weight (Withings)</option>
+          </select>
+        </div>
+      `,
+      footer: `
+        <button class="btn btn-secondary" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="GoalsView.saveGoal()" style="margin-left:8px;">Create</button>
+      `,
+    });
+  },
+
+  toggleHabitFields() {
+    const type = document.getElementById('goal-type').value;
+    document.getElementById('habit-fields').style.display = type === 'habit' ? '' : 'none';
+    document.getElementById('target-fields').style.display = type === 'target' ? '' : 'none';
+  },
+
+  async saveGoal() {
+    const title = document.getElementById('goal-title').value.trim();
+    const goalType = document.getElementById('goal-type').value;
+    const category = document.getElementById('goal-category').value;
+    const metric = document.getElementById('goal-metric').value;
+    const targetValue = parseFloat(document.getElementById('goal-target').value);
+    const startValue = parseFloat(document.getElementById('goal-start').value) || 0;
+    const direction = document.getElementById('goal-direction').value;
+    const autoSource = document.getElementById('goal-auto-source').value || null;
+
+    if (!title || !targetValue) {
+      Toast.show('Title and target value are required', 'error');
+      return;
+    }
+
+    const payload = {
+      title, goal_type: goalType, category, metric,
+      target_value: targetValue, start_value: startValue, direction,
+      auto_source: autoSource,
+    };
+
+    if (goalType === 'habit') {
+      payload.frequency = document.getElementById('goal-frequency').value;
+    } else {
+      const deadline = document.getElementById('goal-deadline').value;
+      if (deadline) payload.deadline = deadline;
+    }
+
+    try {
+      await API.post(`${this.HADLEY_API}/accountability/goals`, payload);
+      Modal.close();
+      Toast.show('Goal created', 'success');
+      await this.loadGoals();
+    } catch (e) {
+      Toast.show('Failed to create goal: ' + e.message, 'error');
+    }
+  },
+
+  showLogModal(goalId, title, metric) {
+    Modal.open({
+      title: `Log Progress: ${title}`,
+      content: `
+        <div class="form-group">
+          <label>Value (${metric})</label>
+          <input type="number" id="log-value" class="form-input" placeholder="Enter value" step="any" autofocus>
+        </div>
+        <div class="form-group">
+          <label>Note (optional)</label>
+          <input type="text" id="log-note" class="form-input" placeholder="e.g. PB today!">
+        </div>
+      `,
+      footer: `
+        <button class="btn btn-secondary" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="GoalsView.logProgress('${goalId}')" style="margin-left:8px;">Log</button>
+      `,
+    });
+  },
+
+  async logProgress(goalId) {
+    const value = parseFloat(document.getElementById('log-value').value);
+    const note = document.getElementById('log-note').value.trim() || null;
+
+    if (isNaN(value)) {
+      Toast.show('Enter a valid number', 'error');
+      return;
+    }
+
+    try {
+      await API.post(`${this.HADLEY_API}/accountability/goals/${goalId}/progress`, {
+        value, source: 'manual', note,
+      });
+      Modal.close();
+      Toast.show('Progress logged', 'success');
+      await this.loadGoals();
+    } catch (e) {
+      Toast.show('Failed to log: ' + e.message, 'error');
+    }
+  },
+
+  async deleteGoal(goalId, title) {
+    if (!confirm(`Abandon goal "${title}"?`)) return;
+    try {
+      await API.delete(`${this.HADLEY_API}/accountability/goals/${goalId}`);
+      Toast.show('Goal abandoned', 'success');
+      await this.loadGoals();
+    } catch (e) {
+      Toast.show('Failed: ' + e.message, 'error');
+    }
+  },
+
+  async refresh() {
+    await this.loadGoals();
+    Toast.show('Refreshed', 'success');
+  },
+};
+
+
+// =============================================================================
+// 7c. SUBSCRIPTIONS VIEW
 // =============================================================================
 
 const SubscriptionsView = {
@@ -8229,6 +8687,7 @@ const App = {
     Router.register('/costs', CostsView);
     Router.register('/tasks', TasksView);
     Router.register('/meal-plan', MealPlanView);
+    Router.register('/goals', GoalsView);
     Router.register('/subscriptions', SubscriptionsView);
     Router.register('/settings', SettingsView);
 
@@ -8385,6 +8844,7 @@ window.FilesView = FilesView;
 window.KnowledgeView = KnowledgeView;
 window.CostsView = CostsView;
 window.MealPlanView = MealPlanView;
+window.GoalsView = GoalsView;
 window.SubscriptionsView = SubscriptionsView;
 // ApiExplorerView is defined in api-explorer.js
 window.SettingsView = SettingsView;
