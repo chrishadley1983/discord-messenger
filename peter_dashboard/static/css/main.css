@@ -5075,4 +5075,85 @@ h4 { font-size: var(--text-base); }
   .goals-grid {
     grid-template-columns: 1fr;
   }
+  .accountability-extras {
+    grid-template-columns: 1fr !important;
+  }
 }
+
+/* Goal Detail Panel */
+.goal-detail { padding: 4px 0; }
+.goal-detail-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+
+.goal-detail-stats {
+  display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.goal-detail-stat {
+  flex: 1; min-width: 70px; text-align: center; padding: 10px 8px;
+  background: var(--bg-hover); border-radius: var(--radius-md);
+}
+.goal-detail-stat-value { font-size: 18px; font-weight: 700; color: var(--text-primary); font-family: var(--font-mono); }
+.goal-detail-stat-label { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+.goal-detail-table {
+  width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--font-mono);
+}
+.goal-detail-table th {
+  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border);
+  font-weight: 600; color: var(--text-muted); font-size: 11px; text-transform: uppercase;
+}
+.goal-detail-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); }
+.goal-detail-table tbody tr:hover { background: var(--bg-hover); }
+
+.goal-detail-milestone {
+  display: flex; align-items: center; gap: 8px; padding: 6px 0;
+  font-size: 13px; border-bottom: 1px solid var(--border);
+}
+.goal-detail-milestone.reached { color: var(--text-primary); }
+.goal-detail-milestone:not(.reached) { color: var(--text-muted); }
+
+/* Boolean habit toggle */
+.btn-success { background: #10b981; color: white; border: 1px solid #10b981; }
+.btn-success:hover { background: #059669; }
+.btn-outline { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
+.btn-outline:hover { background: var(--bg-hover); }
+
+/* Mood + Journal extras row */
+.accountability-extras {
+  display: grid; grid-template-columns: 1fr 1fr; gap: var(--spacing-md); margin-top: var(--spacing-lg);
+}
+
+.mood-widget, .journal-widget {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: var(--spacing-md);
+}
+
+.widget-header {
+  font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text-primary);
+}
+
+/* Mood buttons */
+.mood-buttons { display: flex; gap: 4px; margin-bottom: 10px; }
+.mood-btn {
+  width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg-hover); color: var(--text-secondary); font-size: 12px; font-weight: 600;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s ease;
+}
+.mood-btn:hover { border-color: var(--accent); transform: scale(1.1); }
+.mood-btn.active { border-color: transparent; transform: scale(1.15); }
+
+.mood-note-row { display: flex; align-items: center; margin-bottom: 8px; }
+
+.mood-footer { display: flex; justify-content: space-between; align-items: center; }
+.mood-dots { display: flex; gap: 4px; align-items: center; }
+.mood-dot { width: 10px; height: 10px; border-radius: 50%; }
+.mood-avg { font-size: 12px; color: var(--text-secondary); font-family: var(--font-mono); }
+
+/* Journal */
+.journal-textarea {
+  width: 100%; min-height: 80px; resize: vertical; font-size: 13px;
+  font-family: var(--font-base); line-height: 1.5;
+}
+.journal-prev-entry { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.journal-prev-date { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+.journal-prev-text { font-size: 12px; color: var(--text-secondary); margin-top: 2px; white-space: pre-wrap; }

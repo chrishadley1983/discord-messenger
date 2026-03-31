@@ -110,19 +110,22 @@ async def create_goal_endpoint(req: CreateGoalRequest):
 
 
 @router.get("/goals/{goal_id}", dependencies=[Depends(require_auth)])
-async def get_goal_endpoint(goal_id: str):
-    """Get goal detail with recent progress."""
+async def get_goal_endpoint(
+    goal_id: str,
+    days: int = Query(31, description="Days of progress history to include"),
+):
+    """Get goal detail with full progress history."""
     goal = await get_goal(goal_id)
     if not goal:
         return JSONResponse({"error": "Goal not found"}, status_code=404)
-    progress = await get_progress(goal_id, days=30)
+    progress = await get_progress(goal_id, days=days)
     computed = compute_goal_status(goal, progress)
     milestones = await get_milestones(goal_id)
     return {
         **goal,
         "computed": computed,
         "milestones": milestones,
-        "recent_progress": progress[:10],
+        "progress": progress,
     }
 
 
@@ -199,8 +202,13 @@ async def get_progress_endpoint(
 
 @router.get("/summary", dependencies=[Depends(require_auth)])
 async def get_summary():
-    """All-goals summary for the dashboard."""
-    return await get_daily_summary()
+    """All-goals summary for the dashboard, including mood and journal."""
+    from domains.accountability.mood_service import get_mood_summary
+    from domains.accountability.journal_service import get_journal_today
+    summary = await get_daily_summary()
+    summary["mood"] = await get_mood_summary()
+    summary["journal"] = await get_journal_today()
+    return summary
 
 
 @router.get("/report", dependencies=[Depends(require_auth)])
@@ -216,3 +224,77 @@ async def trigger_auto_update():
     """Manually trigger auto-updates for all goals with auto_source."""
     result = await run_auto_updates()
     return result
+
+
+# ── Mood Tracking ────────────────────────────────────────────────────────
+
+
+class LogMoodRequest(BaseModel):
+    score: int
+    note: Optional[str] = None
+    date: Optional[str] = None
+
+
+@router.post("/mood", dependencies=[Depends(require_auth)])
+async def log_mood_endpoint(req: LogMoodRequest):
+    """Log or update today's mood (1-10 scale)."""
+    if not 1 <= req.score <= 10:
+        return JSONResponse({"error": "Score must be 1-10"}, status_code=400)
+    from domains.accountability.mood_service import log_mood
+    entry = await log_mood(score=req.score, note=req.note, log_date=req.date)
+    if entry:
+        return {"status": "logged", "entry": entry}
+    return JSONResponse({"error": "Failed to log mood"}, status_code=500)
+
+
+@router.get("/mood", dependencies=[Depends(require_auth)])
+async def get_mood_endpoint():
+    """Get today's mood with 7-day summary."""
+    from domains.accountability.mood_service import get_mood_summary
+    return await get_mood_summary()
+
+
+@router.get("/mood/history", dependencies=[Depends(require_auth)])
+async def get_mood_history_endpoint(
+    days: int = Query(31, description="Number of days of history"),
+):
+    """Get mood history."""
+    from domains.accountability.mood_service import get_mood_history
+    history = await get_mood_history(days=days)
+    return {"count": len(history), "history": history}
+
+
+# ── Daily Journal ────────────────────────────────────────────────────────
+
+
+class SaveJournalRequest(BaseModel):
+    content: str
+    date: Optional[str] = None
+
+
+@router.post("/journal", dependencies=[Depends(require_auth)])
+async def save_journal_endpoint(req: SaveJournalRequest):
+    """Save or update today's journal entry."""
+    from domains.accountability.journal_service import save_journal
+    entry = await save_journal(content=req.content, log_date=req.date)
+    if entry:
+        return {"status": "saved", "entry": entry}
+    return JSONResponse({"error": "Failed to save journal"}, status_code=500)
+
+
+@router.get("/journal", dependencies=[Depends(require_auth)])
+async def get_journal_endpoint():
+    """Get today's journal entry."""
+    from domains.accountability.journal_service import get_journal_today
+    entry = await get_journal_today()
+    return {"entry": entry}
+
+
+@router.get("/journal/history", dependencies=[Depends(require_auth)])
+async def get_journal_history_endpoint(
+    days: int = Query(7, description="Number of days of history"),
+):
+    """Get recent journal entries."""
+    from domains.accountability.journal_service import get_journal_history
+    history = await get_journal_history(days=days)
+    return {"count": len(history), "history": history}

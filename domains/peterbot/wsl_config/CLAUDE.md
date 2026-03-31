@@ -102,6 +102,17 @@ Key endpoints:
 
 When Chris mentions goals, steps, weight, or water targets, check the `accountability-update` skill. Log progress conversationally — don't ask Chris to use the dashboard.
 
+Boolean habits (metric='boolean') use value=1 (done) or value=0 (missed). When Chris says "done with no doom scrolling" or "missed meditation", match to the boolean habit and log appropriately.
+
+Additional endpoints:
+- `POST /accountability/mood` — log mood `{score: 1-10, note: optional}`. Use `mood-log` skill.
+- `GET /accountability/mood` — today's mood + 7-day summary
+- `POST /accountability/journal` — save journal `{content: "text"}`. Use `journal-log` skill.
+- `GET /accountability/journal` — today's journal entry
+
+When Chris mentions mood, feelings, or "how I feel", use the `mood-log` skill.
+When Chris says "journal:" or "diary:", use the `journal-log` skill.
+
 ## Live Data Routing
 
 Priority order:

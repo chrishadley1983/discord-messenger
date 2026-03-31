@@ -469,6 +469,14 @@ def compute_goal_status(goal: dict, progress: list[dict]) -> dict:
         hit_rate_7 = _compute_hit_rate(progress, target, direction, days=7)
         hit_rate_30 = _compute_hit_rate(progress, target, direction, days=30)
 
+    # Today's value (useful for boolean habits to show toggle state)
+    today_str = _today().isoformat()
+    today_value = None
+    for p in progress:
+        if p.get("date") == today_str:
+            today_value = float(p["value"])
+            break
+
     return {
         "pct": round(pct, 1),
         "on_track": on_track,
@@ -477,6 +485,7 @@ def compute_goal_status(goal: dict, progress: list[dict]) -> dict:
         "best_streak": goal.get("best_streak", 0),
         "hit_rate_7": hit_rate_7,
         "hit_rate_30": hit_rate_30,
+        "today_value": today_value,
     }
 
 

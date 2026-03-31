@@ -7734,9 +7734,18 @@ const GoalsView = {
         <div id="goals-grid" class="goals-grid">
           <div style="padding: 40px; text-align: center; color: var(--text-muted);">Loading goals...</div>
         </div>
+
+        <div class="accountability-extras">
+          <div class="mood-widget" id="mood-widget">
+            <div style="padding: 20px; text-align: center; color: var(--text-muted);">Loading mood...</div>
+          </div>
+          <div class="journal-widget" id="journal-widget">
+            <div style="padding: 20px; text-align: center; color: var(--text-muted);">Loading journal...</div>
+          </div>
+        </div>
       </div>
     `;
-    await this.loadGoals();
+    await Promise.all([this.loadGoals(), this.loadMood(), this.loadJournal()]);
   },
 
   async loadGoals() {
@@ -7836,7 +7845,7 @@ const GoalsView = {
     const heatmapHtml = this.renderHeatmap(goal);
 
     return `
-      <div class="goal-card" data-goal-id="${goal.id}">
+      <div class="goal-card" data-goal-id="${goal.id}" onclick="GoalsView.showGoalDetail('${goal.id}')" style="cursor:pointer;">
         <div class="goal-card-header">
           <div class="goal-title-row">
             <span class="goal-icon">${catIcon}</span>
@@ -7864,10 +7873,15 @@ const GoalsView = {
         ${heatmapHtml}
 
         <div class="goal-card-actions">
-          <button class="btn btn-sm btn-primary" onclick="GoalsView.showLogModal('${goal.id}', '${Utils.escapeHtml(goal.title).replace(/'/g, "\\\\'")}', '${goal.metric}')">
-            Log Progress
-          </button>
-          <button class="btn btn-sm btn-secondary" onclick="GoalsView.deleteGoal('${goal.id}', '${Utils.escapeHtml(goal.title).replace(/'/g, "\\\\'")}')">
+          ${goal.metric === 'boolean'
+            ? `<button class="btn btn-sm ${c.today_value === 1 ? 'btn-success' : 'btn-outline'}" onclick="event.stopPropagation(); GoalsView.toggleBoolean('${goal.id}', ${c.today_value === 1 ? 0 : 1})">
+                ${c.today_value === 1 ? '&#10003; Done' : '&#9675; Mark Done'}
+              </button>`
+            : `<button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); GoalsView.showLogModal('${goal.id}', '${Utils.escapeHtml(goal.title).replace(/'/g, "\\\\'")}', '${goal.metric}')">
+                Log Progress
+              </button>`
+          }
+          <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); GoalsView.deleteGoal('${goal.id}', '${Utils.escapeHtml(goal.title).replace(/'/g, "\\\\'")}')">
             ${Icons.x}
           </button>
         </div>
@@ -7916,6 +7930,7 @@ const GoalsView = {
       case 'kg': return v.toFixed(1) + 'kg';
       case 'ml': return v.toLocaleString('en-GB') + 'ml';
       case 'kcal': return v.toLocaleString('en-GB') + 'kcal';
+      case 'boolean': return v >= 1 ? '&#10003;' : '&#10007;';
       default: return v.toLocaleString('en-GB');
     }
   },
@@ -7947,13 +7962,14 @@ const GoalsView = {
         </div>
         <div class="form-group">
           <label>Metric</label>
-          <select id="goal-metric" class="form-input">
+          <select id="goal-metric" class="form-input" onchange="GoalsView.onMetricChange()">
             <option value="steps">Steps</option>
             <option value="kcal">Calories (kcal)</option>
             <option value="ml">Millilitres (ml)</option>
             <option value="kg">Kilograms (kg)</option>
             <option value="gbp">Pounds (\u00a3)</option>
             <option value="count">Count</option>
+            <option value="boolean">Yes/No (daily check-in)</option>
           </select>
         </div>
         <div class="form-group">
@@ -8005,6 +8021,21 @@ const GoalsView = {
         <button class="btn btn-primary" onclick="GoalsView.saveGoal()" style="margin-left:8px;">Create</button>
       `,
     });
+  },
+
+  onMetricChange() {
+    const metric = document.getElementById('goal-metric').value;
+    const targetEl = document.getElementById('goal-target');
+    const startEl = document.getElementById('goal-start');
+    if (metric === 'boolean') {
+      targetEl.value = '1';
+      targetEl.disabled = true;
+      startEl.value = '0';
+      startEl.disabled = true;
+    } else {
+      targetEl.disabled = false;
+      startEl.disabled = false;
+    }
   },
 
   toggleHabitFields() {
@@ -8103,8 +8134,241 @@ const GoalsView = {
     }
   },
 
+  // ── Goal Detail Panel ───────────────────────────────────────────────
+
+  async showGoalDetail(goalId) {
+    try {
+      const data = await API.get(`${this.HADLEY_API}/accountability/goals/${goalId}?days=31`);
+      const goal = data;
+      const progress = data.progress || [];
+      const milestones = data.milestones || [];
+      const c = goal.computed || {};
+
+      const today = new Date();
+      const last7 = progress.filter(p => (today - new Date(p.date)) / 86400000 < 7);
+      const last31 = progress;
+
+      const progressTableRows = (entries) => entries.map(p =>
+        `<tr>
+          <td>${p.date}</td>
+          <td>${this.formatValue(p.value, goal.metric)}</td>
+          <td style="color: ${(p.delta||0) >= 0 ? '#10b981' : '#ef4444'}">${p.delta != null ? (p.delta >= 0 ? '+' : '') + this.formatValue(Math.abs(p.delta), goal.metric) : '-'}</td>
+          <td style="color: var(--text-muted); font-size:11px;">${p.source || ''}</td>
+        </tr>`
+      ).join('');
+
+      const milestoneRows = milestones.map(m =>
+        `<div class="goal-detail-milestone ${m.reached_at ? 'reached' : ''}">
+          <span>${m.reached_at ? '&#9989;' : '&#9675;'}</span>
+          <span>${Utils.escapeHtml(m.title)}</span>
+          <span style="margin-left:auto; color:var(--text-muted);">${this.formatValue(m.target_value, goal.metric)}</span>
+          ${m.reached_at ? `<span style="font-size:11px; color:var(--text-muted);">${m.reached_at.slice(0,10)}</span>` : ''}
+        </div>`
+      ).join('') || '<div style="color:var(--text-muted);">No milestones set</div>';
+
+      // Summary stats
+      const statsHtml = `
+        <div class="goal-detail-stats">
+          <div class="goal-detail-stat">
+            <div class="goal-detail-stat-value">${this.formatValue(goal.current_value, goal.metric)}</div>
+            <div class="goal-detail-stat-label">Current</div>
+          </div>
+          <div class="goal-detail-stat">
+            <div class="goal-detail-stat-value">${this.formatValue(goal.target_value, goal.metric)}</div>
+            <div class="goal-detail-stat-label">Target</div>
+          </div>
+          <div class="goal-detail-stat">
+            <div class="goal-detail-stat-value">${Math.round(c.pct || 0)}%</div>
+            <div class="goal-detail-stat-label">Progress</div>
+          </div>
+          ${c.on_track != null ? `<div class="goal-detail-stat">
+            <div class="goal-detail-stat-value">${c.on_track}%</div>
+            <div class="goal-detail-stat-label">On-track</div>
+          </div>` : ''}
+          ${c.current_streak ? `<div class="goal-detail-stat">
+            <div class="goal-detail-stat-value">${c.current_streak}d</div>
+            <div class="goal-detail-stat-label">Streak</div>
+          </div>` : ''}
+        </div>`;
+
+      const content = `
+        <div class="goal-detail">
+          <div class="goal-detail-header">
+            <h3 style="margin:0;">${Utils.escapeHtml(goal.title)}</h3>
+            <span class="goal-category-badge" style="background:#3b82f620; color:#3b82f6;">${goal.category} &middot; ${goal.goal_type}</span>
+          </div>
+          ${statsHtml}
+          ${goal.description ? `<p style="color:var(--text-secondary); font-size:13px;">${Utils.escapeHtml(goal.description)}</p>` : ''}
+
+          <h4 style="margin: 16px 0 8px;">Last 7 Days</h4>
+          <table class="goal-detail-table">
+            <thead><tr><th>Date</th><th>Value</th><th>Change</th><th>Source</th></tr></thead>
+            <tbody>${progressTableRows(last7) || '<tr><td colspan="4" style="text-align:center; color:var(--text-muted);">No data</td></tr>'}</tbody>
+          </table>
+
+          <h4 style="margin: 16px 0 8px;">Last 31 Days</h4>
+          <table class="goal-detail-table">
+            <thead><tr><th>Date</th><th>Value</th><th>Change</th><th>Source</th></tr></thead>
+            <tbody>${progressTableRows(last31) || '<tr><td colspan="4" style="text-align:center; color:var(--text-muted);">No data</td></tr>'}</tbody>
+          </table>
+
+          <h4 style="margin: 16px 0 8px;">Milestones</h4>
+          <div class="goal-detail-milestones">${milestoneRows}</div>
+        </div>
+      `;
+      DetailPanel.open(content);
+    } catch (e) {
+      Toast.show('Failed to load goal detail: ' + e.message, 'error');
+    }
+  },
+
+  // ── Boolean Habit Toggle ──────────────────────────────────────────
+
+  async toggleBoolean(goalId, newValue) {
+    try {
+      await API.post(`${this.HADLEY_API}/accountability/goals/${goalId}/progress`, {
+        value: newValue, source: 'manual',
+      });
+      Toast.show(newValue === 1 ? 'Done!' : 'Unmarked', 'success');
+      await this.loadGoals();
+    } catch (e) {
+      Toast.show('Failed: ' + e.message, 'error');
+    }
+  },
+
+  // ── Mood Widget ───────────────────────────────────────────────────
+
+  async loadMood() {
+    const el = document.getElementById('mood-widget');
+    if (!el) return;
+    try {
+      const data = await API.get(`${this.HADLEY_API}/accountability/mood`);
+      this.renderMoodWidget(el, data);
+    } catch (e) {
+      el.innerHTML = `<div class="widget-header">Mood</div><div style="padding:12px; color:var(--text-muted);">Could not load mood</div>`;
+    }
+  },
+
+  renderMoodWidget(el, data) {
+    const today = data.today;
+    const todayScore = today ? today.score : null;
+    const todayNote = today ? today.note || '' : '';
+    const history = data.history_7 || [];
+    const weekAvg = data.week_avg;
+    const trend = data.trend;
+
+    const trendIcon = trend === 'up' ? '&#8593;' : trend === 'down' ? '&#8595;' : '&#8594;';
+    const trendColor = trend === 'up' ? '#10b981' : trend === 'down' ? '#ef4444' : '#6b7280';
+
+    // Mood buttons (1-10)
+    const buttons = Array.from({length: 10}, (_, i) => {
+      const n = i + 1;
+      const isActive = todayScore === n;
+      const color = n <= 3 ? '#ef4444' : n <= 6 ? '#f59e0b' : '#10b981';
+      return `<button class="mood-btn ${isActive ? 'active' : ''}" style="${isActive ? `background:${color}; color:white;` : ''}" onclick="GoalsView.logMood(${n})">${n}</button>`;
+    }).join('');
+
+    // 7-day dots
+    const dots = history.slice(0, 7).reverse().map(h => {
+      const s = h.score;
+      const color = s <= 3 ? '#ef4444' : s <= 6 ? '#f59e0b' : '#10b981';
+      return `<div class="mood-dot" style="background:${color};" title="${h.date}: ${s}/10${h.note ? ' — ' + h.note : ''}"></div>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div class="widget-header">Mood Today</div>
+      <div class="mood-buttons">${buttons}</div>
+      <div class="mood-note-row">
+        <input type="text" id="mood-note" class="form-input" placeholder="Optional note..." value="${Utils.escapeHtml(todayNote)}" style="flex:1; font-size:12px;">
+        <button class="btn btn-sm btn-secondary" onclick="GoalsView.saveMoodNote()" style="margin-left:6px;">Save</button>
+      </div>
+      <div class="mood-footer">
+        <div class="mood-dots">${dots || '<span style="color:var(--text-muted); font-size:12px;">No data yet</span>'}</div>
+        <div class="mood-avg">${weekAvg != null ? `Avg: ${weekAvg} <span style="color:${trendColor};">${trendIcon}</span>` : ''}</div>
+      </div>
+    `;
+  },
+
+  async logMood(score) {
+    const noteEl = document.getElementById('mood-note');
+    const note = noteEl ? noteEl.value.trim() : null;
+    try {
+      await API.post(`${this.HADLEY_API}/accountability/mood`, { score, note: note || null });
+      Toast.show(`Mood: ${score}/10`, 'success');
+      await this.loadMood();
+    } catch (e) {
+      Toast.show('Failed to log mood: ' + e.message, 'error');
+    }
+  },
+
+  async saveMoodNote() {
+    // Re-save today's mood with the updated note (need current score)
+    try {
+      const data = await API.get(`${this.HADLEY_API}/accountability/mood`);
+      const score = data.today ? data.today.score : null;
+      if (!score) { Toast.show('Log a mood score first', 'error'); return; }
+      const note = document.getElementById('mood-note')?.value.trim() || null;
+      await API.post(`${this.HADLEY_API}/accountability/mood`, { score, note });
+      Toast.show('Note saved', 'success');
+    } catch (e) {
+      Toast.show('Failed: ' + e.message, 'error');
+    }
+  },
+
+  // ── Journal Widget ────────────────────────────────────────────────
+
+  async loadJournal() {
+    const el = document.getElementById('journal-widget');
+    if (!el) return;
+    try {
+      const [todayData, historyData] = await Promise.all([
+        API.get(`${this.HADLEY_API}/accountability/journal`),
+        API.get(`${this.HADLEY_API}/accountability/journal/history?days=7`),
+      ]);
+      this.renderJournalWidget(el, todayData.entry, historyData.history || []);
+    } catch (e) {
+      el.innerHTML = `<div class="widget-header">Journal</div><div style="padding:12px; color:var(--text-muted);">Could not load journal</div>`;
+    }
+  },
+
+  renderJournalWidget(el, todayEntry, history) {
+    const content = todayEntry ? todayEntry.content : '';
+    const previousEntries = history.filter(h => h.date !== new Date().toISOString().slice(0, 10)).slice(0, 3);
+
+    const prevHtml = previousEntries.length > 0
+      ? `<details class="journal-previous">
+           <summary style="cursor:pointer; font-size:12px; color:var(--text-muted); margin-top:8px;">Previous entries</summary>
+           ${previousEntries.map(h => `
+             <div class="journal-prev-entry">
+               <div class="journal-prev-date">${h.date}</div>
+               <div class="journal-prev-text">${Utils.escapeHtml(h.content)}</div>
+             </div>`).join('')}
+         </details>`
+      : '';
+
+    el.innerHTML = `
+      <div class="widget-header">Journal</div>
+      <textarea id="journal-content" class="form-input journal-textarea" placeholder="Thoughts for today...">${Utils.escapeHtml(content)}</textarea>
+      <div style="display:flex; justify-content:flex-end; margin-top:6px;">
+        <button class="btn btn-sm btn-primary" onclick="GoalsView.saveJournal()">Save</button>
+      </div>
+      ${prevHtml}
+    `;
+  },
+
+  async saveJournal() {
+    const content = document.getElementById('journal-content')?.value.trim();
+    if (!content) { Toast.show('Write something first', 'error'); return; }
+    try {
+      await API.post(`${this.HADLEY_API}/accountability/journal`, { content });
+      Toast.show('Journal saved', 'success');
+    } catch (e) {
+      Toast.show('Failed: ' + e.message, 'error');
+    }
+  },
+
   async refresh() {
-    await this.loadGoals();
+    await Promise.all([this.loadGoals(), this.loadMood(), this.loadJournal()]);
     Toast.show('Refreshed', 'success');
   },
 };

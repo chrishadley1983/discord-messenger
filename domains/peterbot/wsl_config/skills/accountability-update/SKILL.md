@@ -70,6 +70,22 @@ For status check:
 💧 2L Water — 1,400ml | ▓▓▓▓▓▓▓░░░ 70%
 ```
 
+## Boolean Habits
+
+For goals with `metric: "boolean"` (e.g. "No Doom Scrolling"):
+- "done with no doom scrolling" / "yes on meditation" → log value=1
+- "missed meditation" / "failed no doom scrolling" → log value=0
+
+```
+POST http://172.19.64.1:8100/accountability/goals/{id}/progress
+{"value": 1, "source": "peter_chat"}
+```
+
+After logging:
+```
+✓ No Doom Scrolling — done! Streak: 4 days 🔥
+```
+
 ## Rules
 
 - Always confirm what was logged with the actual value
