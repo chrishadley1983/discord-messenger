@@ -1521,11 +1521,18 @@ async def hadley_proxy(path: str, request: Request):
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             body = await request.body()
+            # Forward auth: use client's x-api-key if present, else inject dashboard's own key
+            proxy_headers = {"Content-Type": request.headers.get("Content-Type", "application/json")}
+            client_key = request.headers.get("x-api-key", "")
+            if client_key:
+                proxy_headers["x-api-key"] = client_key
+            elif _DASHBOARD_AUTH_KEY:
+                proxy_headers["x-api-key"] = _DASHBOARD_AUTH_KEY
             response = await client.request(
                 method=request.method,
                 url=target_url,
                 content=body if body else None,
-                headers={"Content-Type": request.headers.get("Content-Type", "application/json")},
+                headers=proxy_headers,
             )
             return Response(
                 content=response.content,
