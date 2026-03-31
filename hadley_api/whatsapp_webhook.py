@@ -372,6 +372,74 @@ async def whatsapp_webhook(request: Request, event_type: str = ""):
     return JSONResponse({"status": "ok"})
 
 
+async def _scan_outbound_for_commitments(msg: dict):
+    """Scan an outbound (fromMe) WhatsApp message for promises/commitments."""
+    try:
+        from domains.commitments import detect_commitments, store_commitment, resolve_recipient_from_jid
+
+        message_content = msg.get("message", {})
+        text = (
+            message_content.get("conversation")
+            or message_content.get("extendedTextMessage", {}).get("text")
+            or ""
+        )
+        if not text.strip():
+            return
+
+        matches = detect_commitments(text)
+        if not matches:
+            return
+
+        key = msg.get("key", {})
+        remote_jid = key.get("remoteJid", "")
+        message_id = key.get("id", "")
+        recipient = resolve_recipient_from_jid(remote_jid)
+
+        logger.info(f"Commitment detected in outbound WhatsApp → {recipient}: {len(matches)} match(es)")
+
+        for match in matches:
+            await store_commitment(
+                text=text,
+                matched_pattern=match["matched_text"],
+                category=match["category"],
+                recipient=recipient,
+                source="whatsapp",
+                source_context=f"WhatsApp DM to {recipient}" if recipient else "WhatsApp group",
+                source_message_id=message_id,
+            )
+    except Exception as e:
+        logger.error(f"Commitment scan error: {e}")
+
+
+async def _buffer_outbound_message(msg: dict):
+    """Add outbound (fromMe) WhatsApp messages to Peter's memory buffer.
+
+    Scheduled jobs send directly via Evolution API, bypassing the message handler.
+    This means Peter has no context when Chris replies to a scheduled message.
+    By capturing outbound messages here, we close that gap.
+    """
+    try:
+        message_content = msg.get("message", {})
+        text = (
+            message_content.get("conversation")
+            or message_content.get("extendedTextMessage", {}).get("text")
+            or ""
+        )
+        if not text.strip():
+            return
+
+        # Truncate very long scheduled job outputs to avoid bloating the buffer
+        if len(text) > 1000:
+            text = text[:1000] + "\n[...truncated]"
+
+        from domains.peterbot import memory
+        WHATSAPP_VIRTUAL_CHANNEL_ID = 9999999999
+        memory.add_to_buffer("assistant", text, WHATSAPP_VIRTUAL_CHANNEL_ID)
+        logger.debug(f"Buffered outbound WhatsApp message ({len(text)} chars)")
+    except Exception as e:
+        logger.error(f"Outbound buffer error: {e}")
+
+
 async def _handle_message(body: dict):
     """Process an incoming message webhook — queue it for debounced delivery."""
     data = body.get("data", {})
@@ -380,6 +448,10 @@ async def _handle_message(body: dict):
     for msg in messages:
         key = msg.get("key", {})
         if key.get("fromMe"):
+            # Scan Chris's outbound messages for commitments (async, fire-and-forget)
+            asyncio.create_task(_scan_outbound_for_commitments(msg))
+            # Buffer outbound messages so Peter has context when Chris replies
+            asyncio.create_task(_buffer_outbound_message(msg))
             return
 
         # Deduplicate — Evolution API can fire messages.upsert multiple times
