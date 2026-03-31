@@ -111,13 +111,20 @@ async def fetch_auto_value(source_key: str, target_date: str | None = None) -> f
         async with httpx.AsyncClient(timeout=10) as client:
             if agg == "latest":
                 # Get most recent row for the target date
+                date_col = config["date_col"]
                 params = {
                     "select": column,
-                    config["date_col"]: f"eq.{target}",
-                    "order": f"{config['date_col']}.desc",
+                    "order": f"{date_col}.desc",
                     "limit": "1",
                     **config.get("filter", {}),
                 }
+                # DATE columns use eq, TIMESTAMP columns need a range
+                if date_col == "date":
+                    params[date_col] = f"eq.{target}"
+                else:
+                    from datetime import timedelta
+                    next_day = (date.fromisoformat(target) + timedelta(days=1)).isoformat()
+                    params["and"] = f"({date_col}.gte.{target}T00:00:00,{date_col}.lt.{next_day}T00:00:00)"
                 resp = await client.get(url, headers=_read_headers(), params=params)
 
                 if resp.status_code == 200:
