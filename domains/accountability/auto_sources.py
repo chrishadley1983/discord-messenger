@@ -6,7 +6,8 @@ Adding a new data source = adding one dict entry to AUTO_SOURCE_REGISTRY.
 
 import logging
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -171,6 +172,78 @@ async def fetch_auto_value(source_key: str, target_date: str | None = None) -> f
     except Exception as e:
         logger.error(f"Auto-fetch error for {source_key}: {e}")
         return None
+
+
+async def fetch_source_history(source_key: str, days: int = 31) -> list[dict]:
+    """Fetch historical values directly from the source table.
+
+    For auto-sourced goals, reads from the original data (garmin, nutrition, weight)
+    instead of requiring data to be replicated into accountability_progress.
+
+    Returns list of {date, value} dicts ordered by date desc.
+    """
+    config = AUTO_SOURCE_REGISTRY.get(source_key)
+    if not config or not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+
+    from datetime import timedelta
+    uk_today = datetime.now(ZoneInfo("Europe/London")).date()
+    cutoff = (uk_today - timedelta(days=days)).isoformat()
+    table = config["table"]
+    column = config["column"]
+    date_col = config["date_col"]
+    agg = config["agg"]
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            if agg == "latest":
+                # DATE column: one row per day, select date + value
+                params = {
+                    "select": f"{date_col},{column}",
+                    f"{date_col}": f"gte.{cutoff}",
+                    "order": f"{date_col}.desc",
+                    **config.get("filter", {}),
+                }
+                resp = await client.get(url, headers=_read_headers(), params=params)
+                if resp.status_code == 200:
+                    return [
+                        {"date": str(row[date_col])[:10], "value": float(row[column])}
+                        for row in resp.json()
+                        if row.get(column) is not None
+                    ]
+                return []
+
+            elif agg == "sum_today":
+                # TIMESTAMP column: need to aggregate per day
+                # Fetch raw rows and aggregate client-side
+                params = {
+                    "select": f"{date_col},{column}",
+                    "order": f"{date_col}.desc",
+                    **config.get("filter", {}),
+                }
+                if date_col == "date":
+                    params[date_col] = f"gte.{cutoff}"
+                else:
+                    params["and"] = f"({date_col}.gte.{cutoff}T00:00:00)"
+
+                resp = await client.get(url, headers=_read_headers(), params=params)
+                if resp.status_code == 200:
+                    # Group by date and sum
+                    daily: dict[str, float] = {}
+                    for row in resp.json():
+                        d = str(row[date_col])[:10]
+                        val = row.get(column)
+                        if val is not None:
+                            daily[d] = daily.get(d, 0) + float(val)
+                    return [
+                        {"date": d, "value": v}
+                        for d, v in sorted(daily.items(), reverse=True)
+                    ]
+                return []
+    except Exception as e:
+        logger.error(f"Fetch source history error for {source_key}: {e}")
+        return []
 
 
 async def run_auto_updates(target_date: str | None = None) -> dict:

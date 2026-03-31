@@ -26,7 +26,7 @@ from domains.accountability.service import (
     get_report_data,
     compute_goal_status,
 )
-from domains.accountability.auto_sources import run_auto_updates
+from domains.accountability.auto_sources import run_auto_updates, fetch_source_history
 
 logger = logging.getLogger(__name__)
 
@@ -79,10 +79,19 @@ async def list_goals(
     status: str = Query("active", description="Filter: active, paused, completed, abandoned, all"),
 ):
     """List goals with computed status metrics."""
+    import asyncio
     goals = await get_goals(status=status)
+
+    # Fetch progress in parallel — auto-sourced goals read from source table directly
+    async def _get_goal_progress(g):
+        if g.get("auto_source"):
+            history = await fetch_source_history(g["auto_source"], days=30)
+            return [{"date": h["date"], "value": h["value"], "delta": None, "source": g["auto_source"]} for h in history]
+        return await get_progress(g["id"], days=30)
+
+    all_progress = await asyncio.gather(*[_get_goal_progress(g) for g in goals])
     enriched = []
-    for g in goals:
-        progress = await get_progress(g["id"], days=30)
+    for g, progress in zip(goals, all_progress):
         computed = compute_goal_status(g, progress)
         enriched.append({**g, "computed": computed})
     return {"count": len(enriched), "goals": enriched}
@@ -114,11 +123,26 @@ async def get_goal_endpoint(
     goal_id: str,
     days: int = Query(31, description="Days of progress history to include"),
 ):
-    """Get goal detail with full progress history."""
+    """Get goal detail with full progress history.
+
+    For auto-sourced goals, reads history directly from the source table
+    (garmin, nutrition, weight) instead of accountability_progress.
+    """
     goal = await get_goal(goal_id)
     if not goal:
         return JSONResponse({"error": "Goal not found"}, status_code=404)
-    progress = await get_progress(goal_id, days=days)
+
+    # For auto-sourced goals, read directly from source table
+    if goal.get("auto_source"):
+        source_history = await fetch_source_history(goal["auto_source"], days=days)
+        # Convert to progress-like format for compute_goal_status compatibility
+        progress = [
+            {"date": h["date"], "value": h["value"], "delta": None, "source": goal["auto_source"]}
+            for h in source_history
+        ]
+    else:
+        progress = await get_progress(goal_id, days=days)
+
     computed = compute_goal_status(goal, progress)
     milestones = await get_milestones(goal_id)
     return {

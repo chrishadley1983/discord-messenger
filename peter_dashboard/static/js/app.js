@@ -7754,9 +7754,10 @@ const GoalsView = {
       this._data = data;
       this.renderGoals(data.goals || []);
     } catch (e) {
+      const msg = e && e.message ? e.message : 'Request failed';
       document.getElementById('goals-grid').innerHTML = `
         <div style="padding: 40px; text-align: center; color: var(--text-danger);">
-          Failed to load goals: ${e.message}
+          Failed to load goals: ${Utils.escapeHtml(msg)}
         </div>`;
     }
   },
@@ -8297,7 +8298,7 @@ const GoalsView = {
       Toast.show(`Mood: ${score}/10`, 'success');
       await this.loadMood();
     } catch (e) {
-      Toast.show('Failed to log mood: ' + e.message, 'error');
+      Toast.show('Failed to log mood: ' + (e && e.message || 'error'), 'error');
     }
   },
 

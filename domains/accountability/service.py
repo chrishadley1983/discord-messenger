@@ -548,18 +548,19 @@ def _compute_hit_rate(
 
 async def get_daily_summary(target_date: str | None = None) -> dict:
     """All active goals with their computed status for today."""
+    import asyncio
     goals = await get_goals(status="active")
-    result = []
 
-    for goal in goals:
-        progress = await get_progress(goal["id"], days=30)
+    # Parallel fetch progress + milestones for all goals
+    progress_tasks = [get_progress(g["id"], days=30) for g in goals]
+    milestone_tasks = [get_milestones(g["id"]) for g in goals]
+    all_progress = await asyncio.gather(*progress_tasks)
+    all_milestones = await asyncio.gather(*milestone_tasks)
+
+    result = []
+    for goal, progress, milestones in zip(goals, all_progress, all_milestones):
         status = compute_goal_status(goal, progress)
-        milestones = await get_milestones(goal["id"])
-        result.append({
-            **goal,
-            "computed": status,
-            "milestones": milestones,
-        })
+        result.append({**goal, "computed": status, "milestones": milestones})
 
     return {"goals": result, "count": len(result), "date": target_date or _today().isoformat()}
 
