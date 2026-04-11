@@ -8978,6 +8978,359 @@ const SubscriptionsView = {
 
 
 // =============================================================================
+// FITNESS VIEW — exercise library + daily mobility flow
+// =============================================================================
+
+const FitnessView = {
+  title: 'Fitness',
+  HADLEY_API: '/api/hadley/proxy',
+  _exercises: null,       // {by_category, category_order, count}
+  _mobilityRoutine: null, // {moves, total_duration_min, ...}
+  _mobilityToday: null,   // {today, streak_days, history_7d}
+  _activeCategory: 'push',
+
+  CATEGORY_LABELS: {
+    push: 'Push',
+    pull: 'Pull',
+    legs: 'Legs',
+    core: 'Core',
+    conditioning: 'Conditioning',
+    mobility: 'Mobility',
+  },
+
+  CATEGORY_BLURBS: {
+    push:         'Chest, shoulders, triceps — Monday session plus some Friday conditioning',
+    pull:         'Back and rear delts — Wednesday pull + core',
+    legs:         'Quads (Legs A, Tuesday) and posterior chain (Legs B, Thursday)',
+    core:         'Anti-extension and anti-rotation — peppered through every session',
+    conditioning: 'Full-body finishers — Friday full-body day',
+    mobility:     'Reference for the daily 10-minute flow and Saturday routine',
+  },
+
+  async render(container) {
+    container.innerHTML = `
+      <div class="animate-fade-in">
+        <div class="flex justify-between items-center mb-lg">
+          <div>
+            <h2>Fitness</h2>
+            <p class="text-secondary">Exercise library + daily mobility routine</p>
+          </div>
+          <button class="btn btn-ghost" onclick="FitnessView.refresh()">
+            ${Icons.refresh} Refresh
+          </button>
+        </div>
+
+        ${Components.tabs({
+          id: 'fitness-tabs',
+          tabs: [
+            { label: 'Exercises' },
+            { label: 'Daily Mobility' },
+          ],
+          activeTab: 0,
+        })}
+      </div>
+    `;
+
+    document.getElementById('fitness-tabs-panel-0').innerHTML =
+      `<div id="fitness-exercises-panel">${Components.skeleton('card')}</div>`;
+    document.getElementById('fitness-tabs-panel-1').innerHTML =
+      `<div id="fitness-mobility-panel">${Components.skeleton('card')}</div>`;
+
+    await Promise.all([this.loadExercises(), this.loadMobility()]);
+  },
+
+  refresh() {
+    this.loadExercises();
+    this.loadMobility();
+    Toast.info('Refreshed', 'Fitness data updated');
+  },
+
+  // ── Exercises tab ────────────────────────────────────────────────
+
+  async loadExercises() {
+    try {
+      const resp = await fetch(`${this.HADLEY_API}/fitness/exercises`);
+      const data = await resp.json();
+      this._exercises = data;
+      this.renderExercises();
+    } catch (err) {
+      console.error('Failed to load exercises:', err);
+      const panel = document.getElementById('fitness-exercises-panel');
+      if (panel) {
+        panel.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">${Icons.alertCircle}</div>
+            <div class="empty-state-title">Couldn't load exercises</div>
+            <div class="empty-state-description">Check that the Hadley API is running.</div>
+          </div>`;
+      }
+    }
+  },
+
+  renderExercises() {
+    const panel = document.getElementById('fitness-exercises-panel');
+    if (!panel || !this._exercises) return;
+
+    const { by_category, category_order, count } = this._exercises;
+    const active = this._activeCategory;
+    const exercises = (by_category[active] || []);
+
+    // Pills for each category (with count)
+    const pills = category_order.map(cat => {
+      const n = (by_category[cat] || []).length;
+      if (!n) return '';
+      const isActive = cat === active;
+      return `
+        <button class="fitness-cat-pill ${isActive ? 'active' : ''}"
+                onclick="FitnessView.setCategory('${cat}')">
+          ${this.CATEGORY_LABELS[cat] || cat}
+          <span class="fitness-cat-count">${n}</span>
+        </button>`;
+    }).join('');
+
+    const blurb = this.CATEGORY_BLURBS[active] || '';
+
+    panel.innerHTML = `
+      <div class="fitness-header">
+        <div class="fitness-cat-pills">${pills}</div>
+        <div class="text-secondary text-sm" style="margin-top: 8px;">
+          ${count} exercises total · showing ${exercises.length} in ${this.CATEGORY_LABELS[active] || active}
+        </div>
+        <p class="text-secondary" style="margin-top: 4px; font-size: 13px;">${blurb}</p>
+      </div>
+      <div class="fitness-exercise-grid">
+        ${exercises.map(ex => this._renderExerciseCard(ex)).join('')}
+      </div>
+    `;
+  },
+
+  setCategory(cat) {
+    this._activeCategory = cat;
+    this.renderExercises();
+  },
+
+  _renderExerciseCard(ex) {
+    const defaults = this._formatDefaults(ex);
+    const videoBtn = ex.video_url
+      ? `<a class="btn btn-secondary btn-sm" href="${Utils.escapeHtml(ex.video_url)}" target="_blank" rel="noopener">
+           ${Icons.play} Watch tutorial
+         </a>`
+      : '';
+    const equipBadge = ex.equipment && ex.equipment !== 'None'
+      ? `<span class="fitness-badge fitness-badge-equip">${Utils.escapeHtml(ex.equipment)}</span>`
+      : `<span class="fitness-badge fitness-badge-bw">Bodyweight</span>`;
+    const muscleBadge = ex.muscle_group
+      ? `<span class="fitness-badge">${Utils.escapeHtml(ex.muscle_group.replace(/_/g, ' '))}</span>`
+      : '';
+    const instructionsHtml = ex.instructions
+      ? `<ol class="fitness-instructions">
+           ${ex.instructions.split('\n').map(line => {
+             const trimmed = line.replace(/^\d+\.\s*/, '').trim();
+             return trimmed ? `<li>${Utils.escapeHtml(trimmed)}</li>` : '';
+           }).join('')}
+         </ol>`
+      : '';
+    const progressionHtml = ex.progression_note
+      ? `<div class="fitness-progression"><strong>Progression:</strong> ${Utils.escapeHtml(ex.progression_note)}</div>`
+      : '';
+    const formCueHtml = ex.form_cue
+      ? `<div class="fitness-form-cue">"${Utils.escapeHtml(ex.form_cue)}"</div>`
+      : '';
+
+    return `
+      <details class="fitness-exercise-card">
+        <summary class="fitness-exercise-summary">
+          <div class="fitness-exercise-head">
+            <div>
+              <div class="fitness-exercise-name">${Utils.escapeHtml(ex.name)}</div>
+              <div class="fitness-exercise-defaults">${defaults}</div>
+            </div>
+            <div class="fitness-exercise-badges">${muscleBadge}${equipBadge}</div>
+          </div>
+          ${formCueHtml}
+        </summary>
+        <div class="fitness-exercise-body">
+          ${instructionsHtml}
+          ${progressionHtml}
+          ${videoBtn}
+        </div>
+      </details>
+    `;
+  },
+
+  _formatDefaults(ex) {
+    const sets = ex.default_sets || 3;
+    if (ex.measurement === 'hold_seconds' && ex.default_hold_s) {
+      return `${sets} × ${ex.default_hold_s}s hold`;
+    }
+    if (ex.default_reps) {
+      return `${sets} × ${ex.default_reps} reps`;
+    }
+    return `${sets} sets`;
+  },
+
+  // ── Mobility tab ─────────────────────────────────────────────────
+
+  async loadMobility() {
+    try {
+      const [routineResp, todayResp] = await Promise.all([
+        fetch(`${this.HADLEY_API}/fitness/mobility/routine`),
+        fetch(`${this.HADLEY_API}/fitness/mobility/today`),
+      ]);
+      this._mobilityRoutine = await routineResp.json();
+      this._mobilityToday = await todayResp.json();
+      this.renderMobility();
+    } catch (err) {
+      console.error('Failed to load mobility:', err);
+      const panel = document.getElementById('fitness-mobility-panel');
+      if (panel) {
+        panel.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">${Icons.alertCircle}</div>
+            <div class="empty-state-title">Couldn't load mobility routine</div>
+          </div>`;
+      }
+    }
+  },
+
+  renderMobility() {
+    const panel = document.getElementById('fitness-mobility-panel');
+    if (!panel) return;
+
+    const routine = this._mobilityRoutine;
+    const today = this._mobilityToday;
+    if (!routine || !today) return;
+
+    const morning = today.today?.morning;
+    const evening = today.today?.evening;
+    const streak = today.streak_days || 0;
+
+    const history = (today.history_7d || []).slice().reverse(); // oldest → newest
+    const historyDots = history.map(day => {
+      const d = new Date(day.date + 'T00:00:00');
+      const label = d.toLocaleDateString('en-GB', { weekday: 'short' });
+      const cls = day.done ? 'done' : 'missed';
+      return `<div class="fitness-streak-dot ${cls}" title="${day.date}">${label[0]}</div>`;
+    }).join('');
+
+    panel.innerHTML = `
+      <div class="fitness-mobility-top">
+        <div class="fitness-mobility-stats">
+          <div class="fitness-stat-card">
+            <div class="fitness-stat-label">Streak</div>
+            <div class="fitness-stat-value">${streak} ${streak === 1 ? 'day' : 'days'}</div>
+          </div>
+          <div class="fitness-stat-card">
+            <div class="fitness-stat-label">Routine length</div>
+            <div class="fitness-stat-value">${routine.total_duration_min} min</div>
+          </div>
+          <div class="fitness-stat-card">
+            <div class="fitness-stat-label">Moves</div>
+            <div class="fitness-stat-value">${routine.move_count}</div>
+          </div>
+        </div>
+
+        <div class="fitness-slots">
+          <button class="fitness-slot-btn ${morning ? 'done' : ''}"
+                  onclick="FitnessView.logSlot('morning')"
+                  ${morning ? 'disabled' : ''}>
+            <span class="fitness-slot-icon">${morning ? Icons.checkCircle : Icons.clock}</span>
+            <div>
+              <div class="fitness-slot-label">Morning slot</div>
+              <div class="fitness-slot-status">${morning ? 'Done today' : 'Mark as done'}</div>
+            </div>
+          </button>
+          <button class="fitness-slot-btn ${evening ? 'done' : ''}"
+                  onclick="FitnessView.logSlot('evening')"
+                  ${evening ? 'disabled' : ''}>
+            <span class="fitness-slot-icon">${evening ? Icons.checkCircle : Icons.clock}</span>
+            <div>
+              <div class="fitness-slot-label">Evening slot</div>
+              <div class="fitness-slot-status">${evening ? 'Done today' : 'Mark as done'}</div>
+            </div>
+          </button>
+        </div>
+
+        <div class="fitness-streak-row">
+          <span class="text-secondary text-sm">Last 7 days:</span>
+          <div class="fitness-streak-dots">${historyDots}</div>
+        </div>
+      </div>
+
+      <h3 class="fitness-routine-title">${Utils.escapeHtml(routine.name)}</h3>
+      <div class="fitness-routine-flow">
+        ${routine.moves.map((m, i) => this._renderMobilityMove(m, i)).join('')}
+      </div>
+    `;
+  },
+
+  _renderMobilityMove(move, idx) {
+    const mins = Math.floor(move.duration_s / 60);
+    const secs = move.duration_s % 60;
+    const duration = mins > 0
+      ? `${mins}:${String(secs).padStart(2, '0')}`
+      : `${secs}s`;
+    const videoBtn = move.video_url
+      ? `<a class="btn btn-ghost btn-sm" href="${Utils.escapeHtml(move.video_url)}" target="_blank" rel="noopener">
+           ${Icons.play} Video
+         </a>`
+      : '';
+    const instructionsHtml = move.instructions
+      ? `<ol class="fitness-instructions">
+           ${move.instructions.split('\n').map(line => {
+             const trimmed = line.replace(/^\d+\.\s*/, '').trim();
+             return trimmed ? `<li>${Utils.escapeHtml(trimmed)}</li>` : '';
+           }).join('')}
+         </ol>`
+      : '';
+    const formCue = move.form_cue
+      ? `<div class="fitness-form-cue">"${Utils.escapeHtml(move.form_cue)}"</div>`
+      : '';
+
+    return `
+      <details class="fitness-move-card">
+        <summary>
+          <div class="fitness-move-head">
+            <div class="fitness-move-index">${idx + 1}</div>
+            <div class="fitness-move-info">
+              <div class="fitness-move-name">${Utils.escapeHtml(move.name)}</div>
+              <div class="fitness-move-note">${Utils.escapeHtml(move.note || '')}</div>
+            </div>
+            <div class="fitness-move-duration">${duration}</div>
+          </div>
+        </summary>
+        <div class="fitness-move-body">
+          ${formCue}
+          ${instructionsHtml}
+          ${videoBtn}
+        </div>
+      </details>
+    `;
+  },
+
+  async logSlot(slot) {
+    try {
+      const apiKey = document.querySelector('meta[name="api-key"]')?.getAttribute('content') || '';
+      const resp = await fetch(`${this.HADLEY_API}/fitness/mobility`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+        },
+        body: JSON.stringify({ slot, duration_min: 10, routine: 'daily-10min' }),
+      });
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      Toast.success('Logged', `${slot === 'morning' ? 'Morning' : 'Evening'} mobility marked done`);
+      await this.loadMobility();
+    } catch (err) {
+      console.error('Failed to log mobility:', err);
+      Toast.error('Error', 'Failed to log mobility slot');
+    }
+  },
+};
+
+
+// =============================================================================
 // 8. INITIALIZATION
 // =============================================================================
 
@@ -9006,6 +9359,7 @@ const App = {
     Router.register('/costs', CostsView);
     Router.register('/tasks', TasksView);
     Router.register('/meal-plan', MealPlanView);
+    Router.register('/fitness', FitnessView);
     Router.register('/goals', GoalsView);
     Router.register('/subscriptions', SubscriptionsView);
     Router.register('/settings', SettingsView);

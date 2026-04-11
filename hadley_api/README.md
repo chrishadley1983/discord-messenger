@@ -495,11 +495,19 @@ All routes in `hadley_api/fitness_routes.py`. See `docs/playbooks/FITNESS.md` fo
 - `GET /fitness/dashboard` — full daily status (trend weight, nutrition, steps, today's workout, mobility, flags)
 - `GET /fitness/weekly-review` — Sunday review bundle with adherence + adjustment
 - `GET /fitness/trend?days=30` — smoothed weight trend (7-day SMA, EMA, linear slope, stall detection)
-- `GET /fitness/exercises?category=push` — exercise library (filter by category)
+- `GET /fitness/exercises?category=push` — exercise library (optional category filter)
+  - Each exercise now includes `video_url` (YouTube search link), `instructions` (5-step how-to), and `equipment` notes
+  - Response: `{exercises, by_category: {push, pull, legs, core, conditioning, mobility}, category_order, count}`
+- `GET /fitness/mobility/routine` — the fixed 10-minute daily mobility flow
+  - Joins the static routine against the exercise library so each move carries name, form cue, instructions, video URL, equipment, muscle group, and per-move duration
+  - Response: `{name, total_duration_s, total_duration_min, move_count, moves: [...]}`
+- `GET /fitness/mobility/today` — today's slot status + 7-day history + streak
+  - Response: `{today: {morning_done, evening_done, ...}, streak_days, history_7d: [{date, done}]}`
+  - Streak walks back from today; today-not-done-yet is a grace day (doesn't break the streak)
 - `POST /fitness/workout` — log session + per-exercise sets (auth required)
   - Body: `{session_type, duration_min, rpe, notes, sets: [{exercise_slug, set_no, reps, hold_s}]}`
 - `POST /fitness/mobility` — log a mobility slot (auth required)
-  - Body: `{slot: "morning"|"evening", duration_min, routine}`
+  - Body: `{slot: "morning"|"evening"|"adhoc", duration_min, routine}`
 - `POST /fitness/programme/start` — one-shot programme init (auth required)
   - Body: `{start_date, current_weight_kg, target_loss_kg, duration_weeks}`
   - Archives old active programmes + "Hit 80kg"/"Lose weight" goals

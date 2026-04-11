@@ -2,13 +2,15 @@
 
 Endpoints powering the 13-week post-Japan fat-loss programme:
 
-- GET  /fitness/programme             — active programme + day/week numbers
-- GET  /fitness/today                 — today's prescribed workout + targets
-- GET  /fitness/dashboard             — full daily status (trend, adherence, workout)
-- GET  /fitness/weekly-review         — Sunday review bundle
-- GET  /fitness/trend?days=30         — smoothed weight trend math
-- GET  /fitness/exercises             — exercise library
-- POST /fitness/workout               — log a session + sets
+- GET  /fitness/programme              — active programme + day/week numbers
+- GET  /fitness/today                  — today's prescribed workout + targets
+- GET  /fitness/dashboard              — full daily status (trend, adherence, workout)
+- GET  /fitness/weekly-review          — Sunday review bundle
+- GET  /fitness/trend?days=30          — smoothed weight trend math
+- GET  /fitness/exercises              — exercise library (with videos + instructions)
+- GET  /fitness/mobility/routine       — fixed 10-min daily mobility flow
+- GET  /fitness/mobility/today         — today's mobility slots + streak
+- POST /fitness/workout                — log a session + sets
 - POST /fitness/mobility               — log a mobility slot
 - POST /fitness/programme/start        — one-shot init: TDEE, programme, accountability goals
 - POST /fitness/programme/recalibrate  — recompute calories/protein from latest weight
@@ -151,10 +153,103 @@ async def get_trend(days: int = Query(30, ge=1, le=365)):
 
 @router.get("/exercises")
 async def list_exercises(category: Optional[str] = None):
+    """Exercise library.
+
+    Returns all exercises (or a single category) with their full metadata:
+    name, slug, category, muscle group, default sets/reps/holds, form cue,
+    progression note, step-by-step instructions, equipment, and a video URL
+    (YouTube search link — always live).
+    """
     all_ex = await fit.get_all_exercises()
     if category:
         all_ex = [e for e in all_ex if e["category"] == category]
-    return {"exercises": all_ex, "count": len(all_ex)}
+
+    # Group by category for easy frontend rendering. Category order matches
+    # the training split progression (push/pull/legs first, then core,
+    # conditioning, mobility as support).
+    category_order = ["push", "pull", "legs", "core", "conditioning", "mobility"]
+    by_category: dict[str, list[dict]] = {c: [] for c in category_order}
+    for ex in all_ex:
+        by_category.setdefault(ex["category"], []).append(ex)
+
+    return {
+        "exercises": all_ex,
+        "by_category": by_category,
+        "category_order": category_order,
+        "count": len(all_ex),
+    }
+
+
+@router.get("/mobility/routine")
+async def get_mobility_routine():
+    """Return the fixed 10-minute daily mobility flow.
+
+    Each move is joined against the exercise library so the frontend has
+    name, form cue, instructions, video URL, and equipment in a single
+    payload. No auth required — reference data.
+    """
+    routine = await fit.get_mobility_routine()
+    return routine
+
+
+@router.get("/mobility/today")
+async def get_mobility_today():
+    """Which mobility slots have been done today + 7-day history + streak.
+
+    A day counts as "done" if at least one slot (morning OR evening) was
+    logged. Streak walks backwards from today; today not being done yet
+    does NOT break the streak (the day is still in progress).
+    """
+    from datetime import timedelta
+    import httpx
+
+    status = await fit.mobility_today()
+    today = fit._today()
+
+    # Pull a window a bit wider than 7 days so the streak can extend past
+    # 7 if Chris has been consistent.
+    cutoff = (today - timedelta(days=30)).isoformat()
+    async with httpx.AsyncClient(timeout=10) as c:
+        resp = await c.get(
+            f"{fit.SUPABASE_URL}/rest/v1/{fit.MOBILITY_TABLE}",
+            headers=fit._read_headers(),
+            params={
+                "select": "session_date,slot",
+                "user_id": "eq.chris",
+                "session_date": f"gte.{cutoff}",
+                "order": "session_date.desc",
+            },
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+
+    days_done: set[str] = {str(r["session_date"]) for r in rows}
+
+    # 7-day history (most recent first)
+    history = [
+        {
+            "date": (today - timedelta(days=i)).isoformat(),
+            "done": (today - timedelta(days=i)).isoformat() in days_done,
+        }
+        for i in range(7)
+    ]
+
+    # Streak: walk back from today. Today not done yet is a "grace" day.
+    streak = 0
+    for i in range(30):
+        d = (today - timedelta(days=i)).isoformat()
+        if d in days_done:
+            streak += 1
+        elif i == 0:
+            continue  # today in progress — don't break, don't count
+        else:
+            break
+
+    return {
+        "today": status,
+        "streak_days": streak,
+        "history_7d": history,
+    }
 
 
 # ── Write endpoints (auth-gated) ────────────────────────────────────────

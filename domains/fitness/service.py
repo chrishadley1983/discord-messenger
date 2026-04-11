@@ -403,6 +403,57 @@ async def count_sessions_this_week(today: date | None = None) -> int:
 # ══════════════════════════════════════════════════════════════════════
 
 
+# Fixed 10-minute daily mobility flow. Order and durations chosen to
+# warm up spine → open hips → release glutes → reset. Total ~9 min of
+# active stretching + 1 min of transitions. All moves exist in the
+# fitness_exercises table (mobility category) and are fetched by slug
+# so the frontend can cross-reference for instructions / videos.
+DAILY_MOBILITY_ROUTINE: list[dict] = [
+    {"slug": "neck-rolls",              "duration_s": 30,  "note": "Slow circles each way"},
+    {"slug": "cat-cow",                 "duration_s": 60,  "note": "10 reps, breathe with movement"},
+    {"slug": "thoracic-twist",          "duration_s": 60,  "note": "5 reps each side"},
+    {"slug": "worlds-greatest-stretch", "duration_s": 90,  "note": "3 reps each side"},
+    {"slug": "couch-stretch",           "duration_s": 90,  "note": "45s each side"},
+    {"slug": "pigeon-pose",             "duration_s": 120, "note": "60s each side — breathe deep"},
+    {"slug": "childs-pose",             "duration_s": 60,  "note": "Full-body reset"},
+]
+
+
+async def get_mobility_routine() -> dict:
+    """Return the fixed 10-minute daily mobility flow.
+
+    Joins the hardcoded routine against the exercise library so the
+    frontend gets name, form cue, instructions, video and equipment in
+    the same payload — no extra lookups needed.
+    """
+    slugs = [step["slug"] for step in DAILY_MOBILITY_ROUTINE]
+    library = await get_exercises_by_slugs(slugs)
+    moves: list[dict] = []
+    for step in DAILY_MOBILITY_ROUTINE:
+        ex = library.get(step["slug"])
+        if not ex:
+            continue
+        moves.append({
+            "slug": step["slug"],
+            "name": ex["name"],
+            "duration_s": step["duration_s"],
+            "note": step["note"],
+            "form_cue": ex.get("form_cue"),
+            "instructions": ex.get("instructions"),
+            "video_url": ex.get("video_url"),
+            "equipment": ex.get("equipment"),
+            "muscle_group": ex.get("muscle_group"),
+        })
+    total_s = sum(m["duration_s"] for m in moves)
+    return {
+        "name": "Daily 10-minute mobility flow",
+        "total_duration_s": total_s,
+        "total_duration_min": round(total_s / 60, 1),
+        "move_count": len(moves),
+        "moves": moves,
+    }
+
+
 async def log_mobility(
     *,
     slot: str,
