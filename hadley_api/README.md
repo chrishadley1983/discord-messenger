@@ -486,6 +486,34 @@ Allowlisted: amazon.co.uk, ebay.co.uk, premierinn.com
   - `days` (1-90, default 7): how far back to search
   - `mark_reported` (default true): save new email IDs to dedup file
 
+### Fitness Tracking (Post-Japan Cut)
+
+All routes in `hadley_api/fitness_routes.py`. See `docs/playbooks/FITNESS.md` for the full playbook.
+
+- `GET /fitness/programme` — active programme + current week/day number
+- `GET /fitness/today` — today's prescribed workout + calorie/protein/steps targets
+- `GET /fitness/dashboard` — full daily status (trend weight, nutrition, steps, today's workout, mobility, flags)
+- `GET /fitness/weekly-review` — Sunday review bundle with adherence + adjustment
+- `GET /fitness/trend?days=30` — smoothed weight trend (7-day SMA, EMA, linear slope, stall detection)
+- `GET /fitness/exercises?category=push` — exercise library (filter by category)
+- `POST /fitness/workout` — log session + per-exercise sets (auth required)
+  - Body: `{session_type, duration_min, rpe, notes, sets: [{exercise_slug, set_no, reps, hold_s}]}`
+- `POST /fitness/mobility` — log a mobility slot (auth required)
+  - Body: `{slot: "morning"|"evening", duration_min, routine}`
+- `POST /fitness/programme/start` — one-shot programme init (auth required)
+  - Body: `{start_date, current_weight_kg, target_loss_kg, duration_weeks}`
+  - Archives old active programmes + "Hit 80kg"/"Lose weight" goals
+  - Computes TDEE (Mifflin-St Jeor + Garmin activity factor)
+  - Creates 6 accountability goals (weight/calories/protein/steps/strength/mobility)
+- `POST /fitness/weekly-checkin` — persist a Sunday snapshot (auth required)
+
+Tables:
+- `fitness_programmes` — programme header (start, target, TDEE, targets)
+- `fitness_exercises` — exercise library (seeded with 35+ bodyweight movements)
+- `fitness_workout_sessions` + `fitness_workout_sets` — workout logs
+- `fitness_mobility_sessions` — mobility slots (morning/evening unique per day)
+- `fitness_weekly_checkins` — persisted Sunday snapshots
+
 ## Environment Variables
 
 Uses the same `.env` as the main Discord bot:

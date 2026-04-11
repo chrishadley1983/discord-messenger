@@ -13,6 +13,7 @@ Playbooks contain process, format, quality standards, AND API endpoints.
 | Email interactions | EMAIL.md | "draft", "reply", "emails", "inbox" |
 | Nutrition / food logging | NUTRITION.md | "log", "macros", "calories", "water" |
 | Running / training | TRAINING.md | "run today", "training", "VDOT", "recovery" |
+| Fat loss / strength / mobility | FITNESS.md | "cut", "lose weight", "workout", "stretching", "mobility", "push session", "legs workout", "am i on track" |
 | Business / Hadley Bricks | BUSINESS.md | "business", "orders", "inventory", "P&L" |
 | Travel planning | TRAVEL.md | "trip", "restaurant in", "how to get to" |
 | Japan trip (Apr 3-19) | JAPAN.md | "japan", "tokyo", "osaka", "kyoto", "shinkansen", "the trip", "day plan" |

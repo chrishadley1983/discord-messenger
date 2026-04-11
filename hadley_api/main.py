@@ -51,6 +51,8 @@ from hadley_api.flight_routes import router as flight_router
 app.include_router(flight_router)
 from hadley_api.accountability_routes import router as accountability_router
 app.include_router(accountability_router)
+from hadley_api.fitness_routes import router as fitness_router
+app.include_router(fitness_router)
 try:
     from hadley_api.finance_routes import router as finance_router
     app.include_router(finance_router)

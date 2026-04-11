@@ -23,6 +23,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Morning Cooking Reminder | cooking-reminder | 07:30 UK | #food-log | yes |
 | Price Scanner | price-scanner | Mon 06:00 UK | #food-log | yes |
 | Morning Health Digest | health-digest | 07:55 UK | #food-log | yes |
+| Fitness Dashboard (Cut) | fitness-dashboard | 06:45 UK | #food-log | yes |
 | School Run (Mon-Wed,Fri) | school-run | Mon-Wed,Fri 08:10 UK | #traffic-reports+WhatsApp:group | yes |
 | School Run (Thu) | school-run | Thu 07:45 UK | #traffic-reports+WhatsApp:group | yes |
 | GitHub Activity (Daily) | github-activity | 08:08 UK | #peterbot | yes |
@@ -37,6 +38,8 @@ Run `!reload-schedule` after editing to apply changes.
 | Daily Nutrition Summary | nutrition-summary | 21:00 UK | #food-log | yes |
 | Daily Instagram Prep | daily-instagram-prep | 21:05 UK | #peterbot | yes |
 | Weekly Health Summary | weekly-health | Sunday 09:10 UK | #food-log | yes |
+| Weekly Cut Review | weekly-cut-review | Sunday 09:00 UK | #food-log | yes |
+| Midweek Cut Nudge | fitness-dashboard | Wed 19:00 UK | #food-log | yes |
 | Monthly Health Summary | monthly-health | 1st 09:15 UK | #food-log | yes |
 | Claude History Reminder | - | 1st 10:00 UK | #peterbot | yes |
 | WhatsApp Health Check | whatsapp-keepalive | 08:00,20:00 UK | #peter-heartbeat!quiet | yes |
