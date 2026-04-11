@@ -28,9 +28,13 @@ from domains.fitness.tdee import compute_tdee
 logger = logging.getLogger(__name__)
 
 # Chris's constants (pulled from second brain / profile)
-HEIGHT_CM = 183
+HEIGHT_CM = 178
 AGE_YEARS = 42
 SEX = "male"
+
+# Programme defaults
+DEFAULT_STEPS_TARGET = 15000
+DEFAULT_WEEKLY_STRENGTH_SESSIONS = 5
 
 
 async def _archive_old_weight_goals(api_base: str, api_key: str) -> list[str]:
@@ -130,12 +134,17 @@ async def start_programme(
     if archive_old_goals:
         archived = await _archive_old_weight_goals(api_base, api_key)
 
-    # 3. TDEE
+    # 3. TDEE — uses CURRENT weight. Will be recomputed weekly as weight drops.
+    #    If Chris is committing to 15k steps, assume that's his average going
+    #    forward (even if recent 7-day history is lower because he's still in
+    #    Japan / pre-programme). This avoids anchoring TDEE to a pre-programme
+    #    activity level that he's actively about to change.
     steps_history = await fetch_steps_history(days=7)
-    avg_steps = (
+    recent_avg = (
         sum(p["value"] for p in steps_history) / len(steps_history)
-        if steps_history else 8000
+        if steps_history else 0
     )
+    avg_steps = max(recent_avg, DEFAULT_STEPS_TARGET)
     tdee = compute_tdee(
         weight_kg=current_weight_kg,
         height_cm=HEIGHT_CM,
@@ -158,10 +167,11 @@ async def start_programme(
         daily_protein_g=tdee.target_protein_g,
         duration_weeks=duration_weeks,
         split="5x_short",
-        daily_steps_target=12000,
-        weekly_strength_sessions=5,
+        daily_steps_target=DEFAULT_STEPS_TARGET,
+        weekly_strength_sessions=DEFAULT_WEEKLY_STRENGTH_SESSIONS,
         notes=f"BMR {tdee.bmr} × {tdee.activity_factor} = {tdee.tdee}. "
               f"Deficit {tdee.deficit_kcal}. 5x/week 20-min sessions. "
+              f"Height {HEIGHT_CM}cm. Protein 1.67 g/kg. "
               f"Archived goals: {', '.join(archived) or 'none'}",
     )
 
@@ -215,10 +225,10 @@ async def start_programme(
     # Daily steps
     g = await _create_goal(
         api_base, api_key,
-        title="12k steps daily",
+        title=f"{DEFAULT_STEPS_TARGET // 1000}k steps daily",
         goal_type="habit",
         metric="steps",
-        target_value=12000,
+        target_value=DEFAULT_STEPS_TARGET,
         direction="up",
         frequency="daily",
         description="NEAT is the biggest fat-loss lever",

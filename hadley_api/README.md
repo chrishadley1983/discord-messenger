@@ -505,6 +505,11 @@ All routes in `hadley_api/fitness_routes.py`. See `docs/playbooks/FITNESS.md` fo
   - Archives old active programmes + "Hit 80kg"/"Lose weight" goals
   - Computes TDEE (Mifflin-St Jeor + Garmin activity factor)
   - Creates 6 accountability goals (weight/calories/protein/steps/strength/mobility)
+- `POST /fitness/programme/recalibrate` — refresh calorie/protein targets from latest weight (auth required)
+  - Body (all optional): `{current_weight_kg, avg_steps, deficit_kcal}` — defaults to 7-day trend weight + 7-day step avg
+  - Recomputes Mifflin-St Jeor BMR, TDEE, target calories, target protein
+  - Updates the active programme row in-place (tdee_kcal, daily_calorie_target, daily_protein_g)
+  - Returns `{old, new, weight_used_kg, bmr, activity_factor, deficit_kcal}`
 - `POST /fitness/weekly-checkin` — persist a Sunday snapshot (auth required)
 
 Tables:

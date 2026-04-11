@@ -2,16 +2,17 @@
 
 Endpoints powering the 13-week post-Japan fat-loss programme:
 
-- GET  /fitness/programme         — active programme + day/week numbers
-- GET  /fitness/today             — today's prescribed workout + targets
-- GET  /fitness/dashboard         — full daily status (trend, adherence, workout)
-- GET  /fitness/weekly-review     — Sunday review bundle
-- GET  /fitness/trend?days=30     — smoothed weight trend math
-- GET  /fitness/exercises         — exercise library
-- POST /fitness/workout           — log a session + sets
-- POST /fitness/mobility          — log a mobility slot
-- POST /fitness/programme/start   — one-shot init: TDEE, programme, accountability goals
-- POST /fitness/weekly-checkin    — persist a Sunday check-in snapshot
+- GET  /fitness/programme             — active programme + day/week numbers
+- GET  /fitness/today                 — today's prescribed workout + targets
+- GET  /fitness/dashboard             — full daily status (trend, adherence, workout)
+- GET  /fitness/weekly-review         — Sunday review bundle
+- GET  /fitness/trend?days=30         — smoothed weight trend math
+- GET  /fitness/exercises             — exercise library
+- POST /fitness/workout               — log a session + sets
+- POST /fitness/mobility               — log a mobility slot
+- POST /fitness/programme/start        — one-shot init: TDEE, programme, accountability goals
+- POST /fitness/programme/recalibrate  — recompute calories/protein from latest weight
+- POST /fitness/weekly-checkin         — persist a Sunday check-in snapshot
 """
 
 from __future__ import annotations
@@ -67,6 +68,13 @@ class StartProgrammeRequest(BaseModel):
     current_weight_kg: float
     target_loss_kg: float = 10.0
     duration_weeks: int = 13
+
+
+class RecalibrateRequest(BaseModel):
+    # All optional — if unset, endpoint uses latest trend weight and 7d step avg
+    current_weight_kg: Optional[float] = None
+    avg_steps: Optional[float] = None
+    deficit_kcal: int = 550
 
 
 # ── Read endpoints ──────────────────────────────────────────────────────
@@ -195,6 +203,56 @@ async def start_programme(req: StartProgrammeRequest):
         api_key=api_key,
     )
     return result
+
+
+@router.post("/programme/recalibrate", dependencies=[Depends(require_auth)])
+async def recalibrate_programme(req: RecalibrateRequest):
+    """Recompute and persist calorie/protein targets from latest weight.
+
+    As Chris loses weight his BMR drops ~10 kcal per kg lost. At a 1.6
+    activity multiplier that's ~80 kcal off TDEE for every 5kg, which is
+    enough to stall fat loss if the target isn't refreshed. This endpoint
+    pulls the latest trend weight + 7-day step average (or accepts explicit
+    overrides) and updates the active programme row in-place.
+    """
+    programme = await fit.get_active_programme()
+    if not programme:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "No active programme to recalibrate"},
+        )
+
+    # Resolve current weight from latest trend if not supplied
+    weight = req.current_weight_kg
+    if weight is None:
+        history = await fit.fetch_weight_history(30)
+        trend = compute_trend(history)
+        weight = trend.trend_7d or trend.latest_raw
+        if weight is None:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "No weight history available for recalibration"},
+            )
+
+    # Resolve steps from 7-day average if not supplied
+    steps_avg = req.avg_steps
+    if steps_avg is None:
+        steps_hist = await fit.fetch_steps_history(7)
+        steps_avg = (
+            sum(p["value"] for p in steps_hist) / len(steps_hist)
+            if steps_hist else float(programme["daily_steps_target"])
+        )
+        # Don't under-estimate if Chris is still ramping — use his target
+        # as a floor so we don't shrink calories based on a slow week.
+        steps_avg = max(steps_avg, float(programme["daily_steps_target"]))
+
+    result = await fit.recalibrate_programme(
+        programme,
+        current_weight_kg=float(weight),
+        avg_steps=float(steps_avg),
+        deficit_kcal=req.deficit_kcal,
+    )
+    return {"status": "recalibrated", **result}
 
 
 @router.post("/weekly-checkin", dependencies=[Depends(require_auth)])

@@ -54,7 +54,18 @@ Returns:
   "adjustment": {
     "next_calorie_target": 1950,
     "next_steps_target": 12000,
-    "note": "Continue current plan"
+    "note": "Continue current plan",
+    "recalibrate_recommended": false
+  },
+  "live_targets": {
+    "bmr": 1838, "activity_factor": 1.6, "tdee": 2941,
+    "target_calories": 2391, "target_protein_g": 155,
+    "weight_used_kg": 93.4
+  },
+  "target_drift": {
+    "stored_calories": 2407, "live_calories": 2391, "calorie_delta": -16,
+    "stored_protein_g": 155, "live_protein_g": 155, "protein_delta": 0,
+    "drifted": false
   }
 }
 ```
@@ -101,7 +112,15 @@ Grade scale: A+ (≥95), A (≥85), A− (≥80), B+ (≥75), B (≥70), C (≥6
 ## Rules
 
 - **Reference the programme targets** from the payload, not static numbers.
+- **Prefer `live_targets` over `programme.daily_calorie_target`** — the live
+  values are recomputed from the current trend weight, so they're always
+  correct even as BMR drops with weight loss.
 - **If stalled**: lead with `🚨 STALL DETECTED` and explain the adjustment.
+- **If `adjustment.recalibrate_recommended` is true** (weight has drifted
+  enough that stored targets are stale), automatically POST to
+  `/fitness/programme/recalibrate` before generating the review, and mention
+  the recalibration in the report (e.g. "Recalibrated targets: now 2,320 kcal
+  / 150g protein based on your 89.2kg trend weight").
 - **Always show weeks remaining + projected end weight** based on current slope:
   projected = trend_7d + slope_kg_per_week * weeks_remaining
 - After generating, auto-POST to `/fitness/weekly-checkin` to persist the snapshot.

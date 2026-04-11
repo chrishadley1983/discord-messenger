@@ -12,19 +12,69 @@ race prep), read `TRAINING.md` instead. They coexist.
 - Weight trend (smoothed): `GET /fitness/trend?days=30`
 - Weekly review bundle: `GET /fitness/weekly-review`
 - Exercise library: `GET /fitness/exercises`
+- **Recalibrate targets:** `POST /fitness/programme/recalibrate`
 
 Daily targets (calories, protein, steps) are **programme-specific** — read them
-from the programme row, never guess.
+from the programme row, never guess. But note: `/fitness/dashboard` returns
+**live** targets (recomputed from current weight) under `nutrition.target_calories`
+and `live_targets`. Those are the authoritative numbers for "what can I eat
+today", not the static programme row.
 
 ## The 13-Week Cut — What Chris Is Doing
 
 - **Start:** Post-Japan return date (parameter of `/fitness/programme/start`)
+- **Height:** 178 cm (used for BMR — do not guess)
 - **Target:** −10kg on a 7-day weight trend (not single reading)
 - **Daily calories:** TDEE − 550 kcal (auto-computed from Mifflin-St Jeor + step activity)
-- **Protein:** 1.8 g per kg bodyweight (rounded to 5g)
-- **Steps:** 12k baseline
+- **Protein:** 1.67 g per kg bodyweight (rounded to 5g) — research floor is
+  1.6 g/kg; 1.67 balances muscle-retention with Chris's real-world struggle
+  to hit very high protein
+- **Steps:** 15k baseline (NEAT is the biggest fat-loss lever)
 - **Training:** 5x/week, 20-min bodyweight sessions
 - **Mobility:** daily 10-min routine
+
+### Activity Multipliers (recalibrated for walking-heavy lifestyles)
+
+| Avg steps | Factor | Label |
+|---|---|---|
+| <5k | 1.2 | sedentary |
+| 5-8k | 1.375 | light |
+| 8-12k | 1.5 | moderate |
+| 12-16k | 1.6 | active |
+| 16k+ | 1.75 | very active |
+
+These are lower than textbook Mifflin multipliers (1.55/1.725/1.9) because
+those buckets assume manual-labour jobs or 6-7 days of hard training. For a
+walking-driven active day the bottom-up MET calc (BMR + walking METs + TEF +
+other NEAT) clusters around 1.6 for 15k steps.
+
+## Weight-Adaptive Targets — KEY RULE
+
+**BMR drops as weight drops.** Every 1kg lost shaves ~10 kcal off BMR, which
+at the 1.6 activity multiplier is ~16 kcal off TDEE. Over 5kg that's 80 kcal
+— enough to turn a working deficit into a stall.
+
+The system handles this automatically:
+1. `/fitness/dashboard` always recomputes `target_calories` and `target_protein`
+   from the **latest trend weight** (not the programme start weight). The
+   response also returns `target_drift` showing how far the stored programme
+   targets have drifted from the live values.
+2. When drift exceeds 80 kcal / 10g protein, the dashboard raises a flag:
+   `TARGETS DRIFTED — run /fitness/programme/recalibrate`.
+3. `/fitness/weekly-review` checks drift every Sunday and sets
+   `adjustment.recalibrate_recommended = true` when appropriate.
+4. `POST /fitness/programme/recalibrate` (no body required — uses latest
+   trend weight + 7-day step avg) updates the stored programme row with the
+   new TDEE / calorie / protein targets.
+
+**When Peter should trigger recalibrate:**
+- User-facing: whenever the dashboard `flags` array contains "TARGETS DRIFTED".
+- Automatic: weekly-cut-review skill should call it when
+  `adjustment.recalibrate_recommended` is true.
+- Manual: after any big weight move (+/- 3kg in one week).
+
+**Never** recalibrate based on a single scale reading — always use the 7-day
+trend. That's what `/fitness/programme/recalibrate` does by default.
 
 ### Training Split (5x_short)
 | Day | Session | Focus |
@@ -108,7 +158,7 @@ When `/fitness/programme/start` runs, it creates 6 goals:
 1. `Lose Xkg (post-Japan cut)` — auto-source `weight`
 2. `Daily calories ≤ N` — auto-source `nutrition_calories`
 3. `Protein ≥ Ng daily` — auto-source `nutrition_protein`
-4. `12k steps daily` — auto-source `garmin_steps`
+4. `15k steps daily` — auto-source `garmin_steps`
 5. `5 strength sessions per week` — auto-source `fitness_strength_week`
 6. `Daily mobility routine` — auto-source `fitness_mobility_today`
 
