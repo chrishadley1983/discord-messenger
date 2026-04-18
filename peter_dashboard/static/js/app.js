@@ -8987,6 +8987,7 @@ const FitnessView = {
   _exercises: null,       // {by_category, category_order, count}
   _mobilityRoutine: null, // {moves, total_duration_min, ...}
   _mobilityToday: null,   // {today, streak_days, history_7d}
+  _advice: null,           // {advice, snapshot, counts}
   _activeCategory: 'push',
 
   CATEGORY_LABELS: {
@@ -9023,6 +9024,7 @@ const FitnessView = {
         ${Components.tabs({
           id: 'fitness-tabs',
           tabs: [
+            { label: 'Advisor' },
             { label: 'Exercises' },
             { label: 'Daily Mobility' },
           ],
@@ -9032,17 +9034,86 @@ const FitnessView = {
     `;
 
     document.getElementById('fitness-tabs-panel-0').innerHTML =
-      `<div id="fitness-exercises-panel">${Components.skeleton('card')}</div>`;
+      `<div id="fitness-advisor-panel">${Components.skeleton('card')}</div>`;
     document.getElementById('fitness-tabs-panel-1').innerHTML =
+      `<div id="fitness-exercises-panel">${Components.skeleton('card')}</div>`;
+    document.getElementById('fitness-tabs-panel-2').innerHTML =
       `<div id="fitness-mobility-panel">${Components.skeleton('card')}</div>`;
 
-    await Promise.all([this.loadExercises(), this.loadMobility()]);
+    await Promise.all([this.loadAdvice(), this.loadExercises(), this.loadMobility()]);
   },
 
   refresh() {
+    this.loadAdvice();
     this.loadExercises();
     this.loadMobility();
     Toast.info('Refreshed', 'Fitness data updated');
+  },
+
+  // ── Advisor tab ─────────────────────────────────────────────────
+
+  async loadAdvice() {
+    try {
+      const resp = await fetch(`${this.HADLEY_API}/fitness/advice`);
+      const data = await resp.json();
+      this._advice = data;
+      this.renderAdvice();
+    } catch (err) {
+      console.error('Failed to load advice:', err);
+      const panel = document.getElementById('fitness-advisor-panel');
+      if (panel) panel.innerHTML = `<p class="text-secondary">Could not load advisor.</p>`;
+    }
+  },
+
+  renderAdvice() {
+    const panel = document.getElementById('fitness-advisor-panel');
+    if (!panel || !this._advice) return;
+    const { advice, snapshot, counts } = this._advice;
+
+    const severityIcon = {
+      warning: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+      caution: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+      info: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
+      positive: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
+    };
+
+    // Snapshot summary strip
+    const snap = snapshot || {};
+    const summaryCards = [
+      snap.weight_kg ? `<div class="advisor-snap-item"><span class="advisor-snap-label">Weight</span><span class="advisor-snap-value">${snap.weight_kg} kg</span></div>` : '',
+      snap.calories ? `<div class="advisor-snap-item"><span class="advisor-snap-label">Calories</span><span class="advisor-snap-value">${snap.calories.eaten}/${snap.calories.target}</span></div>` : '',
+      snap.protein ? `<div class="advisor-snap-item"><span class="advisor-snap-label">Protein</span><span class="advisor-snap-value">${snap.protein.eaten}/${snap.protein.target}g</span></div>` : '',
+      snap.steps ? `<div class="advisor-snap-item"><span class="advisor-snap-label">Steps</span><span class="advisor-snap-value">${(snap.steps.today||0).toLocaleString()}/${(snap.steps.target||0).toLocaleString()}</span></div>` : '',
+      snap.sleep_score != null ? `<div class="advisor-snap-item"><span class="advisor-snap-label">Sleep</span><span class="advisor-snap-value">${snap.sleep_score}/100</span></div>` : '',
+      snap.hrv_status ? `<div class="advisor-snap-item"><span class="advisor-snap-label">HRV</span><span class="advisor-snap-value">${snap.hrv_status}</span></div>` : '',
+    ].filter(Boolean).join('');
+
+    // Severity summary badges
+    const badges = ['warning', 'caution', 'info', 'positive']
+      .filter(s => counts[s] > 0)
+      .map(s => `<span class="advisor-severity-badge advisor-severity-${s}">${counts[s]} ${s}</span>`)
+      .join('');
+
+    // Advice cards
+    const cards = advice.length > 0
+      ? advice.map(a => `
+          <div class="advisor-card advisor-card-${a.severity}">
+            <div class="advisor-card-header">
+              <span class="advisor-card-icon">${severityIcon[a.severity] || ''}</span>
+              <span class="advisor-card-headline">${a.headline}</span>
+              <span class="advisor-card-category">${a.category.replace('_', ' ')}</span>
+            </div>
+            <p class="advisor-card-detail">${a.detail}</p>
+            <div class="advisor-card-action"><strong>Action:</strong> ${a.action}</div>
+          </div>
+        `).join('')
+      : '<p class="text-secondary" style="text-align:center;padding:32px 0;">No advice right now — keep logging and check back later.</p>';
+
+    panel.innerHTML = `
+      <div class="advisor-snapshot-strip">${summaryCards}</div>
+      <div class="advisor-badges-row">${badges}</div>
+      <div class="advisor-cards">${cards}</div>
+    `;
   },
 
   // ── Exercises tab ────────────────────────────────────────────────

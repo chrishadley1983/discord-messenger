@@ -102,8 +102,14 @@ Key endpoints:
 - `POST /fitness/mobility` — log a routine (use `log-mobility` skill)
 - `POST /fitness/programme/start` — one-shot init (use `fitness-program-start` skill)
 
+- `GET /fitness/advice` — PT-quality advisor (cross-references nutrition, recovery, training load)
+
 **Rule:** Always lead with the 7-day weight trend, not single readings.
 Day-to-day scale variance is water, not fat.
+
+**Advisor:** The `/fitness/advice` endpoint returns structured advice items (warning/caution/info/positive)
+with headline, detail, and concrete action. Use the `fitness-advisor` skill for proactive checks
+(3x daily). In conversational fitness questions, call the endpoint and include relevant advice.
 
 ## Accountability Tracker
 

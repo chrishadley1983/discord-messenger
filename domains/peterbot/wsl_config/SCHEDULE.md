@@ -39,6 +39,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Daily Instagram Prep | daily-instagram-prep | 21:05 UK | #peterbot | yes |
 | Weekly Health Summary | weekly-health | Sunday 09:10 UK | #food-log | yes |
 | Weekly Cut Review | weekly-cut-review | Sunday 09:00 UK | #food-log | yes |
+| Fitness Advisor Check | fitness-advisor | 12:00,16:00,20:00 UK | #food-log | yes |
 | Midweek Cut Nudge | fitness-dashboard | Wed 19:00 UK | #food-log | yes |
 | Monthly Health Summary | monthly-health | 1st 09:15 UK | #food-log | yes |
 | Claude History Reminder | - | 1st 10:00 UK | #peterbot | yes |

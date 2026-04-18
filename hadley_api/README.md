@@ -504,6 +504,11 @@ All routes in `hadley_api/fitness_routes.py`. See `docs/playbooks/FITNESS.md` fo
 - `GET /fitness/mobility/today` — today's slot status + 7-day history + streak
   - Response: `{today: {morning_done, evening_done, ...}, streak_days, history_7d: [{date, done}]}`
   - Streak walks back from today; today-not-done-yet is a grace day (doesn't break the streak)
+- `GET /fitness/advice` — PT/nutritionist-quality advisor
+  - Cross-references nutrition, weight trend, recovery (sleep, HRV, resting HR), training load (RPE trend), mobility, and programme context
+  - Returns structured advice items sorted by severity: `{advice: [{severity, category, headline, detail, action}], snapshot: {...}, counts: {warning, caution, info, positive}}`
+  - 23 rules covering: energy balance (deficit depth + training day context), protein adequacy, hydration, weight rate-of-loss, stall/diet-break detection, sleep+training interaction, resting HR trends, HRV status, RPE creep, missed sessions, mobility streak
+  - Peter runs this 3x daily (12:00, 16:00, 20:00) and alerts on warning/caution items
 - `POST /fitness/workout` — log session + per-exercise sets (auth required)
   - Body: `{session_type, duration_min, rpe, notes, sets: [{exercise_slug, set_no, reps, hold_s}]}`
 - `POST /fitness/mobility` — log a mobility slot (auth required)

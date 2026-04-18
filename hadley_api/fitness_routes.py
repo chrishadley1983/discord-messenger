@@ -32,6 +32,7 @@ from domains.fitness import service as fit
 from domains.fitness.trend import compute_trend
 from domains.fitness.programme_generator import generate_week, session_to_dict
 from domains.fitness.programme_start import start_programme as do_start
+from domains.fitness.advisor import get_advice
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +251,17 @@ async def get_mobility_today():
         "streak_days": streak,
         "history_7d": history,
     }
+
+
+@router.get("/advice")
+async def get_fitness_advice():
+    """PT/nutritionist-quality advice based on all available signals.
+
+    Cross-references nutrition, weight trend, recovery (sleep, HRV, HR),
+    training load, mobility, and programme context. Returns structured
+    advice items sorted by severity (warning > caution > info > positive).
+    """
+    return await get_advice()
 
 
 # ── Write endpoints (auth-gated) ────────────────────────────────────────

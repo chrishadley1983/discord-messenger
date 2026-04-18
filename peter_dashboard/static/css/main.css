@@ -5398,6 +5398,75 @@ h4 { font-size: var(--text-base); }
   padding: 0 16px 14px 16px; border-top: 1px solid var(--border-light); padding-top: 12px;
 }
 
+/* ── Advisor ──────────────────────────────────────────────────────── */
+
+.advisor-snapshot-strip {
+  display: flex; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.advisor-snap-item {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 10px 16px;
+  background: var(--surface-2); border-radius: var(--radius-md);
+  min-width: 100px;
+}
+.advisor-snap-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.advisor-snap-value { font-size: 16px; font-weight: 600; font-family: var(--font-mono); }
+
+.advisor-badges-row { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.advisor-severity-badge {
+  font-size: 12px; font-weight: 600; padding: 3px 10px;
+  border-radius: 99px; text-transform: capitalize;
+}
+.advisor-severity-warning  { background: rgba(239,68,68,0.15); color: #ef4444; }
+.advisor-severity-caution  { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.advisor-severity-info     { background: rgba(59,130,246,0.15); color: #3b82f6; }
+.advisor-severity-positive { background: rgba(34,197,94,0.15);  color: #22c55e; }
+
+.advisor-cards { display: flex; flex-direction: column; gap: 12px; }
+
+.advisor-card {
+  border-radius: var(--radius-md); padding: 16px;
+  border-left: 4px solid transparent;
+  background: var(--surface-2);
+}
+.advisor-card-warning  { border-left-color: #ef4444; background: rgba(239,68,68,0.06); }
+.advisor-card-caution  { border-left-color: #f59e0b; background: rgba(245,158,11,0.06); }
+.advisor-card-info     { border-left-color: #3b82f6; background: rgba(59,130,246,0.06); }
+.advisor-card-positive { border-left-color: #22c55e; background: rgba(34,197,94,0.06); }
+
+.advisor-card-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.advisor-card-icon { display: flex; align-items: center; flex-shrink: 0; }
+.advisor-card-warning .advisor-card-icon  { color: #ef4444; }
+.advisor-card-caution .advisor-card-icon  { color: #f59e0b; }
+.advisor-card-info .advisor-card-icon     { color: #3b82f6; }
+.advisor-card-positive .advisor-card-icon { color: #22c55e; }
+
+.advisor-card-headline {
+  font-weight: 600; font-size: 14px; flex: 1;
+}
+.advisor-card-category {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-muted); white-space: nowrap;
+}
+.advisor-card-detail {
+  font-size: 13px; line-height: 1.5; color: var(--text-secondary);
+  margin: 0 0 10px 0;
+}
+.advisor-card-action {
+  font-size: 13px; line-height: 1.5;
+  padding: 8px 12px; border-radius: var(--radius-sm);
+  background: var(--surface-3, rgba(255,255,255,0.04));
+}
+.advisor-card-action strong { color: var(--text-primary); }
+
+@media (max-width: 640px) {
+  .advisor-snapshot-strip { gap: 8px; }
+  .advisor-snap-item { min-width: 80px; padding: 8px 12px; }
+}
+
 @media (max-width: 640px) {
   .fitness-exercise-grid { grid-template-columns: 1fr; }
   .fitness-mobility-stats { grid-template-columns: 1fr; }

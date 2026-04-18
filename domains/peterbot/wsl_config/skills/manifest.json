@@ -551,6 +551,19 @@
     "description": "One-shot init: TDEE, 13-week programme, accountability goals",
     "channel": null
   },
+  "fitness-advisor": {
+    "triggers": [
+      "fitness check",
+      "how am i doing fitness",
+      "advisor check",
+      "am i on track",
+      "fitness advice"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Proactive PT-quality advice — cross-references nutrition, recovery, training load",
+    "channel": "#food-log"
+  },
   "healthera-prescriptions": {
     "triggers": [
       "prescription",
