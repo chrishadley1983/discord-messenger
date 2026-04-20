@@ -27,51 +27,109 @@ GOAL = {
 _logger = logging.getLogger(__name__)
 
 
-async def get_live_targets() -> dict:
-    """Return today's daily targets, preferring the active fitness programme.
+async def _fetch_user_goals_row() -> dict | None:
+    """Read the single user_goals row. None if unavailable."""
+    import os, httpx
+    url = os.getenv("SUPABASE_URL", "")
+    key = os.getenv("SUPABASE_KEY", "") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not url or not key:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=8) as c:
+            r = await c.get(
+                f"{url}/rest/v1/user_goals",
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+                params={"user_id": "eq.chris", "limit": "1"},
+            )
+            r.raise_for_status()
+            rows = r.json()
+            return rows[0] if rows else None
+    except Exception as e:
+        _logger.debug(f"user_goals fetch failed: {e}")
+        return None
 
-    The fitness programme owns calories / protein / steps — those recalibrate
-    as weight drops. Carbs / fat / water aren't tracked there, so they always
-    come from DAILY_TARGETS. Returns a fresh dict (safe to mutate).
+
+async def get_live_targets() -> dict:
+    """Return today's daily targets as a three-layer merge:
+
+    1. DAILY_TARGETS       — code-level fallback (last resort).
+    2. user_goals row      — Chris's manual preferences (water, carbs, fat
+                             and anything the programme doesn't set).
+    3. fitness_programmes  — live programme values override everything for
+                             calories / protein / steps / (target weight).
+
+    Returns a fresh dict (safe to mutate).
     """
     targets = dict(DAILY_TARGETS)
+
+    row = await _fetch_user_goals_row()
+    if row:
+        if row.get("calories_target") is not None:
+            targets["calories"] = int(row["calories_target"])
+        if row.get("protein_target_g") is not None:
+            targets["protein_g"] = int(row["protein_target_g"])
+        if row.get("carbs_target_g") is not None:
+            targets["carbs_g"] = int(row["carbs_target_g"])
+        if row.get("fat_target_g") is not None:
+            targets["fat_g"] = int(row["fat_target_g"])
+        if row.get("water_target_ml") is not None:
+            targets["water_ml"] = int(row["water_target_ml"])
+        if row.get("steps_target") is not None:
+            targets["steps"] = int(row["steps_target"])
+
     try:
         from domains.fitness import service as fit
         programme = await fit.get_active_programme()
     except Exception as e:
-        _logger.debug(f"get_live_targets: programme lookup failed, using defaults: {e}")
-        return targets
-    if not programme:
-        return targets
-    if programme.get("daily_calorie_target"):
-        targets["calories"] = int(programme["daily_calorie_target"])
-    if programme.get("daily_protein_g"):
-        targets["protein_g"] = int(programme["daily_protein_g"])
-    if programme.get("daily_steps_target"):
-        targets["steps"] = int(programme["daily_steps_target"])
+        _logger.debug(f"get_live_targets: programme lookup failed: {e}")
+        programme = None
+
+    if programme:
+        if programme.get("daily_calorie_target"):
+            targets["calories"] = int(programme["daily_calorie_target"])
+        if programme.get("daily_protein_g"):
+            targets["protein_g"] = int(programme["daily_protein_g"])
+        if programme.get("daily_steps_target"):
+            targets["steps"] = int(programme["daily_steps_target"])
+
     return targets
 
 
 async def get_live_goal() -> dict:
     """Headline weight goal, programme-aware.
 
-    While a programme is running, target = programme.target_weight_kg,
-    deadline = programme.end_date. Otherwise returns the static GOAL.
+    user_goals provides the fallback target weight + deadline + reason.
+    An active fitness programme overrides all three. DAILY_TARGETS' sister
+    constant GOAL is the last-resort fallback.
     """
+    row = await _fetch_user_goals_row()
+    if row:
+        base = {
+            "target_weight_kg": float(row.get("target_weight_kg") or GOAL["target_weight_kg"]),
+            "deadline": row.get("deadline") or GOAL["deadline"],
+            "reason": row.get("goal_reason") or GOAL["reason"],
+        }
+    else:
+        base = dict(GOAL)
+
     try:
         from domains.fitness import service as fit
         programme = await fit.get_active_programme()
     except Exception as e:
-        _logger.debug(f"get_live_goal: programme lookup failed, using defaults: {e}")
-        return dict(GOAL)
+        _logger.debug(f"get_live_goal: programme lookup failed: {e}")
+        programme = None
+
     if not programme:
-        return dict(GOAL)
-    return {
-        "target_weight_kg": float(programme.get("target_weight_kg") or GOAL["target_weight_kg"]),
-        "deadline": programme.get("end_date") or GOAL["deadline"],
-        "reason": programme.get("name") or GOAL["reason"],
-        "programme_id": programme.get("id"),
-    }
+        return base
+
+    if programme.get("target_weight_kg"):
+        base["target_weight_kg"] = float(programme["target_weight_kg"])
+    if programme.get("end_date"):
+        base["deadline"] = programme["end_date"]
+    if programme.get("name"):
+        base["reason"] = programme["name"]
+    base["programme_id"] = programme.get("id")
+    return base
 
 SYSTEM_PROMPT = """You are Pete - Chris's nutrition and fitness coach. You're a tough but cheeky PT who doesn't let Chris slack off but keeps things fun.
 
