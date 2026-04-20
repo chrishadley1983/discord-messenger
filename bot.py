@@ -107,9 +107,9 @@ _ready_initialized = False  # Guard against multiple on_ready calls
 def _launch_channel_sessions():
     """Launch persistent Claude Code channel sessions in WSL tmux.
 
-    Called from on_ready. Each session auto-restarts on crash (restart loop
-    in launch.sh). If a session is already running, tmux has-session returns
-    0 and we skip it.
+    Idempotent — called on startup and from the channel_watchdog APScheduler job.
+    If a tmux session exists it's skipped silently; only relaunches emit log lines
+    so a 1-minute watchdog doesn't spam the log.
     """
     import subprocess
 
@@ -125,11 +125,10 @@ def _launch_channel_sessions():
             # Check if session already exists
             check = subprocess.run(
                 ["wsl", "bash", "-c", f"tmux has-session -t {name} 2>/dev/null"],
-                capture_output=True, timeout=5,
+                capture_output=True, timeout=10,
             )
             if check.returncode == 0:
-                logger.info(f"Channel session '{name}' already running, skipping")
-                continue
+                continue  # Already running — stay silent to avoid log spam
 
             # Launch new tmux session with the channel's launch script
             subprocess.Popen(
@@ -137,7 +136,7 @@ def _launch_channel_sessions():
                  f'tmux new-session -d -s {name} -c $HOME/peterbot "bash \\"{script}\\""'],
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             )
-            logger.info(f"Launched channel session '{name}'")
+            logger.warning(f"Channel session '{name}' was down — relaunched")
         except Exception as e:
             logger.warning(f"Failed to launch channel session '{name}': {e}")
 
@@ -297,6 +296,20 @@ async def on_ready():
     # Start scheduler
     scheduler.start()
     logger.info(f"Scheduler started with {len(scheduler.get_jobs())} jobs")
+
+    # Channel watchdog — relaunch dead channel tmux sessions.
+    # _launch_channel_sessions() is idempotent (has-session check), so safe
+    # to run on a timer. Catches the case where WSL restarts or a tmux
+    # session dies outside the launch.sh restart loop.
+    scheduler.add_job(
+        _launch_channel_sessions,
+        "interval",
+        minutes=1,
+        id="channel_watchdog",
+        max_instances=1,
+        replace_existing=True,
+    )
+    logger.info("Channel watchdog registered (every 1 min)")
 
     # Legacy jobs — wrap with execution tracking before registration
     # This records start/complete in job_history.db and alerts #alerts on failure
