@@ -39,16 +39,26 @@ Hourly check of API credit balances (7am-9pm UK). Alert if any balance drops bel
     "seven_day": {"utilization": 43}
   },
   "gcp": {
+    // Shape depends on gcp.source:
+    //   "bigquery" — real billing data from GCP BigQuery export (preferred)
+    //   "estimates" — fallback from Cloud Monitoring + Supabase token counts
     "configured": true,
-    "cost_so_far_usd": 4.52,
-    "projected_monthly_usd": 18.50,
-    "projected_monthly_gbp": 14.62,
-    "days_elapsed": 7.3,
-    "requests_so_far": 2450,
-    "top_services": [
-      {"name": "Directions", "requests": 1200, "cost": 2.10},
-      {"name": "Places Text Search", "requests": 85, "cost": 1.72}
-    ]
+    "source": "bigquery",
+    "currency": "GBP",
+    "month_to_date": {
+      "cost_gbp": 1.45,            // if source=bigquery
+      "gross_gbp": 2.37,
+      "credits_gbp": -0.92,
+      "service_breakdown": [
+        {"service": "Cloud Scheduler", "cost_gbp": 1.20},
+        {"service": "Artifact Registry", "cost_gbp": 0.22}
+      ]
+      // if source=estimates: has cost_usd, gemini_calls, maps_breakdown instead
+    },
+    "today_gbp": 0.05,             // bigquery only
+    "yesterday_gbp": 0.08,         // bigquery only
+    "projected_monthly_gbp": 2.24,
+    "days_elapsed": 19.4
   },
   "threshold": 5.00,
   "timestamp": "2026-03-09 07:03"
@@ -57,29 +67,28 @@ Hourly check of API credit balances (7am-9pm UK). Alert if any balance drops bel
 
 ## Output Format
 
+**If `gcp.source == "bigquery"` (use £ and service_breakdown):**
 ```
-💰 **API Balance Check** — 07:03
+💰 **API Balance Check** — 12:03
 
 💳 Claude: $8.70
 🌙 Kimi: $9.75
 🤖 Grok: $5.09
-☁️ GCP: $4.52 MTD (proj ~$19/mo)
-   Directions 1200, Places Text Search 85
+☁️ GCP: £1.45 MTD (proj ~£2.24/mo)
+   Cloud Scheduler £1.20, Artifact Registry £0.22
 
 Max (Claude Code): 3% 5h | 43% 7d
 
 All balances healthy ✓
 ```
 
-If GCP projected spend is high (>£20/mo):
+**If `gcp.source == "estimates"` (fallback, use $ and maps_breakdown):**
 ```
-⚠️ GCP: $12.30 MTD (proj ~$38/mo)
-   Places Text Search 450, Directions 2100
-...
-⚠️ GCP projected $38/mo — review API usage!
+☁️ GCP: $4.52 MTD (est, proj ~$19/mo)
+   Directions 1200, Places Text Search 85
 ```
 
-If GCP not configured:
+**If GCP not configured:**
 ```
 ☁️ GCP: not configured (see setup instructions)
 ```
@@ -87,7 +96,10 @@ If GCP not configured:
 ## Rules
 
 - Show Claude, Kimi, Grok balances + GCP month-to-date spend
-- GCP shows cost so far + projected monthly total + top API callers
-- Use ⚠️ for balances below $5 threshold OR GCP projected >$20/mo
+- **Pick GCP currency symbol from `gcp.currency` field** — `£` for GBP (bigquery path), `$` for USD (estimates path)
+- For bigquery: show top 2–3 entries from `service_breakdown` with `£{cost_gbp}`
+- For estimates: show top entries from `maps_breakdown` with request counts
+- Use ⚠️ for balances below $5 threshold OR `gcp.projected_monthly_gbp > 15` OR `gcp.alert: true`
+- If `gcp.today_gbp` or `yesterday_gbp` is high (>£1), include it in the line
 - If GCP not configured, show setup reminder (not an error)
 - Keep it brief — this runs hourly
