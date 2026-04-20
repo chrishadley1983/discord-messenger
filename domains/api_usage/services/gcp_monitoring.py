@@ -91,7 +91,7 @@ def _find_billing_table() -> str | None:
 
     credentials = service_account.Credentials.from_service_account_file(
         str(GCP_KEY_PATH),
-        scopes=["https://www.googleapis.com/auth/bigquery.readonly"],
+        scopes=["https://www.googleapis.com/auth/bigquery"],
     )
     client = bigquery.Client(credentials=credentials, project=BQ_BILLING_PROJECT)
 
@@ -113,7 +113,7 @@ def _query_billing_bq_sync() -> dict | None:
 
     credentials = service_account.Credentials.from_service_account_file(
         str(GCP_KEY_PATH),
-        scopes=["https://www.googleapis.com/auth/bigquery.readonly"],
+        scopes=["https://www.googleapis.com/auth/bigquery"],
     )
     client = bigquery.Client(credentials=credentials, project=BQ_BILLING_PROJECT)
 
