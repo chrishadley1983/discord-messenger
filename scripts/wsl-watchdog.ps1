@@ -1,4 +1,4 @@
-# WSL Watchdog — checks WSL health every 5 minutes, restarts if unreachable.
+﻿# WSL Watchdog — checks WSL health every 5 minutes, restarts if unreachable.
 # Install as Windows Scheduled Task:
 #   schtasks /create /tn "WSL Watchdog" /tr "powershell -ExecutionPolicy Bypass -File C:\Users\Chris` Hadley\claude-projects\discord-messenger\scripts\wsl-watchdog.ps1" /sc minute /mo 5 /ru SYSTEM
 #
@@ -49,13 +49,16 @@ try {
     # Quick check: can we run a command in WSL?
     $result = wsl bash -c "echo OK" 2>&1
     if ($result -match "OK") {
-        # WSL is responding — check tmux sessions
-        $sessions = wsl bash -c "tmux list-sessions 2>/dev/null" 2>&1
+        # WSL is responding — check tmux sessions.
+        # Join stdout lines into one string so -notmatch behaves as a boolean
+        # regex test. On an array it filters rather than boolean-tests, which
+        # made the previous version flag every session as missing.
+        $sessionsText = ((wsl bash -c "tmux list-sessions 2>/dev/null" 2>&1) -join "`n")
         $expectedSessions = @("peter-channel", "whatsapp-channel", "jobs-channel")
         $missingSessions = @()
 
         foreach ($sess in $expectedSessions) {
-            if ($sessions -notmatch $sess) {
+            if ($sessionsText -notmatch [regex]::Escape($sess)) {
                 $missingSessions += $sess
             }
         }
@@ -89,14 +92,23 @@ try {
         # Wait for WSL to fully initialise
         Start-Sleep -Seconds 5
 
-        # Relaunch channel sessions via temp wrapper scripts (avoids quoting issues)
+        # Relaunch channel sessions via temp wrapper scripts.
+        # Wrapper is written to a Windows temp dir (PS controls the content cleanly)
+        # and read by WSL via /mnt/c/ — avoids nested PS+bash quote escaping entirely.
         $channels = @("peter-channel", "whatsapp-channel", "jobs-channel")
+        $repoRoot = "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger"
 
         foreach ($sess in $channels) {
-            # Create a simple launcher that avoids nested quote hell
-            $launcherContent = "#!/bin/bash`ncd /tmp`nbash '/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/$sess/launch.sh'"
-            wsl bash -c "printf '%s\n' '$($launcherContent -replace "'","'\''")' > /tmp/launch-${sess}.sh && chmod +x /tmp/launch-${sess}.sh" 2>&1
-            wsl bash -c "tmux new-session -d -s ${sess} /tmp/launch-${sess}.sh" 2>&1
+            $winLauncher = Join-Path $env:TEMP "wsl-relaunch-$sess.sh"
+            # Convert "C:\Windows\Temp\wsl-relaunch-peter-channel.sh" to "/mnt/c/Windows/Temp/..."
+            $wslLauncher = "/mnt/c/" + (($winLauncher -replace '\\','/') -replace '^[A-Za-z]:/','')
+            $content = "#!/bin/bash`nbash '$repoRoot/$sess/launch.sh'`n"
+            Set-Content -Path $winLauncher -Value $content -Encoding ascii -NoNewline
+
+            # Now invoke — simple single-line bash command with no nested quotes on PS side.
+            # The '&&' lives inside the bash command string, which PS passes as one argv.
+            $bashCmd = "chmod +x '$wslLauncher' && tmux new-session -d -s $sess '$wslLauncher'"
+            wsl bash -c $bashCmd 2>&1 | Out-Null
             Write-Log "Launched tmux session: $sess"
             Start-Sleep -Seconds 2
         }
