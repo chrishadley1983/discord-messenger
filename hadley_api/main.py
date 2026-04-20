@@ -416,7 +416,7 @@ def _build_mime_message(body_text: str, attachment_paths: list[str] | None = Non
 
 
 @app.get("/gmail/unread")
-async def gmail_unread(limit: int = Query(default=10, le=20)):
+def gmail_unread(limit: int = Query(default=10, le=20)):  # sync def → FastAPI threadpool; keeps event loop free
     """Get unread emails."""
     from .google_auth import get_gmail_service
 
@@ -466,7 +466,7 @@ async def gmail_unread(limit: int = Query(default=10, le=20)):
 
 
 @app.get("/gmail/search")
-async def gmail_search(
+def gmail_search(  # sync def → FastAPI threadpool; keeps event loop free
     q: str = Query(..., description="Search query"),
     limit: int = Query(default=10, le=500, description="Max results (up to 500 for seed imports)"),
     account: str = Query(default="personal", description="Account: personal or hadley-bricks"),
@@ -532,7 +532,7 @@ async def gmail_search(
 
 
 @app.get("/gmail/get")
-async def gmail_get(
+def gmail_get(  # sync def → FastAPI threadpool; keeps event loop free
     id: str = Query(..., description="Email message ID"),
     account: str = Query(default="personal", description="Account: personal or hadley-bricks"),
     html: bool = Query(default=False, description="Include raw HTML body in response"),
@@ -664,7 +664,7 @@ async def gmail_get(
 
 
 @app.get("/gmail/labels")
-async def gmail_labels(
+def gmail_labels(  # sync def → FastAPI threadpool; keeps event loop free
     account: str = Query(default="personal", description="Account: personal or hadley-bricks"),
 ):
     """Get all Gmail labels."""
@@ -691,7 +691,7 @@ async def gmail_labels(
 
 
 @app.get("/gmail/starred")
-async def gmail_starred(limit: int = Query(default=10, le=20)):
+def gmail_starred(limit: int = Query(default=10, le=20)):  # sync def → FastAPI threadpool; keeps event loop free
     """Get starred emails."""
     from .google_auth import get_gmail_service
 
@@ -739,7 +739,7 @@ async def gmail_starred(limit: int = Query(default=10, le=20)):
 
 
 @app.get("/gmail/thread")
-async def gmail_thread(id: str = Query(..., description="Thread ID")):
+def gmail_thread(id: str = Query(..., description="Thread ID")):  # sync def → FastAPI threadpool; keeps event loop free
     """Get full email thread/conversation."""
     from .google_auth import get_gmail_service
     import base64
@@ -800,7 +800,7 @@ async def gmail_thread(id: str = Query(..., description="Thread ID")):
 
 
 @app.post("/gmail/draft")
-async def gmail_draft(
+def gmail_draft(  # sync def → FastAPI threadpool; keeps event loop free
     to: str = Query(..., description="Recipient email"),
     subject: str = Query(..., description="Email subject"),
     body: str = Query(..., description="Email body text"),
@@ -841,7 +841,7 @@ async def gmail_draft(
 
 
 @app.post("/gmail/send")
-async def gmail_send(
+def gmail_send(  # sync def → FastAPI threadpool; keeps event loop free
     to: str = Query(..., description="Recipient email"),
     subject: str = Query(..., description="Email subject"),
     body: str = Query(..., description="Email body text"),
@@ -2609,7 +2609,7 @@ async def elevation(
 # ============================================================
 
 @app.get("/gmail/attachments")
-async def gmail_attachments(
+def gmail_attachments(  # sync def → FastAPI threadpool; keeps event loop free
     message_id: str = Query(..., description="Email message ID"),
     attachment_id: Optional[str] = Query(default=None, description="Specific attachment ID to download")
 ):
@@ -2686,7 +2686,7 @@ async def gmail_attachments(
 
 
 @app.get("/gmail/attachment/text")
-async def gmail_attachment_text(
+def gmail_attachment_text(  # sync def → FastAPI threadpool; keeps event loop free
     message_id: str = Query(..., description="Email message ID"),
     attachment_id: str = Query(..., description="Attachment ID to extract text from")
 ):
@@ -3250,7 +3250,7 @@ async def contacts_search(
 # ============================================================
 
 @app.post("/gmail/archive")
-async def gmail_archive(message_id: str = Query(..., description="Email message ID")):
+def gmail_archive(message_id: str = Query(..., description="Email message ID")):  # sync def → threadpool
     """Archive an email (remove from inbox)."""
     from .google_auth import get_gmail_service
 
@@ -3279,7 +3279,7 @@ async def gmail_archive(message_id: str = Query(..., description="Email message 
 
 
 @app.post("/gmail/trash")
-async def gmail_trash(message_id: str = Query(..., description="Email message ID")):
+def gmail_trash(message_id: str = Query(..., description="Email message ID")):  # sync def → threadpool
     """Move an email to trash."""
     from .google_auth import get_gmail_service
 
@@ -3303,7 +3303,7 @@ async def gmail_trash(message_id: str = Query(..., description="Email message ID
 
 
 @app.post("/gmail/mark-read")
-async def gmail_mark_read(
+def gmail_mark_read(  # sync def → FastAPI threadpool; keeps event loop free
     message_id: str = Query(..., description="Email message ID"),
     read: bool = Query(default=True, description="True to mark as read, False for unread")
 ):
@@ -3339,7 +3339,7 @@ async def gmail_mark_read(
 
 
 @app.post("/gmail/forward")
-async def gmail_forward(
+def gmail_forward(  # sync def → FastAPI threadpool; keeps event loop free
     message_id: str = Query(..., description="Email message ID to forward"),
     to: str = Query(..., description="Recipient email address"),
     comment: Optional[str] = Query(default=None, description="Optional comment to add")
@@ -3912,7 +3912,7 @@ async def youtube_search(
 # ============================================================
 
 @app.post("/gmail/reply")
-async def gmail_reply(
+def gmail_reply(  # sync def → FastAPI threadpool; keeps event loop free
     message_id: str = Query(..., description="Message ID to reply to"),
     body: str = Query(..., description="Reply text"),
     attachments: list[str] = Query(default=[], description="Local file paths to attach"),
@@ -3965,7 +3965,7 @@ async def gmail_reply(
 
 
 @app.get("/gmail/vacation")
-async def gmail_vacation_get():
+def gmail_vacation_get():  # sync def → FastAPI threadpool; keeps event loop free
     """Get vacation responder settings."""
     from .google_auth import get_gmail_service
 
@@ -3992,7 +3992,7 @@ async def gmail_vacation_get():
 
 
 @app.post("/gmail/vacation")
-async def gmail_vacation_set(
+def gmail_vacation_set(  # sync def → FastAPI threadpool; keeps event loop free
     enabled: bool = Query(..., description="Enable or disable"),
     subject: Optional[str] = Query(default=None, description="Auto-reply subject"),
     message: Optional[str] = Query(default=None, description="Auto-reply message")
@@ -4026,7 +4026,7 @@ async def gmail_vacation_set(
 
 
 @app.get("/gmail/filters")
-async def gmail_filters():
+def gmail_filters():  # sync def → FastAPI threadpool; keeps event loop free
     """List email filters."""
     from .google_auth import get_gmail_service
 
@@ -4065,7 +4065,7 @@ async def gmail_filters():
 
 
 @app.get("/gmail/signature")
-async def gmail_signature():
+def gmail_signature():  # sync def → FastAPI threadpool; keeps event loop free
     """Get email signature."""
     from .google_auth import get_gmail_service
 
