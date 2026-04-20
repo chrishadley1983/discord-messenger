@@ -9,7 +9,7 @@ from .supabase_service import (
     get_today_meals,
     get_week_summary
 )
-from .garmin import get_steps, get_sleep, get_heart_rate, get_daily_summary
+from .garmin import get_steps, get_sleep, get_heart_rate, get_daily_summary, get_hrv, get_stress
 from .withings import get_weight, get_weight_history
 from .goals_service import get_goals, update_goal
 from .favourites_service import (
@@ -31,6 +31,8 @@ __all__ = [
     "get_sleep",
     "get_heart_rate",
     "get_daily_summary",
+    "get_hrv",
+    "get_stress",
     "get_weight",
     "get_weight_history",
     "get_goals",

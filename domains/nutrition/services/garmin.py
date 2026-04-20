@@ -233,8 +233,67 @@ async def get_daily_summary() -> dict:
         except Exception as e:
             logger.warning(f"Failed to get sleep: {e}")
 
+        # Get HRV
+        try:
+            hrv = garth.DailyHRV.get(today.isoformat())
+            if hrv and hasattr(hrv, 'weekly_avg') and hrv.weekly_avg:
+                result["hrv"] = {
+                    "weekly_avg": hrv.weekly_avg,
+                    "last_night": getattr(hrv, 'last_night', None),
+                    "status": getattr(hrv, 'status', None),
+                }
+        except Exception as e:
+            logger.warning(f"Failed to get HRV: {e}")
+
+        # Get stress
+        try:
+            stress = garth.DailyStress.get(today.isoformat())
+            if stress and hasattr(stress, 'overall_stress_level') and stress.overall_stress_level:
+                result["stress"] = {
+                    "average": stress.overall_stress_level,
+                    "max": None,
+                }
+        except Exception as e:
+            logger.warning(f"Failed to get stress: {e}")
+
         logger.info(f"Retrieved Garmin daily summary")
         return result
     except Exception as e:
         logger.error(f"Garmin summary API error: {e}")
         return {"error": str(e)}
+
+
+async def get_hrv() -> dict:
+    """Get HRV data from Garmin."""
+    try:
+        _get_client()
+        today = date.today().isoformat()
+        hrv = garth.DailyHRV.get(today)
+        if hrv and hasattr(hrv, 'weekly_avg') and hrv.weekly_avg:
+            result = {
+                "weekly_avg": hrv.weekly_avg,
+                "last_night": getattr(hrv, 'last_night', None),
+                "status": getattr(hrv, 'status', None),
+            }
+            logger.info(f"Retrieved Garmin HRV: weekly_avg={result['weekly_avg']}ms")
+            return result
+        return {"weekly_avg": None, "last_night": None, "status": None}
+    except Exception as e:
+        logger.error(f"Garmin HRV API error: {e}")
+        return {"error": str(e), "weekly_avg": None}
+
+
+async def get_stress() -> dict:
+    """Get stress data from Garmin."""
+    try:
+        _get_client()
+        today = date.today().isoformat()
+        stress = garth.DailyStress.get(today)
+        if stress and hasattr(stress, 'overall_stress_level') and stress.overall_stress_level:
+            result = {"average": stress.overall_stress_level}
+            logger.info(f"Retrieved Garmin stress: avg={result['average']}")
+            return result
+        return {"average": None}
+    except Exception as e:
+        logger.error(f"Garmin stress API error: {e}")
+        return {"error": str(e), "average": None}

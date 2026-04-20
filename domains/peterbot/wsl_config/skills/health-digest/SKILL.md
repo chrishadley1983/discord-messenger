@@ -88,6 +88,23 @@ Protein: 145g / 120g ✅
 - ↓ decreased from yesterday
 - → same as yesterday
 
+## Advisor Warnings
+
+The pre-fetched data includes an `advisor` field from the fitness advisor engine.
+If `advisor.advice` contains items, include the top 1-3 most important ones
+(severity order: warning > caution > info) in an **Advisor** section after the
+standard digest. Format:
+
+```
+**Coach Notes** 🏋️
+⚠️ [headline] — [action]
+⚡ [headline] — [action]
+✅ [headline]
+```
+
+Use ⚠️ for warning/caution, ⚡ for info, ✅ for positive. Keep each to one line.
+If Chris says "less alerts" or "too many", only show warning-severity items.
+
 ## Rules
 
 - Always compare to previous day where data available

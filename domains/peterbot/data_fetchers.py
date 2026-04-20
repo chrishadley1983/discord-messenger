@@ -107,7 +107,7 @@ async def get_health_digest_data() -> dict[str, Any]:
     """
     from domains.nutrition.services import (
         get_sleep, get_steps, get_heart_rate, get_weight,
-        get_nutrition_totals
+        get_nutrition_totals, get_hrv, get_stress,
     )
     from domains.nutrition.config import DAILY_TARGETS, GOAL
 
@@ -124,10 +124,12 @@ async def get_health_digest_data() -> dict[str, Any]:
             get_heart_rate(),
             get_weight(),
             get_nutrition_totals(date=yesterday),  # Yesterday's nutrition
+            get_hrv(),
+            get_stress(),
             return_exceptions=True
         )
 
-        sleep_data, steps_data, hr_data, weight_data, nutrition_data = results
+        sleep_data, steps_data, hr_data, weight_data, nutrition_data, hrv_data, stress_data = results
 
         # Handle exceptions
         data = {
@@ -136,6 +138,8 @@ async def get_health_digest_data() -> dict[str, Any]:
             "heart_rate": hr_data if not isinstance(hr_data, Exception) else None,
             "weight": weight_data if not isinstance(weight_data, Exception) else None,
             "nutrition": nutrition_data if not isinstance(nutrition_data, Exception) else None,
+            "hrv": hrv_data if not isinstance(hrv_data, Exception) else None,
+            "stress": stress_data if not isinstance(stress_data, Exception) else None,
             "targets": DAILY_TARGETS,
             "goal": GOAL,
             "date": datetime.now(UK_TZ).strftime("%Y-%m-%d"),
@@ -145,6 +149,15 @@ async def get_health_digest_data() -> dict[str, Any]:
         # Sync yesterday's Garmin data to garmin_daily_summary table
         # (fire-and-forget — don't let sync failures break the digest)
         asyncio.create_task(_sync_garmin_to_supabase(yesterday, data))
+
+        # Advisor warnings for the morning message
+        try:
+            from domains.fitness.advisor import get_advice
+            advisor = await get_advice()
+            data["advisor"] = advisor
+        except Exception as e:
+            logger.warning(f"Advisor fetch for health digest failed: {e}")
+            data["advisor"] = None
 
         return data
 
@@ -167,6 +180,8 @@ async def _sync_garmin_to_supabase(date_str: str, data: dict) -> None:
         steps = data.get("steps") or {}
         sleep = data.get("sleep") or {}
         hr = data.get("heart_rate") or {}
+        hrv = data.get("hrv") or {}
+        stress = data.get("stress") or {}
 
         # Only sync if we have at least some data
         step_count = steps.get("steps")
@@ -191,6 +206,14 @@ async def _sync_garmin_to_supabase(date_str: str, data: dict) -> None:
             record["sleep_score"] = sleep["quality_score"]
         if resting_hr is not None:
             record["resting_hr"] = resting_hr
+        if hrv.get("weekly_avg") is not None:
+            record["hrv_weekly_avg"] = hrv["weekly_avg"]
+        if hrv.get("last_night") is not None:
+            record["hrv_last_night"] = hrv["last_night"]
+        if hrv.get("status") is not None:
+            record["hrv_status"] = hrv["status"]
+        if stress.get("average") is not None:
+            record["avg_stress"] = stress["average"]
 
         headers = {
             "apikey": SUPABASE_KEY,
@@ -4158,6 +4181,16 @@ async def get_accountability_monthly_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
+async def get_fitness_advisor_data() -> dict[str, Any]:
+    """Pre-fetch fitness advisor data for the proactive advisor skill."""
+    try:
+        from domains.fitness.advisor import get_advice
+        return await get_advice()
+    except Exception as e:
+        logger.error(f"Fitness advisor data fetch error: {e}")
+        return {"error": str(e)}
+
+
 # Map skill names to their data fetchers
 # Skills not in this dict use web search (news, etc.)
 SKILL_DATA_FETCHERS = {
@@ -4258,4 +4291,6 @@ SKILL_DATA_FETCHERS = {
     # Accountability Tracker
     "accountability-weekly": get_accountability_weekly_data,
     "accountability-monthly": get_accountability_monthly_data,
+    # Fitness advisor
+    "fitness-advisor": get_fitness_advisor_data,
 }

@@ -72,6 +72,24 @@ AUTO_SOURCE_REGISTRY = {
         "filter": {"user_id": "eq.chris"},
         "agg": "latest",
     },
+    # Fitness programme auto-sources
+    "fitness_strength_week": {
+        # Special marker — count of strength sessions in current ISO week.
+        # Handled via custom branch in fetch_auto_value.
+        "table": "fitness_workout_sessions",
+        "column": "id",
+        "date_col": "session_date",
+        "filter": {"user_id": "eq.chris"},
+        "agg": "count_week",
+    },
+    "fitness_mobility_today": {
+        # Returns 1 if any mobility session logged today, else 0.
+        "table": "fitness_mobility_sessions",
+        "column": "id",
+        "date_col": "session_date",
+        "filter": {"user_id": "eq.chris"},
+        "agg": "exists_today",
+    },
 }
 
 
@@ -133,6 +151,39 @@ async def fetch_auto_value(source_key: str, target_date: str | None = None) -> f
                     if rows:
                         val = rows[0].get(column)
                         return float(val) if val is not None else None
+                return None
+
+            elif agg == "count_week":
+                # Count rows in the ISO week containing target date (Mon-Sun)
+                from datetime import timedelta
+                target_d = date.fromisoformat(target)
+                week_start = target_d - timedelta(days=target_d.weekday())
+                week_end = week_start + timedelta(days=6)
+                date_col = config["date_col"]
+                params = {
+                    "select": column,
+                    "and": f"({date_col}.gte.{week_start.isoformat()},{date_col}.lte.{week_end.isoformat()})",
+                    **config.get("filter", {}),
+                }
+                if config["table"] == "fitness_workout_sessions":
+                    params["session_type"] = "not.in.(mobility,rest)"
+                resp = await client.get(url, headers=_read_headers(), params=params)
+                if resp.status_code == 200:
+                    return float(len(resp.json()))
+                return None
+
+            elif agg == "exists_today":
+                # 1.0 if any row exists for target date, else 0.0
+                date_col = config["date_col"]
+                params = {
+                    "select": column,
+                    date_col: f"eq.{target}",
+                    "limit": "1",
+                    **config.get("filter", {}),
+                }
+                resp = await client.get(url, headers=_read_headers(), params=params)
+                if resp.status_code == 200:
+                    return 1.0 if resp.json() else 0.0
                 return None
 
             elif agg == "sum_today":

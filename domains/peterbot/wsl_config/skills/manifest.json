@@ -482,6 +482,88 @@
     "description": "Morning health digest with sleep, weight, steps, HR and comparison to yesterday",
     "channel": null
   },
+  "fitness-dashboard": {
+    "triggers": [
+      "fitness dashboard",
+      "fitness today",
+      "today's workout",
+      "am i on track",
+      "cut status",
+      "fat loss update"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily post-Japan cut check-in: trend weight, workout, calories, adherence flags",
+    "channel": "#food-log"
+  },
+  "log-workout": {
+    "triggers": [
+      "done push workout",
+      "done legs workout",
+      "finished workout",
+      "logged workout",
+      "completed push",
+      "completed legs",
+      "finished pull",
+      "finished full body"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Log a completed bodyweight workout session from conversational input",
+    "channel": null
+  },
+  "log-mobility": {
+    "triggers": [
+      "done morning stretch",
+      "done evening stretch",
+      "done mobility",
+      "finished stretching",
+      "stretched",
+      "mobility done"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Log morning or evening mobility routine (10-min default)",
+    "channel": null
+  },
+  "weekly-cut-review": {
+    "triggers": [
+      "weekly cut review",
+      "cut review",
+      "weekly fitness review",
+      "how's my cut going"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Sunday programme-aware review: adherence, trend, next week's adjustment",
+    "channel": "#food-log"
+  },
+  "fitness-program-start": {
+    "triggers": [
+      "start fitness programme",
+      "start the cut",
+      "kick off fitness programme",
+      "begin fat loss",
+      "start fat loss programme"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "One-shot init: TDEE, 13-week programme, accountability goals",
+    "channel": null
+  },
+  "fitness-advisor": {
+    "triggers": [
+      "fitness check",
+      "how am i doing fitness",
+      "advisor check",
+      "am i on track",
+      "fitness advice"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Proactive PT-quality advice — cross-references nutrition, recovery, training load",
+    "channel": "#food-log"
+  },
   "healthera-prescriptions": {
     "triggers": [
       "prescription",

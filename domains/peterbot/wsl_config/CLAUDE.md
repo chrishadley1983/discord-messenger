@@ -87,6 +87,30 @@ The goal: never ask Chris for information you could find yourself in 2 seconds. 
 
 Bugs/feature requests → `peter_queue`. Personal todos → `personal_todo`. Ideas → `idea`.
 
+## Fitness Programme (Post-Japan Cut)
+
+Chris runs a 13-week fat-loss programme with bodyweight training and calorie deficit.
+Read `docs/playbooks/FITNESS.md` BEFORE any response about weight, the cut, workouts,
+mobility, or calorie budgets.
+
+Key endpoints:
+- `GET /fitness/dashboard` — daily "am I on track" status
+- `GET /fitness/today` — today's prescribed workout + targets
+- `GET /fitness/trend?days=30` — smoothed weight trend (never single readings)
+- `GET /fitness/weekly-review` — Sunday review bundle
+- `POST /fitness/workout` — log a session (use `log-workout` skill)
+- `POST /fitness/mobility` — log a routine (use `log-mobility` skill)
+- `POST /fitness/programme/start` — one-shot init (use `fitness-program-start` skill)
+
+- `GET /fitness/advice` — PT-quality advisor (cross-references nutrition, recovery, training load)
+
+**Rule:** Always lead with the 7-day weight trend, not single readings.
+Day-to-day scale variance is water, not fat.
+
+**Advisor:** The `/fitness/advice` endpoint returns structured advice items (warning/caution/info/positive)
+with headline, detail, and concrete action. Use the `fitness-advisor` skill for proactive checks
+(3x daily). In conversational fitness questions, call the endpoint and include relevant advice.
+
 ## Accountability Tracker
 
 Chris tracks goals and habits via `/accountability` API endpoints. Three active goals auto-update from live data:

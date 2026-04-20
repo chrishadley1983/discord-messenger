@@ -486,6 +486,52 @@ Allowlisted: amazon.co.uk, ebay.co.uk, premierinn.com
   - `days` (1-90, default 7): how far back to search
   - `mark_reported` (default true): save new email IDs to dedup file
 
+### Fitness Tracking (Post-Japan Cut)
+
+All routes in `hadley_api/fitness_routes.py`. See `docs/playbooks/FITNESS.md` for the full playbook.
+
+- `GET /fitness/programme` — active programme + current week/day number
+- `GET /fitness/today` — today's prescribed workout + calorie/protein/steps targets
+- `GET /fitness/dashboard` — full daily status (trend weight, nutrition, steps, today's workout, mobility, flags)
+- `GET /fitness/weekly-review` — Sunday review bundle with adherence + adjustment
+- `GET /fitness/trend?days=30` — smoothed weight trend (7-day SMA, EMA, linear slope, stall detection)
+- `GET /fitness/exercises?category=push` — exercise library (optional category filter)
+  - Each exercise now includes `video_url` (YouTube search link), `instructions` (5-step how-to), and `equipment` notes
+  - Response: `{exercises, by_category: {push, pull, legs, core, conditioning, mobility}, category_order, count}`
+- `GET /fitness/mobility/routine` — the fixed 10-minute daily mobility flow
+  - Joins the static routine against the exercise library so each move carries name, form cue, instructions, video URL, equipment, muscle group, and per-move duration
+  - Response: `{name, total_duration_s, total_duration_min, move_count, moves: [...]}`
+- `GET /fitness/mobility/today` — today's slot status + 7-day history + streak
+  - Response: `{today: {morning_done, evening_done, ...}, streak_days, history_7d: [{date, done}]}`
+  - Streak walks back from today; today-not-done-yet is a grace day (doesn't break the streak)
+- `GET /fitness/advice` — PT/nutritionist-quality advisor
+  - Cross-references nutrition, weight trend, recovery (sleep, HRV, resting HR), training load (RPE trend), mobility, and programme context
+  - Returns structured advice items sorted by severity: `{advice: [{severity, category, headline, detail, action}], snapshot: {...}, counts: {warning, caution, info, positive}}`
+  - 23 rules covering: energy balance (deficit depth + training day context), protein adequacy, hydration, weight rate-of-loss, stall/diet-break detection, sleep+training interaction, resting HR trends, HRV status, RPE creep, missed sessions, mobility streak
+  - Peter runs this 3x daily (12:00, 16:00, 20:00) and alerts on warning/caution items
+- `POST /fitness/workout` — log session + per-exercise sets (auth required)
+  - Body: `{session_type, duration_min, rpe, notes, sets: [{exercise_slug, set_no, reps, hold_s}]}`
+- `POST /fitness/mobility` — log a mobility slot (auth required)
+  - Body: `{slot: "morning"|"evening"|"adhoc", duration_min, routine}`
+- `POST /fitness/programme/start` — one-shot programme init (auth required)
+  - Body: `{start_date, current_weight_kg, target_loss_kg, duration_weeks}`
+  - Archives old active programmes + "Hit 80kg"/"Lose weight" goals
+  - Computes TDEE (Mifflin-St Jeor + Garmin activity factor)
+  - Creates 6 accountability goals (weight/calories/protein/steps/strength/mobility)
+- `POST /fitness/programme/recalibrate` — refresh calorie/protein targets from latest weight (auth required)
+  - Body (all optional): `{current_weight_kg, avg_steps, deficit_kcal}` — defaults to 7-day trend weight + 7-day step avg
+  - Recomputes Mifflin-St Jeor BMR, TDEE, target calories, target protein
+  - Updates the active programme row in-place (tdee_kcal, daily_calorie_target, daily_protein_g)
+  - Returns `{old, new, weight_used_kg, bmr, activity_factor, deficit_kcal}`
+- `POST /fitness/weekly-checkin` — persist a Sunday snapshot (auth required)
+
+Tables:
+- `fitness_programmes` — programme header (start, target, TDEE, targets)
+- `fitness_exercises` — exercise library (seeded with 35+ bodyweight movements)
+- `fitness_workout_sessions` + `fitness_workout_sets` — workout logs
+- `fitness_mobility_sessions` — mobility slots (morning/evening unique per day)
+- `fitness_weekly_checkins` — persisted Sunday snapshots
+
 ## Environment Variables
 
 Uses the same `.env` as the main Discord bot:
