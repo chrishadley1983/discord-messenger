@@ -8988,6 +8988,8 @@ const FitnessView = {
   _mobilityRoutine: null, // {moves, total_duration_min, ...}
   _mobilityToday: null,   // {today, streak_days, history_7d}
   _advice: null,           // {advice, snapshot, counts}
+  _trends: null,           // {days, series, summary}
+  _trendsRange: 90,        // selectable: 30 / 90 / 180
   _activeCategory: 'push',
 
   CATEGORY_LABELS: {
@@ -9027,6 +9029,7 @@ const FitnessView = {
             { label: 'Advisor' },
             { label: 'Exercises' },
             { label: 'Daily Mobility' },
+            { label: 'Trends' },
           ],
           activeTab: 0,
         })}
@@ -9039,14 +9042,22 @@ const FitnessView = {
       `<div id="fitness-exercises-panel">${Components.skeleton('card')}</div>`;
     document.getElementById('fitness-tabs-panel-2').innerHTML =
       `<div id="fitness-mobility-panel">${Components.skeleton('card')}</div>`;
+    document.getElementById('fitness-tabs-panel-3').innerHTML =
+      `<div id="fitness-trends-panel">${Components.skeleton('card')}</div>`;
 
-    await Promise.all([this.loadAdvice(), this.loadExercises(), this.loadMobility()]);
+    await Promise.all([
+      this.loadAdvice(),
+      this.loadExercises(),
+      this.loadMobility(),
+      this.loadTrends(),
+    ]);
   },
 
   refresh() {
     this.loadAdvice();
     this.loadExercises();
     this.loadMobility();
+    this.loadTrends();
     Toast.info('Refreshed', 'Fitness data updated');
   },
 
@@ -9396,6 +9407,397 @@ const FitnessView = {
     } catch (err) {
       console.error('Failed to log mobility:', err);
       Toast.error('Error', 'Failed to log mobility slot');
+    }
+  },
+
+  // ── Trends tab ──────────────────────────────────────────────────
+
+  TREND_METRICS: [
+    { key: 'weight',      label: 'Weight',        unit: 'kg',      direction: 'down', format: v => v.toFixed(1) },
+    { key: 'steps',       label: 'Daily Steps',   unit: '',        direction: 'up',   format: v => Math.round(v).toLocaleString() },
+    { key: 'sleep_score', label: 'Sleep Score',   unit: '/100',    direction: 'up',   format: v => Math.round(v) },
+    { key: 'sleep_hours', label: 'Sleep Hours',   unit: 'h',       direction: 'up',   format: v => v.toFixed(1) },
+    { key: 'resting_hr',  label: 'Resting HR',    unit: 'bpm',     direction: 'down', format: v => Math.round(v) },
+    { key: 'hrv',         label: 'HRV (overnight)',unit: 'ms',     direction: 'up',   format: v => Math.round(v) },
+    { key: 'stress',      label: 'Avg Stress',    unit: '/100',    direction: 'down', format: v => Math.round(v) },
+  ],
+
+  setTrendsRange(days) {
+    this._trendsRange = days;
+    this.loadTrends();
+  },
+
+  async loadTrends() {
+    const panel = document.getElementById('fitness-trends-panel');
+    if (panel) panel.innerHTML = Components.skeleton('card');
+    try {
+      const resp = await fetch(`${this.HADLEY_API}/fitness/trends?days=${this._trendsRange}`);
+      const data = await resp.json();
+      this._trends = data;
+      this.renderTrends();
+    } catch (err) {
+      console.error('Failed to load trends:', err);
+      if (panel) panel.innerHTML = `<p class="text-secondary">Could not load trends.</p>`;
+    }
+  },
+
+  renderTrends() {
+    const panel = document.getElementById('fitness-trends-panel');
+    if (!panel || !this._trends) return;
+    const { series, summary, days } = this._trends;
+
+    const rangeBtns = [30, 90, 180].map(d =>
+      `<button class="fitness-cat-pill ${d === this._trendsRange ? 'active' : ''}"
+        onclick="FitnessView.setTrendsRange(${d})">${d}d</button>`
+    ).join('');
+
+    const tileGrid = this.TREND_METRICS.map(m => {
+      const s = summary[m.key] || {};
+      const points = series[m.key] || [];
+      const hasCurrent = s.current != null;
+      const deltaPct = s.delta_pct;
+      const deltaSign = deltaPct == null ? '' : deltaPct > 0 ? '+' : '';
+      const isGood = deltaPct == null ? null :
+        (m.direction === 'up'   ? deltaPct > 0 :
+         m.direction === 'down' ? deltaPct < 0 : null);
+      const deltaClass = isGood === null ? 'neutral' : isGood ? 'good' : 'bad';
+      const deltaStr = deltaPct == null ? '—' : `${deltaSign}${deltaPct}%`;
+      const currentStr = hasCurrent ? `${m.format(s.current)}${m.unit ? ' ' + m.unit : ''}` : '—';
+      return `
+        <div class="trend-tile trend-tile-clickable" onclick="FitnessView.openTrendDetail('${m.key}')" title="Click for daily breakdown">
+          <div class="trend-tile-header">
+            <span class="trend-tile-label">${m.label}</span>
+            <span class="trend-tile-delta trend-delta-${deltaClass}">${deltaStr}</span>
+          </div>
+          <div class="trend-tile-value">${currentStr}</div>
+          <div class="trend-tile-sub">14-day avg · ${points.length} readings in ${days}d</div>
+          <svg class="trend-tile-chart" id="trend-chart-${m.key}" width="100%" height="90"></svg>
+        </div>`;
+    }).join('');
+
+    panel.innerHTML = `
+      <div class="trends-header">
+        <div class="fitness-cat-pills">${rangeBtns}</div>
+        <p class="text-secondary text-sm" style="margin-top:8px;">
+          Time-series over the last ${days} days. Deltas compare last 14 days vs the prior 14 days.
+        </p>
+      </div>
+      <div class="trend-grid">${tileGrid}</div>
+    `;
+
+    // Draw the line chart for each metric
+    this.TREND_METRICS.forEach(m => {
+      const points = series[m.key] || [];
+      if (points.length < 2) return;
+      this._drawTrendChart(`trend-chart-${m.key}`, points, m.direction);
+    });
+  },
+
+  openTrendDetail(metricKey) {
+    if (!this._trends) return;
+    const m = this.TREND_METRICS.find(x => x.key === metricKey);
+    if (!m) return;
+    const points = (this._trends.series[metricKey] || []).slice();
+    if (!points.length) {
+      Toast.info('No data', `${m.label} has no readings yet`);
+      return;
+    }
+
+    const stats = this._computeStats(points);
+    const units = m.unit ? ` ${m.unit}` : '';
+
+    const statCard = (label, value, sub = '') => `
+      <div class="trend-stat">
+        <div class="trend-stat-label">${label}</div>
+        <div class="trend-stat-value">${value}</div>
+        ${sub ? `<div class="trend-stat-sub">${sub}</div>` : ''}
+      </div>`;
+
+    const fmt = v => v == null ? '—' : `${m.format(v)}${units}`;
+    const slopePerWeek = stats.slope_per_day == null ? null : stats.slope_per_day * 7;
+    const slopeStr = slopePerWeek == null
+      ? '—'
+      : `${slopePerWeek >= 0 ? '+' : ''}${m.format(slopePerWeek)}${units}/wk`;
+
+    // Daily rows sorted newest -> oldest, with day-over-day delta
+    const asc = points.slice().sort((a, b) => a.date < b.date ? -1 : 1);
+    const rows = [];
+    for (let i = asc.length - 1; i >= 0; i--) {
+      const p = asc[i];
+      const prev = i > 0 ? asc[i - 1] : null;
+      const delta = prev ? p.value - prev.value : null;
+      const deltaClass = delta == null ? 'neutral' :
+        (m.direction === 'up' ? (delta > 0 ? 'good' : delta < 0 ? 'bad' : 'neutral') :
+         m.direction === 'down' ? (delta < 0 ? 'good' : delta > 0 ? 'bad' : 'neutral') :
+         'neutral');
+      const deltaStr = delta == null
+        ? '—'
+        : `${delta > 0 ? '+' : ''}${m.format(delta)}${units}`;
+      rows.push(`
+        <tr>
+          <td>${p.date}</td>
+          <td class="trend-table-value">${m.format(p.value)}${units}</td>
+          <td class="trend-delta-${deltaClass} trend-table-delta">${deltaStr}</td>
+        </tr>`);
+    }
+
+    const content = `
+      <div class="trend-detail-grid">
+        ${statCard('Latest', fmt(stats.latest), stats.latest_date || '')}
+        ${statCard('7-day avg', fmt(stats.avg_7), `${stats.n_7} readings`)}
+        ${statCard('14-day avg', fmt(stats.avg_14), `${stats.n_14} readings`)}
+        ${statCard('30-day avg', fmt(stats.avg_30), `${stats.n_30} readings`)}
+        ${statCard('All-window avg', fmt(stats.avg_all), `${points.length} readings`)}
+        ${statCard('Median', fmt(stats.median))}
+        ${statCard('Min', fmt(stats.min), stats.min_date)}
+        ${statCard('Max', fmt(stats.max), stats.max_date)}
+        ${statCard('Trend', slopeStr, 'linear slope over window')}
+      </div>
+
+      <div class="trend-detail-chart-wrap">
+        <svg id="trend-detail-chart" width="100%" height="280"></svg>
+      </div>
+
+      <div class="trend-detail-table-wrap">
+        <table class="trend-detail-table">
+          <thead><tr><th>Date</th><th>Value</th><th>Δ day</th></tr></thead>
+          <tbody>${rows.join('')}</tbody>
+        </table>
+      </div>
+    `;
+
+    Modal.open({
+      title: `${m.label} — detail`,
+      content,
+      size: 'xl',
+    });
+
+    // Draw the big chart after the modal is in the DOM
+    requestAnimationFrame(() =>
+      this._drawTrendChart('trend-detail-chart', asc, m.direction, { detailed: true })
+    );
+  },
+
+  _computeStats(points) {
+    const asc = points.slice().sort((a, b) => a.date < b.date ? -1 : 1);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const within = days => asc.filter(p => (today - new Date(p.date)) / 86400000 < days);
+    const avg = arr => arr.length ? arr.reduce((s, p) => s + p.value, 0) / arr.length : null;
+    const w7 = within(7), w14 = within(14), w30 = within(30);
+
+    const sorted = asc.map(p => p.value).slice().sort((a, b) => a - b);
+    const median = sorted.length
+      ? (sorted.length % 2 ? sorted[(sorted.length - 1) / 2]
+                           : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2)
+      : null;
+
+    const latest = asc[asc.length - 1];
+    const minPoint = asc.reduce((a, b) => a.value <= b.value ? a : b, asc[0]);
+    const maxPoint = asc.reduce((a, b) => a.value >= b.value ? a : b, asc[0]);
+
+    // Linear regression slope per day (days since asc[0])
+    let slope = null;
+    if (asc.length >= 2) {
+      const base = new Date(asc[0].date).getTime() / 86400000;
+      const xs = asc.map(p => (new Date(p.date).getTime() / 86400000) - base);
+      const ys = asc.map(p => p.value);
+      const n = xs.length;
+      const sumX = xs.reduce((s, x) => s + x, 0);
+      const sumY = ys.reduce((s, y) => s + y, 0);
+      const sumXY = xs.reduce((s, x, i) => s + x * ys[i], 0);
+      const sumX2 = xs.reduce((s, x) => s + x * x, 0);
+      const denom = n * sumX2 - sumX * sumX;
+      slope = denom === 0 ? null : (n * sumXY - sumX * sumY) / denom;
+    }
+
+    return {
+      latest: latest ? latest.value : null,
+      latest_date: latest ? latest.date : null,
+      avg_7: avg(w7),
+      avg_14: avg(w14),
+      avg_30: avg(w30),
+      avg_all: avg(asc),
+      n_7: w7.length,
+      n_14: w14.length,
+      n_30: w30.length,
+      median,
+      min: minPoint ? minPoint.value : null,
+      min_date: minPoint ? minPoint.date : null,
+      max: maxPoint ? maxPoint.value : null,
+      max_date: maxPoint ? maxPoint.date : null,
+      slope_per_day: slope,
+    };
+  },
+
+  _drawTrendChart(svgId, points, direction, opts = {}) {
+    const detailed = !!opts.detailed;
+    const svg = d3.select(`#${svgId}`);
+    if (svg.empty()) return;
+    const node = svg.node();
+    const width = node.clientWidth || 280;
+    const height = detailed ? 280 : 90;
+    const margin = detailed
+      ? { top: 12, right: 18, bottom: 28, left: 44 }
+      : { top: 6, right: 6, bottom: 16, left: 4 };
+
+    svg.selectAll('*').remove();
+    const data = points.map(p => ({ date: new Date(p.date), value: p.value }));
+
+    const x = d3.scaleTime()
+      .domain(d3.extent(data, d => d.date))
+      .range([margin.left, width - margin.right]);
+    const yMin = d3.min(data, d => d.value);
+    const yMax = d3.max(data, d => d.value);
+    const pad = (yMax - yMin) * 0.12 || 1;
+    const y = d3.scaleLinear()
+      .domain([yMin - pad, yMax + pad])
+      .range([height - margin.bottom, margin.top]);
+
+    const line = d3.line()
+      .x(d => x(d.date))
+      .y(d => y(d.value))
+      .curve(d3.curveMonotoneX);
+
+    const stroke = direction === 'up' ? '#10b981' : direction === 'down' ? '#3b82f6' : '#6b7280';
+
+    const gradId = `grad-${svgId}`;
+    const defs = svg.append('defs');
+    const grad = defs.append('linearGradient')
+      .attr('id', gradId)
+      .attr('x1', '0%').attr('y1', '0%').attr('x2', '0%').attr('y2', '100%');
+    grad.append('stop').attr('offset', '0%').attr('stop-color', stroke).attr('stop-opacity', 0.25);
+    grad.append('stop').attr('offset', '100%').attr('stop-color', stroke).attr('stop-opacity', 0);
+
+    // Gridlines for the detailed view
+    if (detailed) {
+      const yTicks = y.ticks(5);
+      svg.append('g')
+        .attr('class', 'trend-gridlines')
+        .selectAll('line')
+        .data(yTicks)
+        .join('line')
+        .attr('x1', margin.left)
+        .attr('x2', width - margin.right)
+        .attr('y1', d => y(d))
+        .attr('y2', d => y(d))
+        .attr('stroke', 'var(--border-subtle, rgba(255,255,255,0.06))')
+        .attr('stroke-dasharray', '2,3');
+    }
+
+    const area = d3.area()
+      .x(d => x(d.date))
+      .y0(height - margin.bottom)
+      .y1(d => y(d.value))
+      .curve(d3.curveMonotoneX);
+
+    svg.append('path')
+      .datum(data)
+      .attr('fill', `url(#${gradId})`)
+      .attr('d', area);
+
+    svg.append('path')
+      .datum(data)
+      .attr('fill', 'none')
+      .attr('stroke', stroke)
+      .attr('stroke-width', detailed ? 2 : 1.5)
+      .attr('d', line);
+
+    // Points (all of them) in detail view, just last in mini view
+    if (detailed) {
+      svg.append('g')
+        .selectAll('circle')
+        .data(data)
+        .join('circle')
+        .attr('cx', d => x(d.date))
+        .attr('cy', d => y(d.value))
+        .attr('r', 2.5)
+        .attr('fill', stroke)
+        .attr('opacity', 0.7);
+    } else {
+      const last = data[data.length - 1];
+      svg.append('circle')
+        .attr('cx', x(last.date))
+        .attr('cy', y(last.value))
+        .attr('r', 3)
+        .attr('fill', stroke);
+    }
+
+    // X axis
+    const xAxis = detailed
+      ? d3.axisBottom(x).ticks(6).tickFormat(d3.timeFormat('%d %b'))
+      : d3.axisBottom(x)
+          .tickValues([data[0].date, data[data.length - 1].date])
+          .tickFormat(d3.timeFormat('%d %b'))
+          .tickSize(0);
+    svg.append('g')
+      .attr('transform', `translate(0,${height - margin.bottom + 2})`)
+      .attr('class', 'trend-axis')
+      .call(xAxis)
+      .selectAll('text')
+      .attr('font-size', detailed ? '11px' : '10px')
+      .attr('fill', 'var(--text-secondary, #6b7280)');
+    if (!detailed) svg.select('.trend-axis .domain').remove();
+
+    // Y axis + hover tooltip for detail view
+    if (detailed) {
+      svg.append('g')
+        .attr('transform', `translate(${margin.left - 2},0)`)
+        .attr('class', 'trend-axis')
+        .call(d3.axisLeft(y).ticks(5).tickSize(0))
+        .selectAll('text')
+        .attr('font-size', '11px')
+        .attr('fill', 'var(--text-secondary, #6b7280)');
+      svg.selectAll('.trend-axis .domain').remove();
+
+      const focus = svg.append('g').style('display', 'none');
+      focus.append('line')
+        .attr('class', 'trend-hover-line')
+        .attr('y1', margin.top)
+        .attr('y2', height - margin.bottom)
+        .attr('stroke', stroke)
+        .attr('stroke-dasharray', '3,3')
+        .attr('opacity', 0.5);
+      focus.append('circle').attr('r', 4).attr('fill', stroke);
+      const tipBg = focus.append('rect')
+        .attr('class', 'trend-hover-tip-bg')
+        .attr('fill', 'var(--surface-3, rgba(0,0,0,0.85))')
+        .attr('rx', 4).attr('ry', 4)
+        .attr('width', 110).attr('height', 40)
+        .attr('y', margin.top);
+      const tipDate = focus.append('text')
+        .attr('font-size', '11px')
+        .attr('fill', 'var(--text-secondary, #9ca3af)')
+        .attr('y', margin.top + 15);
+      const tipVal = focus.append('text')
+        .attr('font-size', '14px')
+        .attr('font-weight', '600')
+        .attr('fill', 'var(--text-primary, #e5e7eb)')
+        .attr('y', margin.top + 33);
+
+      const bisect = d3.bisector(d => d.date).left;
+      svg.append('rect')
+        .attr('x', margin.left)
+        .attr('y', margin.top)
+        .attr('width', width - margin.left - margin.right)
+        .attr('height', height - margin.top - margin.bottom)
+        .attr('fill', 'transparent')
+        .on('mouseover', () => focus.style('display', null))
+        .on('mouseout', () => focus.style('display', 'none'))
+        .on('mousemove', (event) => {
+          const [mx] = d3.pointer(event);
+          const d0 = x.invert(mx);
+          const i = bisect(data, d0, 1);
+          const a = data[i - 1], b = data[i];
+          const d = (!b || Math.abs(a.date - d0) < Math.abs(b.date - d0)) ? a : b;
+          if (!d) return;
+          const cx = x(d.date), cy = y(d.value);
+          focus.select('.trend-hover-line').attr('x1', cx).attr('x2', cx);
+          focus.select('circle').attr('cx', cx).attr('cy', cy);
+          const tipX = Math.min(cx + 10, width - 110 - margin.right);
+          tipBg.attr('x', tipX);
+          tipDate.attr('x', tipX + 8).text(d3.timeFormat('%d %b %Y')(d.date));
+          tipVal.attr('x', tipX + 8).text(d.value.toLocaleString(undefined, { maximumFractionDigits: 2 }));
+        });
     }
   },
 };

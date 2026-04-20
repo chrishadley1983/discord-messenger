@@ -137,18 +137,23 @@ class TestHelpers:
 
 class TestExtremeDeficit:
     def test_fires_over_1000(self):
-        s = _snap(calories_eaten=1200, calories_target=2343)
+        s = _snap(calories_eaten=1200, calories_target=2343, hour_of_day=20)
         a = _rule_extreme_deficit(s)
         assert a is not None
         assert a.severity == "warning"
         assert "1143" in a.detail
 
     def test_silent_at_900(self):
-        s = _snap(calories_eaten=1500, calories_target=2343)
+        s = _snap(calories_eaten=1500, calories_target=2343, hour_of_day=20)
         assert _rule_extreme_deficit(s) is None
 
     def test_silent_if_nothing_eaten(self):
-        s = _snap(calories_eaten=0, calories_target=2343)
+        s = _snap(calories_eaten=0, calories_target=2343, hour_of_day=20)
+        assert _rule_extreme_deficit(s) is None
+
+    def test_silent_before_evening(self):
+        # Deficit is real but it's still mid-afternoon — not a panic yet.
+        s = _snap(calories_eaten=1200, calories_target=2343, hour_of_day=14)
         assert _rule_extreme_deficit(s) is None
 
 
@@ -156,7 +161,7 @@ class TestAggressiveDeficitTraining:
     def test_fires_on_training_day(self):
         s = _snap(
             is_training_day=True, session_type="push",
-            calories_eaten=1500, calories_target=2343,
+            calories_eaten=1500, calories_target=2343, hour_of_day=16,
         )
         a = _rule_aggressive_deficit_training(s)
         assert a is not None
@@ -166,14 +171,22 @@ class TestAggressiveDeficitTraining:
     def test_silent_on_rest_day(self):
         s = _snap(
             is_training_day=False,
-            calories_eaten=1500, calories_target=2343,
+            calories_eaten=1500, calories_target=2343, hour_of_day=16,
         )
         assert _rule_aggressive_deficit_training(s) is None
 
     def test_silent_if_deficit_under_700(self):
         s = _snap(
             is_training_day=True, session_type="push",
-            calories_eaten=1800, calories_target=2343,
+            calories_eaten=1800, calories_target=2343, hour_of_day=16,
+        )
+        assert _rule_aggressive_deficit_training(s) is None
+
+    def test_silent_in_morning(self):
+        # Still breakfast-time; user hasn't had chance to fuel up yet.
+        s = _snap(
+            is_training_day=True, session_type="push",
+            calories_eaten=400, calories_target=2343, hour_of_day=9,
         )
         assert _rule_aggressive_deficit_training(s) is None
 
@@ -182,7 +195,7 @@ class TestAggressiveDeficitRest:
     def test_info_if_sleep_ok(self):
         s = _snap(
             is_training_day=False, sleep_score=70,
-            calories_eaten=1500, calories_target=2343,
+            calories_eaten=1500, calories_target=2343, hour_of_day=20,
         )
         a = _rule_aggressive_deficit_rest(s)
         assert a is not None
@@ -192,7 +205,7 @@ class TestAggressiveDeficitRest:
     def test_caution_if_sleep_poor(self):
         s = _snap(
             is_training_day=False, sleep_score=45,
-            calories_eaten=1500, calories_target=2343,
+            calories_eaten=1500, calories_target=2343, hour_of_day=20,
         )
         a = _rule_aggressive_deficit_rest(s)
         assert a is not None
@@ -201,11 +214,18 @@ class TestAggressiveDeficitRest:
     def test_info_if_no_sleep_data(self):
         s = _snap(
             is_training_day=False, sleep_score=None,
-            calories_eaten=1500, calories_target=2343,
+            calories_eaten=1500, calories_target=2343, hour_of_day=20,
         )
         a = _rule_aggressive_deficit_rest(s)
         assert a is not None
         assert a.severity == "info"
+
+    def test_silent_before_evening(self):
+        s = _snap(
+            is_training_day=False, sleep_score=70,
+            calories_eaten=1500, calories_target=2343, hour_of_day=14,
+        )
+        assert _rule_aggressive_deficit_rest(s) is None
 
 
 class TestSurplusInCut:
@@ -568,6 +588,7 @@ class TestEvaluateRules:
         s = _snap(
             calories_eaten=1200, calories_target=2343,
             sleep_score=85, sleep_hours=8.0,
+            hour_of_day=20,
         )
         advice = evaluate_rules(s)
         if advice:

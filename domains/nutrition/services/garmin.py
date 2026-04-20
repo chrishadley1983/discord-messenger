@@ -235,24 +235,22 @@ async def get_daily_summary() -> dict:
 
         # Get HRV
         try:
-            hrv = garth.DailyHRV.get(today.isoformat())
-            if hrv and hasattr(hrv, 'weekly_avg') and hrv.weekly_avg:
+            hrv = _latest_hrv()
+            if hrv and getattr(hrv, "weekly_avg", None):
                 result["hrv"] = {
                     "weekly_avg": hrv.weekly_avg,
-                    "last_night": getattr(hrv, 'last_night', None),
-                    "status": getattr(hrv, 'status', None),
+                    "last_night": getattr(hrv, "last_night_avg", None),
+                    "status": getattr(hrv, "status", None),
                 }
         except Exception as e:
             logger.warning(f"Failed to get HRV: {e}")
 
         # Get stress
         try:
-            stress = garth.DailyStress.get(today.isoformat())
-            if stress and hasattr(stress, 'overall_stress_level') and stress.overall_stress_level:
-                result["stress"] = {
-                    "average": stress.overall_stress_level,
-                    "max": None,
-                }
+            stress = _latest_stress()
+            overall = getattr(stress, "overall_stress_level", None) if stress else None
+            if overall is not None and overall >= 0:
+                result["stress"] = {"average": overall, "max": None}
         except Exception as e:
             logger.warning(f"Failed to get stress: {e}")
 
@@ -263,17 +261,29 @@ async def get_daily_summary() -> dict:
         return {"error": str(e)}
 
 
+def _latest_hrv():
+    """Most recent DailyHRV row. garth exposes .list() not .get() — the
+    single-item variant silently 404s on this garth version."""
+    rows = garth.DailyHRV.list(end=date.today(), period=1)
+    return rows[0] if rows else None
+
+
+def _latest_stress():
+    """Most recent DailyStress row."""
+    rows = garth.DailyStress.list(end=date.today(), period=1)
+    return rows[0] if rows else None
+
+
 async def get_hrv() -> dict:
-    """Get HRV data from Garmin."""
+    """Get HRV data from Garmin (weekly avg + last night + status)."""
     try:
         _get_client()
-        today = date.today().isoformat()
-        hrv = garth.DailyHRV.get(today)
-        if hrv and hasattr(hrv, 'weekly_avg') and hrv.weekly_avg:
+        hrv = _latest_hrv()
+        if hrv and getattr(hrv, "weekly_avg", None):
             result = {
                 "weekly_avg": hrv.weekly_avg,
-                "last_night": getattr(hrv, 'last_night', None),
-                "status": getattr(hrv, 'status', None),
+                "last_night": getattr(hrv, "last_night_avg", None),
+                "status": getattr(hrv, "status", None),
             }
             logger.info(f"Retrieved Garmin HRV: weekly_avg={result['weekly_avg']}ms")
             return result
@@ -284,15 +294,14 @@ async def get_hrv() -> dict:
 
 
 async def get_stress() -> dict:
-    """Get stress data from Garmin."""
+    """Get today's average stress level (0-100)."""
     try:
         _get_client()
-        today = date.today().isoformat()
-        stress = garth.DailyStress.get(today)
-        if stress and hasattr(stress, 'overall_stress_level') and stress.overall_stress_level:
-            result = {"average": stress.overall_stress_level}
-            logger.info(f"Retrieved Garmin stress: avg={result['average']}")
-            return result
+        stress = _latest_stress()
+        overall = getattr(stress, "overall_stress_level", None) if stress else None
+        if overall is not None and overall >= 0:
+            logger.info(f"Retrieved Garmin stress: avg={overall}")
+            return {"average": overall}
         return {"average": None}
     except Exception as e:
         logger.error(f"Garmin stress API error: {e}")

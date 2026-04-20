@@ -65,12 +65,17 @@ def linear_slope(points: list[tuple[int, float]]) -> float | None:
     return (n * sum_xy - sum_x * sum_y) / denom
 
 
-def compute_trend(readings: Iterable[dict]) -> TrendResult:
+def compute_trend(
+    readings: Iterable[dict],
+    programme_start: date | None = None,
+) -> TrendResult:
     """Compute the full trend summary from weight readings.
 
     Args:
         readings: Iterable of {"date": "YYYY-MM-DD", "value": float}
                   (oldest-first order is fine; we sort internally).
+        programme_start: if set, drop readings before this date so an old
+            pre-programme weight doesn't contaminate the new cut's trend.
 
     Returns:
         TrendResult with 7-day SMA, EMA, slope and stall flag.
@@ -83,6 +88,8 @@ def compute_trend(readings: Iterable[dict]) -> TrendResult:
         ),
         key=lambda r: r["date"],
     )
+    if programme_start is not None:
+        items = [r for r in items if r["date"] >= programme_start]
     n = len(items)
 
     if n == 0:
@@ -103,10 +110,12 @@ def compute_trend(readings: Iterable[dict]) -> TrendResult:
     else:
         slope_per_week = None
 
-    # Stall detection: 10+ days of data, slope worse than -0.1 kg/wk (i.e. not losing)
+    # Stall detection: need at least 3 readings spanning 10+ days with slope worse than -0.1 kg/wk.
+    # Without the >=3 floor a single outlier vs one other reading can fake a stall.
     window_days = (window_items[-1]["date"] - window_items[0]["date"]).days if len(window_items) >= 2 else 0
     stalled = bool(
         slope_per_week is not None
+        and len(window_items) >= 3
         and window_days >= 10
         and slope_per_week > -0.1
     )

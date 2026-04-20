@@ -545,6 +545,123 @@ async def fetch_steps_history(days: int = 7) -> list[dict]:
         ]
 
 
+async def _live_steps_today(steps_history: list[dict]) -> float:
+    """Today's step count — live from Garmin when reachable, otherwise
+    the most recent row in `garmin_daily_summary` (which is up to 1 day stale
+    because the sync job only runs once a morning)."""
+    today_iso = _today().isoformat()
+    try:
+        from domains.nutrition.services import get_steps
+        live = await get_steps()
+        if live and live.get("steps") is not None and live.get("date") == today_iso:
+            return float(live["steps"])
+    except Exception as e:
+        logger.warning(f"Live Garmin step fetch failed, falling back to DB: {e}")
+    # Fall back to whatever the sync job last wrote.
+    for row in reversed(steps_history):
+        if row.get("date") == today_iso:
+            return float(row["value"])
+    return float(steps_history[-1]["value"]) if steps_history else 0.0
+
+
+async def fetch_trends_series(days: int = 90) -> dict:
+    """Build the Trends-tab payload: weight + Garmin time-series over N days.
+
+    Returns:
+        {
+            "series": {
+                weight:      [{date, value}],
+                steps:       [{date, value}],
+                sleep_score: [{date, value}],
+                sleep_hours: [{date, value}],
+                resting_hr:  [{date, value}],
+                hrv:         [{date, value}],
+                stress:      [{date, value}],
+            },
+            "summary": {
+                "<metric>": {"current": float|None, "prior": float|None, "delta_pct": float|None}
+            }
+        }
+
+    Each series drops nulls so the UI can plot directly. `summary` averages the
+    most recent 14 days vs the prior 14 days for headline deltas.
+    """
+    cutoff = (_today() - timedelta(days=days)).isoformat()
+    # Weight
+    async with httpx.AsyncClient(timeout=10) as c:
+        w_resp = await c.get(
+            f"{SUPABASE_URL}/rest/v1/weight_readings",
+            headers=_read_headers(),
+            params={
+                "select": "measured_at,weight_kg",
+                "user_id": "eq.chris",
+                "measured_at": f"gte.{cutoff}T00:00:00Z",
+                "order": "measured_at.asc",
+            },
+        )
+        w_resp.raise_for_status()
+        weight_rows = w_resp.json()
+        # Garmin (single round-trip for all fields)
+        g_resp = await c.get(
+            f"{SUPABASE_URL}/rest/v1/garmin_daily_summary",
+            headers=_read_headers(),
+            params={
+                "select": "date,steps,sleep_score,sleep_hours,resting_hr,hrv_weekly_avg,hrv_last_night,avg_stress",
+                "user_id": "eq.chris",
+                "date": f"gte.{cutoff}",
+                "order": "date.asc",
+            },
+        )
+        g_resp.raise_for_status()
+        garmin_rows = g_resp.json()
+
+    def _pick(rows: list[dict], field_name: str, date_field: str = "date") -> list[dict]:
+        out: list[dict] = []
+        for r in rows:
+            v = r.get(field_name)
+            if v is None:
+                continue
+            day = str(r[date_field])[:10]
+            out.append({"date": day, "value": float(v)})
+        return out
+
+    weight_series = [
+        {"date": str(r["measured_at"])[:10], "value": float(r["weight_kg"])}
+        for r in weight_rows
+        if r.get("weight_kg") is not None
+    ]
+
+    series = {
+        "weight": weight_series,
+        "steps": _pick(garmin_rows, "steps"),
+        "sleep_score": _pick(garmin_rows, "sleep_score"),
+        "sleep_hours": _pick(garmin_rows, "sleep_hours"),
+        "resting_hr": _pick(garmin_rows, "resting_hr"),
+        "hrv": _pick(garmin_rows, "hrv_last_night"),
+        "stress": _pick(garmin_rows, "avg_stress"),
+    }
+
+    # Summary: last 14d avg vs prior 14d avg.
+    def _summarise(points: list[dict]) -> dict:
+        if not points:
+            return {"current": None, "prior": None, "delta_pct": None, "n": 0}
+        today_ord = _today().toordinal()
+        recent = [p["value"] for p in points if today_ord - date.fromisoformat(p["date"]).toordinal() < 14]
+        prior = [
+            p["value"] for p in points
+            if 14 <= today_ord - date.fromisoformat(p["date"]).toordinal() < 28
+        ]
+        r_avg = round(sum(recent) / len(recent), 2) if recent else None
+        p_avg = round(sum(prior) / len(prior), 2) if prior else None
+        delta_pct: float | None = None
+        if r_avg is not None and p_avg is not None and p_avg != 0:
+            delta_pct = round((r_avg - p_avg) / p_avg * 100, 1)
+        return {"current": r_avg, "prior": p_avg, "delta_pct": delta_pct, "n": len(points)}
+
+    summary = {name: _summarise(pts) for name, pts in series.items()}
+    return {"series": series, "summary": summary}
+
+
 async def fetch_nutrition_today() -> dict:
     """Sum today's nutrition logs into totals."""
     today = _today().isoformat()
@@ -592,11 +709,12 @@ async def compute_dashboard() -> dict:
     programme = await get_active_programme()
 
     weight_history = await fetch_weight_history(30)
-    trend = compute_trend(weight_history)
+    prog_start = date.fromisoformat(programme["start_date"]) if programme else None
+    trend = compute_trend(weight_history, programme_start=prog_start)
 
     nutrition = await fetch_nutrition_today()
     steps_history = await fetch_steps_history(7)
-    steps_today = steps_history[-1]["value"] if steps_history else 0
+    steps_today = await _live_steps_today(steps_history)
     steps_avg = (
         sum(p["value"] for p in steps_history) / len(steps_history)
         if steps_history else 0

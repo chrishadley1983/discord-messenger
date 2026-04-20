@@ -152,6 +152,22 @@ async def get_trend(days: int = Query(30, ge=1, le=365)):
     }
 
 
+@router.get("/trends")
+async def get_trends(days: int = Query(90, ge=7, le=365)):
+    """Time-series for the Trends tab: weight, steps, sleep, RHR, HRV, stress.
+
+    Each series is `[{date, value}]` ordered oldest -> newest with nulls dropped
+    so the UI can plot directly without filtering. `summary` returns current
+    vs prior-period deltas for headline KPI tiles.
+    """
+    series = await fit.fetch_trends_series(days)
+    return {
+        "days": days,
+        "series": series["series"],
+        "summary": series["summary"],
+    }
+
+
 @router.get("/exercises")
 async def list_exercises(category: Optional[str] = None):
     """Exercise library.

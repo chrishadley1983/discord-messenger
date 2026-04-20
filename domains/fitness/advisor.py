@@ -122,9 +122,10 @@ async def build_snapshot() -> Snapshot:
             snap.is_training_day = today_session.session_type not in ("rest", "mobility")
             snap.session_type = today_session.session_type
 
-    # Weight
+    # Weight — filter history to programme start so pre-cut data doesn't fake trends
     weight_history = await fit.fetch_weight_history(30)
-    trend = compute_trend(weight_history)
+    prog_start = date.fromisoformat(programme["start_date"])
+    trend = compute_trend(weight_history, programme_start=prog_start)
     snap.current_weight_kg = trend.trend_7d or trend.latest_raw
     snap.slope_kg_per_week = trend.slope_kg_per_week
     snap.weight_stalled = trend.stalled
@@ -139,7 +140,7 @@ async def build_snapshot() -> Snapshot:
 
     # Live targets
     steps_history = await fit.fetch_steps_history(7)
-    snap.steps_today = int(steps_history[-1]["value"]) if steps_history else 0
+    snap.steps_today = int(await fit._live_steps_today(steps_history))
     snap.steps_7d_avg = (
         sum(p["value"] for p in steps_history) / len(steps_history)
         if steps_history else 0
@@ -306,7 +307,7 @@ def _rpe_trend(s: Snapshot) -> float | None:
 
 def _rule_extreme_deficit(s: Snapshot) -> Advice | None:
     deficit = _deficit_actual(s)
-    if deficit <= 1000 or s.calories_eaten == 0:
+    if deficit <= 1000 or s.calories_eaten == 0 or s.hour_of_day < 19:
         return None
     return Advice(
         severity="warning",
@@ -319,7 +320,12 @@ def _rule_extreme_deficit(s: Snapshot) -> Advice | None:
 
 def _rule_aggressive_deficit_training(s: Snapshot) -> Advice | None:
     deficit = _deficit_actual(s)
-    if not s.is_training_day or deficit <= 700 or s.calories_eaten == 0:
+    if (
+        not s.is_training_day
+        or deficit <= 700
+        or s.calories_eaten == 0
+        or s.hour_of_day < 15
+    ):
         return None
     return Advice(
         severity="warning",
@@ -332,7 +338,12 @@ def _rule_aggressive_deficit_training(s: Snapshot) -> Advice | None:
 
 def _rule_aggressive_deficit_rest(s: Snapshot) -> Advice | None:
     deficit = _deficit_actual(s)
-    if s.is_training_day or deficit <= 700 or s.calories_eaten == 0:
+    if (
+        s.is_training_day
+        or deficit <= 700
+        or s.calories_eaten == 0
+        or s.hour_of_day < 19
+    ):
         return None
     sleep_ok = s.sleep_score is None or s.sleep_score >= 60
     if sleep_ok:
