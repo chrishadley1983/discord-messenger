@@ -1,21 +1,77 @@
 """Nutrition domain configuration."""
 
+import logging
+
 CHANNEL_ID = 1465294449038069912
 
+# Fallback targets used only when no fitness programme is active.
+# While a programme is running, calories/protein/steps are read from the
+# programme row in Supabase (see get_live_targets below). Carbs / fat /
+# water aren't tracked by the programme, so those always come from here.
 DAILY_TARGETS = {
     "calories": 2100,
     "protein_g": 120,
     "carbs_g": 263,
     "fat_g": 70,
     "water_ml": 3500,
-    "steps": 15000
+    "steps": 15000,
 }
 
+# Same story for the headline goal — this is the no-programme fallback.
 GOAL = {
     "target_weight_kg": 80,
     "deadline": "April 2026",
-    "reason": "Family trip to Japan"
+    "reason": "Family trip to Japan",
 }
+
+_logger = logging.getLogger(__name__)
+
+
+async def get_live_targets() -> dict:
+    """Return today's daily targets, preferring the active fitness programme.
+
+    The fitness programme owns calories / protein / steps — those recalibrate
+    as weight drops. Carbs / fat / water aren't tracked there, so they always
+    come from DAILY_TARGETS. Returns a fresh dict (safe to mutate).
+    """
+    targets = dict(DAILY_TARGETS)
+    try:
+        from domains.fitness import service as fit
+        programme = await fit.get_active_programme()
+    except Exception as e:
+        _logger.debug(f"get_live_targets: programme lookup failed, using defaults: {e}")
+        return targets
+    if not programme:
+        return targets
+    if programme.get("daily_calorie_target"):
+        targets["calories"] = int(programme["daily_calorie_target"])
+    if programme.get("daily_protein_g"):
+        targets["protein_g"] = int(programme["daily_protein_g"])
+    if programme.get("daily_steps_target"):
+        targets["steps"] = int(programme["daily_steps_target"])
+    return targets
+
+
+async def get_live_goal() -> dict:
+    """Headline weight goal, programme-aware.
+
+    While a programme is running, target = programme.target_weight_kg,
+    deadline = programme.end_date. Otherwise returns the static GOAL.
+    """
+    try:
+        from domains.fitness import service as fit
+        programme = await fit.get_active_programme()
+    except Exception as e:
+        _logger.debug(f"get_live_goal: programme lookup failed, using defaults: {e}")
+        return dict(GOAL)
+    if not programme:
+        return dict(GOAL)
+    return {
+        "target_weight_kg": float(programme.get("target_weight_kg") or GOAL["target_weight_kg"]),
+        "deadline": programme.get("end_date") or GOAL["deadline"],
+        "reason": programme.get("name") or GOAL["reason"],
+        "programme_id": programme.get("id"),
+    }
 
 SYSTEM_PROMPT = """You are Pete - Chris's nutrition and fitness coach. You're a tough but cheeky PT who doesn't let Chris slack off but keeps things fun.
 
@@ -28,16 +84,19 @@ SYSTEM_PROMPT = """You are Pete - Chris's nutrition and fitness coach. You're a 
 - Think: supportive mate who also happens to be a PT
 
 ## The Goal
-Chris is hitting 80kg by April 2026 for a family trip to Japan 🇯🇵
-This isn't just numbers - it's about being fit and confident for an important family experience.
+Chris runs a structured fitness programme — target weight, calorie deficit, and
+training plan live in the fitness system, not in this prompt. Always call
+`get_goals` to fetch the current target weight, deadline and daily calorie /
+protein targets before referencing them. Never guess.
 
-## Daily Targets (use get_goals tool to check current values)
-- Calories: 2,100 (slight deficit)
-- Protein: 120g (PRIORITY - muscle retention while cutting)
-- Carbs: 263g
-- Fat: 70g
-- Water: 3,500ml 💧
-- Steps: 15,000 👟
+## Daily Targets — ALWAYS FETCH VIA TOOLS
+
+Daily calorie, protein and step targets are **programme-driven** and recalibrate
+as weight drops. Call `get_goals` for the live numbers. Water (3,500ml) is the
+one exception — that's a fixed baseline. Step target defaults to 15k but the
+programme can override it.
+
+Never hardcode a calorie or protein number in your reply. Read it fresh each time.
 
 ## CRITICAL: Response Format After Logging
 

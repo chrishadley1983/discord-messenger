@@ -23,12 +23,13 @@ async def get_nutrition_data() -> dict[str, Any]:
         Dict with today's nutrition totals, targets, and steps
     """
     from domains.nutrition.services import get_today_totals, get_steps
-    from domains.nutrition.config import DAILY_TARGETS
+    from domains.nutrition.config import get_live_targets
 
     try:
-        totals, steps_data = await asyncio.gather(
+        totals, steps_data, targets = await asyncio.gather(
             get_today_totals(),
             get_steps(),
+            get_live_targets(),
             return_exceptions=True
         )
 
@@ -39,11 +40,15 @@ async def get_nutrition_data() -> dict[str, Any]:
         if isinstance(steps_data, Exception):
             logger.warning(f"Failed to get steps: {steps_data}")
             steps_data = {}
+        if isinstance(targets, Exception):
+            logger.warning(f"Failed to resolve live targets, using defaults: {targets}")
+            from domains.nutrition.config import DAILY_TARGETS
+            targets = dict(DAILY_TARGETS)
 
         return {
             "nutrition": totals,
             "steps": steps_data.get("steps", 0) if steps_data else 0,
-            "targets": DAILY_TARGETS,
+            "targets": targets,
             "date": datetime.now(UK_TZ).strftime("%Y-%m-%d")
         }
 
@@ -59,12 +64,13 @@ async def get_hydration_data() -> dict[str, Any]:
         Dict with water intake, steps, targets, and time info
     """
     from domains.nutrition.services import get_today_totals, get_steps
-    from domains.nutrition.config import DAILY_TARGETS
+    from domains.nutrition.config import get_live_targets
 
     try:
-        totals, steps_data = await asyncio.gather(
+        totals, steps_data, targets = await asyncio.gather(
             get_today_totals(),
             get_steps(),
+            get_live_targets(),
             return_exceptions=True
         )
 
@@ -75,12 +81,16 @@ async def get_hydration_data() -> dict[str, Any]:
         if isinstance(steps_data, Exception):
             logger.warning(f"Failed to get steps: {steps_data}")
             steps_data = {}
+        if isinstance(targets, Exception):
+            logger.warning(f"Failed to resolve live targets, using defaults: {targets}")
+            from domains.nutrition.config import DAILY_TARGETS
+            targets = dict(DAILY_TARGETS)
 
         now = datetime.now(UK_TZ)
         water_ml = totals.get("water_ml", 0)
-        water_target = DAILY_TARGETS["water_ml"]
+        water_target = targets["water_ml"]
         steps = steps_data.get("steps", 0) if steps_data else 0
-        steps_target = DAILY_TARGETS["steps"]
+        steps_target = targets["steps"]
 
         return {
             "water_ml": water_ml,
@@ -109,7 +119,7 @@ async def get_health_digest_data() -> dict[str, Any]:
         get_sleep, get_steps, get_heart_rate, get_weight,
         get_nutrition_totals, get_hrv, get_stress,
     )
-    from domains.nutrition.config import DAILY_TARGETS, GOAL
+    from domains.nutrition.config import DAILY_TARGETS, GOAL, get_live_targets, get_live_goal
 
     # Calculate yesterday's date for steps and nutrition
     yesterday = (datetime.now(UK_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -131,6 +141,18 @@ async def get_health_digest_data() -> dict[str, Any]:
 
         sleep_data, steps_data, hr_data, weight_data, nutrition_data, hrv_data, stress_data = results
 
+        # Resolve live programme-aware targets + goal (with fallback to statics)
+        try:
+            targets = await get_live_targets()
+        except Exception as e:
+            logger.warning(f"Live targets failed, using defaults: {e}")
+            targets = dict(DAILY_TARGETS)
+        try:
+            goal = await get_live_goal()
+        except Exception as e:
+            logger.warning(f"Live goal failed, using defaults: {e}")
+            goal = dict(GOAL)
+
         # Handle exceptions
         data = {
             "sleep": sleep_data if not isinstance(sleep_data, Exception) else None,
@@ -140,8 +162,8 @@ async def get_health_digest_data() -> dict[str, Any]:
             "nutrition": nutrition_data if not isinstance(nutrition_data, Exception) else None,
             "hrv": hrv_data if not isinstance(hrv_data, Exception) else None,
             "stress": stress_data if not isinstance(stress_data, Exception) else None,
-            "targets": DAILY_TARGETS,
-            "goal": GOAL,
+            "targets": targets,
+            "goal": goal,
             "date": datetime.now(UK_TZ).strftime("%Y-%m-%d"),
             "yesterday": yesterday
         }
@@ -255,7 +277,7 @@ async def get_weekly_health_data() -> dict[str, Any]:
         _get_heart_rate_week,
         _get_goals
     )
-    from domains.nutrition.config import DAILY_TARGETS
+    from domains.nutrition.config import DAILY_TARGETS, get_live_targets
 
     try:
         # Parallel fetch all data using legacy functions
@@ -291,6 +313,12 @@ async def get_weekly_health_data() -> dict[str, Any]:
             logger.warning(f"Failed to get goals: {goals}")
             goals = {}
 
+        try:
+            targets = await get_live_targets()
+        except Exception as e:
+            logger.warning(f"Live targets failed, using defaults: {e}")
+            targets = dict(DAILY_TARGETS)
+
         return {
             "weight": weight,
             "nutrition": nutrition,
@@ -298,7 +326,7 @@ async def get_weekly_health_data() -> dict[str, Any]:
             "sleep": sleep,
             "heart_rate": hr,
             "goals": goals,
-            "targets": DAILY_TARGETS,
+            "targets": targets,
             "week_ending": datetime.now(UK_TZ).strftime("%Y-%m-%d")
         }
 
@@ -323,7 +351,7 @@ async def get_monthly_health_data() -> dict[str, Any]:
         _get_goals,
         _get_previous_month
     )
-    from domains.nutrition.config import DAILY_TARGETS
+    from domains.nutrition.config import DAILY_TARGETS, get_live_targets
 
     try:
         # Parallel fetch all data using legacy functions
@@ -359,6 +387,12 @@ async def get_monthly_health_data() -> dict[str, Any]:
             logger.warning(f"Failed to get previous month: {prev_month}")
             prev_month = {}
 
+        try:
+            targets = await get_live_targets()
+        except Exception as e:
+            logger.warning(f"Live targets failed, using defaults: {e}")
+            targets = dict(DAILY_TARGETS)
+
         return {
             "weight": weight,
             "nutrition": nutrition,
@@ -366,7 +400,7 @@ async def get_monthly_health_data() -> dict[str, Any]:
             "sleep": sleep,
             "goals": goals,
             "previous_month": prev_month,
-            "targets": DAILY_TARGETS,
+            "targets": targets,
             "month_ending": datetime.now(UK_TZ).strftime("%Y-%m-%d")
         }
 

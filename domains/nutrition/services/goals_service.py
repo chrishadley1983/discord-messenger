@@ -24,7 +24,13 @@ def _get_rest_url():
 
 
 async def get_goals() -> dict:
-    """Get current user goals."""
+    """Get current user goals.
+
+    Programme-aware: when an active fitness_programmes row exists, its
+    target weight, deadline, calorie target, protein target and step target
+    override the static user_goals row. Carbs / fat / water always come
+    from user_goals (the programme doesn't track them).
+    """
     try:
         if not SUPABASE_URL or not SUPABASE_KEY:
             raise ValueError("Supabase credentials not configured")
@@ -42,28 +48,64 @@ async def get_goals() -> dict:
             response.raise_for_status()
             data = response.json()
 
-        if data:
-            goals = data[0]
-            # Calculate days remaining
-            deadline = datetime.strptime(goals["deadline"], "%Y-%m-%d").date()
-            days_remaining = (deadline - datetime.now().date()).days
-
-            return {
-                "target_weight_kg": float(goals["target_weight_kg"]),
-                "deadline": goals["deadline"],
-                "goal_reason": goals["goal_reason"],
-                "days_remaining": days_remaining,
-                "daily_targets": {
-                    "calories": goals["calories_target"],
-                    "protein_g": goals["protein_target_g"],
-                    "carbs_g": goals["carbs_target_g"],
-                    "fat_g": goals["fat_target_g"],
-                    "water_ml": goals["water_target_ml"],
-                    "steps": goals["steps_target"]
-                }
-            }
-        else:
+        if not data:
             return {"error": "No goals found"}
+
+        goals = data[0]
+
+        # Overlay the active fitness programme if there is one — that's
+        # the live source of truth for calories / protein / steps / weight target.
+        programme = None
+        try:
+            from domains.fitness import service as fit
+            programme = await fit.get_active_programme()
+        except Exception as e:
+            logger.debug(f"programme lookup in get_goals failed: {e}")
+
+        target_weight = float(goals["target_weight_kg"])
+        deadline = goals["deadline"]
+        goal_reason = goals["goal_reason"]
+        calories = goals["calories_target"]
+        protein = goals["protein_target_g"]
+        steps = goals["steps_target"]
+
+        if programme:
+            if programme.get("target_weight_kg"):
+                target_weight = float(programme["target_weight_kg"])
+            if programme.get("end_date"):
+                deadline = programme["end_date"]
+            if programme.get("name"):
+                goal_reason = programme["name"]
+            if programme.get("daily_calorie_target"):
+                calories = int(programme["daily_calorie_target"])
+            if programme.get("daily_protein_g"):
+                protein = int(programme["daily_protein_g"])
+            if programme.get("daily_steps_target"):
+                steps = int(programme["daily_steps_target"])
+
+        deadline_date = datetime.strptime(deadline, "%Y-%m-%d").date()
+        days_remaining = (deadline_date - datetime.now().date()).days
+
+        result = {
+            "target_weight_kg": target_weight,
+            "deadline": deadline,
+            "goal_reason": goal_reason,
+            "days_remaining": days_remaining,
+            "daily_targets": {
+                "calories": calories,
+                "protein_g": protein,
+                "carbs_g": goals["carbs_target_g"],
+                "fat_g": goals["fat_target_g"],
+                "water_ml": goals["water_target_ml"],
+                "steps": steps,
+            },
+        }
+        if programme:
+            result["source"] = "fitness_programme"
+            result["programme_id"] = programme.get("id")
+        else:
+            result["source"] = "user_goals"
+        return result
 
     except Exception as e:
         logger.error(f"Failed to get goals: {e}")
