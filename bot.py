@@ -118,6 +118,10 @@ def _launch_channel_sessions():
         ("peter-channel", f"{BASE}/peter-channel/launch.sh"),
         ("whatsapp-channel", f"{BASE}/whatsapp-channel/launch.sh"),
         ("jobs-channel", f"{BASE}/jobs-channel/launch.sh"),
+        # Added 2026-05 to move Sonnet/Haiku-tagged skills off claude -p
+        # See docs/MIGRATE_OFF_CLAUDE_P.md
+        ("jobs-channel-sonnet", f"{BASE}/jobs-channel-sonnet/launch.sh"),
+        ("extract-channel", f"{BASE}/extract-channel/launch.sh"),
     ]
 
     for name, script in sessions:
@@ -310,6 +314,24 @@ async def on_ready():
         replace_existing=True,
     )
     logger.info("Channel watchdog registered (every 1 min)")
+
+    # Channel cost tail — read Claude Code transcripts for the 3 channel
+    # sessions and emit per-turn USD into data/channel_costs.jsonl.
+    # Runs every 5 min, resumes from saved offsets. See domains/peterbot/channel_cost_tail.py.
+    from domains.peterbot.channel_cost_tail import tail_all as _tail_channel_costs
+
+    async def _channel_cost_tail_job():
+        return await asyncio.to_thread(_tail_channel_costs)
+
+    _channel_cost_tail_job = _tracked_job("channel_cost_tail", _channel_cost_tail_job)
+    scheduler.add_job(
+        _channel_cost_tail_job,
+        "interval", minutes=5,
+        id="channel_cost_tail",
+        max_instances=1,
+        replace_existing=True,
+    )
+    logger.info("Channel cost tail registered (every 5 min)")
 
     # Legacy jobs — wrap with execution tracking before registration
     # This records start/complete in job_history.db and alerts #alerts on failure

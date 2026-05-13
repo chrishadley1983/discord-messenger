@@ -1,4 +1,33 @@
 {
+  "accountability-monthly": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Monthly deep-dive accountability report with trend analysis",
+    "channel": "#food-log+WhatsApp:chris"
+  },
+  "accountability-update": {
+    "triggers": [
+      "update my goal",
+      "update goal",
+      "goal status",
+      "goal progress",
+      "how are my goals",
+      "accountability",
+      "log progress"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Log progress or check status on accountability goals via conversation",
+    "channel": null
+  },
+  "accountability-weekly": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Weekly accountability report across all active goals",
+    "channel": "WhatsApp:chris"
+  },
   "amazon-purchases": {
     "triggers": [
       "what have I bought on amazon",
@@ -67,6 +96,13 @@
     "description": "Interact with Chrome browser via CDP \u2014 navigate pages, take screenshots, click elements, extract text, fill forms. Use when asked to check a website, scrape data, or automate browser tasks.",
     "channel": null
   },
+  "commitment-nudge": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Daily nudge for unfulfilled promises Chris made in WhatsApp and email",
+    "channel": "WhatsApp:chris"
+  },
   "cooking-reminder": {
     "triggers": [
       "cooking reminders",
@@ -79,6 +115,18 @@
     "scheduled": true,
     "description": "Proactive cooking prep reminders for marinating, defrosting, and advance prep",
     "channel": "#food-log"
+  },
+  "cost-digest": {
+    "triggers": [
+      "cost digest",
+      "claude costs",
+      "how much did peter cost",
+      "peter cost today"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily roll-up of Claude usage across router_v2 and channel sessions",
+    "channel": null
   },
   "cricket-scores": {
     "triggers": [
@@ -119,6 +167,57 @@
     "scheduled": true,
     "description": "Sends end-of-day email digest of captured thoughts throughout the day",
     "channel": null
+  },
+  "fitness-advisor": {
+    "triggers": [
+      "fitness check",
+      "how am i doing fitness",
+      "advisor check"
+    ],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Proactive fitness advisor \u2014 checks nutrition, recovery, and training signals and alerts if anything needs attention",
+    "channel": null
+  },
+  "fitness-dashboard": {
+    "triggers": [
+      "fitness dashboard",
+      "fitness today",
+      "today's workout",
+      "am i on track",
+      "cut status",
+      "fat loss update"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily morning check-in for the post-Japan fat-loss programme. Shows trend weight, today's prescribed workout, calorie budget, and adherence flags.",
+    "channel": "#food-log"
+  },
+  "fitness-program-start": {
+    "triggers": [
+      "start fitness programme",
+      "start the cut",
+      "kick off fitness programme",
+      "begin fat loss",
+      "start fat loss programme"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "One-shot init of the 13-week fat-loss programme (TDEE, goals, workout plan)",
+    "channel": null
+  },
+  "flight-prices": {
+    "triggers": [
+      "flight prices",
+      "flight deals",
+      "cheap flights",
+      "tokyo flights",
+      "flights to japan"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily flight price monitoring for nonstop UK-Tokyo flights with deal alerts",
+    "channel": "#alerts"
   },
   "football-scores": {
     "triggers": [
@@ -482,88 +581,6 @@
     "description": "Morning health digest with sleep, weight, steps, HR and comparison to yesterday",
     "channel": null
   },
-  "fitness-dashboard": {
-    "triggers": [
-      "fitness dashboard",
-      "fitness today",
-      "today's workout",
-      "am i on track",
-      "cut status",
-      "fat loss update"
-    ],
-    "conversational": true,
-    "scheduled": true,
-    "description": "Daily post-Japan cut check-in: trend weight, workout, calories, adherence flags",
-    "channel": "#food-log"
-  },
-  "log-workout": {
-    "triggers": [
-      "done push workout",
-      "done legs workout",
-      "finished workout",
-      "logged workout",
-      "completed push",
-      "completed legs",
-      "finished pull",
-      "finished full body"
-    ],
-    "conversational": true,
-    "scheduled": false,
-    "description": "Log a completed bodyweight workout session from conversational input",
-    "channel": null
-  },
-  "log-mobility": {
-    "triggers": [
-      "done morning stretch",
-      "done evening stretch",
-      "done mobility",
-      "finished stretching",
-      "stretched",
-      "mobility done"
-    ],
-    "conversational": true,
-    "scheduled": false,
-    "description": "Log morning or evening mobility routine (10-min default)",
-    "channel": null
-  },
-  "weekly-cut-review": {
-    "triggers": [
-      "weekly cut review",
-      "cut review",
-      "weekly fitness review",
-      "how's my cut going"
-    ],
-    "conversational": true,
-    "scheduled": true,
-    "description": "Sunday programme-aware review: adherence, trend, next week's adjustment",
-    "channel": "#food-log"
-  },
-  "fitness-program-start": {
-    "triggers": [
-      "start fitness programme",
-      "start the cut",
-      "kick off fitness programme",
-      "begin fat loss",
-      "start fat loss programme"
-    ],
-    "conversational": true,
-    "scheduled": false,
-    "description": "One-shot init: TDEE, 13-week programme, accountability goals",
-    "channel": null
-  },
-  "fitness-advisor": {
-    "triggers": [
-      "fitness check",
-      "how am i doing fitness",
-      "advisor check",
-      "am i on track",
-      "fitness advice"
-    ],
-    "conversational": true,
-    "scheduled": true,
-    "description": "Proactive PT-quality advice — cross-references nutrition, recovery, training load",
-    "channel": "#food-log"
-  },
   "healthera-prescriptions": {
     "triggers": [
       "prescription",
@@ -619,6 +636,19 @@
     "description": "Process images and write captions for approved Instagram concepts",
     "channel": null
   },
+  "journal-log": {
+    "triggers": [
+      "journal:",
+      "journal entry",
+      "diary:",
+      "today I",
+      "thoughts for today"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Save a daily journal entry (thoughts for the day)",
+    "channel": null
+  },
   "kids-daily": {
     "triggers": [
       "kids today",
@@ -656,6 +686,99 @@
     "conversational": true,
     "scheduled": true,
     "description": "Weekly Second Brain knowledge digest",
+    "channel": null
+  },
+  "life-admin": {
+    "triggers": [
+      "life admin",
+      "upcoming deadlines",
+      "what's due",
+      "when does my MOT expire",
+      "when does my passport expire",
+      "insurance renewal",
+      "what needs renewing",
+      "obligations",
+      "mark as done",
+      "snooze",
+      "add obligation"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Query, manage, and update life admin obligations conversationally",
+    "channel": "#peterbot"
+  },
+  "life-admin-compare": {
+    "triggers": [
+      "compare insurance",
+      "compare my car insurance",
+      "find cheaper",
+      "compare quotes",
+      "cheapest MOT",
+      "insurance comparison",
+      "find a better deal",
+      "shop around"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Compare prices for insurance, MOT, and other renewable obligations using web search",
+    "channel": "#peterbot"
+  },
+  "life-admin-dashboard": {
+    "triggers": [
+      "life admin dashboard",
+      "life admin overview",
+      "admin status"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Weekly life admin digest with traffic-light dashboard \u2014 published to surge.sh",
+    "channel": "#peterbot"
+  },
+  "life-admin-email-scan": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Overnight Gmail scan for new life admin obligations - detects renewals, policy docs, bills",
+    "channel": "#peter-heartbeat!quiet"
+  },
+  "life-admin-scan": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Daily life admin obligation scanner - fires tiered alerts for upcoming deadlines",
+    "channel": "#alerts+WhatsApp:chris"
+  },
+  "log-mobility": {
+    "triggers": [
+      "done morning stretch",
+      "done evening stretch",
+      "done mobility",
+      "finished stretching",
+      "stretched",
+      "mobility done"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Log a morning or evening mobility routine (10-min stretch protocol)",
+    "channel": null
+  },
+  "log-workout": {
+    "triggers": [
+      "done push workout",
+      "done legs workout",
+      "finished workout",
+      "logged workout",
+      "just did my push session",
+      "completed push",
+      "completed legs",
+      "finished legs a",
+      "finished legs b",
+      "finished pull",
+      "finished full body"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Log a completed bodyweight workout session from natural language",
     "channel": null
   },
   "meal-plan": {
@@ -734,6 +857,18 @@
     "description": "Monthly health summary with long-term trends",
     "channel": null
   },
+  "mood-log": {
+    "triggers": [
+      "mood",
+      "feeling",
+      "how I feel",
+      "mood score"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Log daily mood score (1-10) with optional note",
+    "channel": null
+  },
   "morning-briefing": {
     "triggers": [
       "ai news",
@@ -787,6 +922,13 @@
     "conversational": true,
     "scheduled": true,
     "description": "Daily nutrition wrap-up at 9pm",
+    "channel": null
+  },
+  "orphan-embed": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Embed orphaned Second Brain items that have no chunks",
     "channel": null
   },
   "osaka-mint-check": {
@@ -1066,6 +1208,18 @@
     "scheduled": true,
     "description": "Daily operations report covering all scheduled jobs across Discord-Messenger and Hadley Bricks",
     "channel": "#alerts"
+  },
+  "weekly-cut-review": {
+    "triggers": [
+      "weekly cut review",
+      "cut review",
+      "weekly fitness review",
+      "how's my cut going"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Sunday review of the fat-loss programme \u2014 adherence, trend, next week's adjustment",
+    "channel": "#food-log"
   },
   "weekly-health": {
     "triggers": [

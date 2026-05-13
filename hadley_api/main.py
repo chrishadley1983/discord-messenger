@@ -53,6 +53,8 @@ from hadley_api.accountability_routes import router as accountability_router
 app.include_router(accountability_router)
 from hadley_api.fitness_routes import router as fitness_router
 app.include_router(fitness_router)
+from hadley_api.cost_routes import router as cost_router
+app.include_router(cost_router)
 try:
     from hadley_api.finance_routes import router as finance_router
     app.include_router(finance_router)
@@ -4304,7 +4306,7 @@ async def calendar_conflicts(
 
 @app.get("/drive/download")
 async def drive_download(file_id: str = Query(..., description="File ID")):
-    """Get download link for a file."""
+    """Get download link + metadata for a file. For raw bytes use /drive/file."""
     from .google_auth import get_drive_service
 
     try:
@@ -4325,6 +4327,50 @@ async def drive_download(file_id: str = Query(..., description="File ID")):
             "view_link": file.get('webViewLink', ''),
             "fetched_at": datetime.now(UK_TZ).isoformat()
         }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/drive/file")
+async def drive_file(file_id: str = Query(..., description="File ID")):
+    """Stream raw file bytes for a Drive file. Use this to actually fetch an image/PDF."""
+    from .google_auth import get_drive_service
+    from googleapiclient.http import MediaIoBaseDownload
+    import io
+
+    try:
+        service = get_drive_service()
+        if not service:
+            raise HTTPException(status_code=503, detail="Drive not configured")
+
+        meta = service.files().get(fileId=file_id, fields='name,mimeType,size').execute()
+        mime_type = meta.get('mimeType', 'application/octet-stream')
+        name = meta.get('name', file_id)
+
+        if mime_type.startswith('application/vnd.google-apps'):
+            raise HTTPException(
+                status_code=415,
+                detail=f"'{name}' is a native Google type ({mime_type}); use /drive/export instead of /drive/file"
+            )
+
+        buf = io.BytesIO()
+        request = service.files().get_media(fileId=file_id)
+        downloader = MediaIoBaseDownload(buf, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buf.seek(0)
+        data = buf.read()
+
+        safe_name = name.replace('"', '').replace('\n', '').replace('\r', '')
+        return Response(
+            content=data,
+            media_type=mime_type,
+            headers={"Content-Disposition": f'inline; filename="{safe_name}"'}
+        )
 
     except HTTPException:
         raise

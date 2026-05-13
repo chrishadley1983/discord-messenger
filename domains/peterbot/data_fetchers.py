@@ -793,14 +793,18 @@ async def get_whatsapp_health_data() -> dict[str, Any]:
     """Check Evolution API WhatsApp connection health.
 
     Replaces Twilio keepalive — Evolution API maintains its own session,
-    so this just checks the connection is alive.
+    so this just checks the connection is alive. When connected, returns
+    __skip__ so the scheduler never invokes Claude (nothing to say).
+    Claude is only called on failure so it can format an alert.
     """
     try:
         from integrations.whatsapp import check_connection
 
         result = await check_connection()
         state = result.get("instance", {}).get("state", "unknown")
-        return {"connected": state == "open", "state": state}
+        if state == "open":
+            return {"__skip__": True, "reason": "WhatsApp connected (state=open)"}
+        return {"connected": False, "state": state}
 
     except Exception as e:
         logger.error(f"WhatsApp health check error: {e}")
@@ -2816,6 +2820,30 @@ async def get_heartbeat_data() -> dict[str, Any]:
         logger.warning(f"Heartbeat: DOWN channels: {', '.join(down_channels)}")
 
     logger.info(f"Heartbeat: {len(tasks)} ptask(s) ready for processing")
+
+    # Green-path gate: skip Claude entirely when everything's healthy and there's
+    # nothing to do. Reserves one slot (08:01 UK) as a guaranteed proof-of-life
+    # post so the channel doesn't go silent for an entire day when all's well.
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    now_uk = datetime.now(ZoneInfo("Europe/London"))
+    is_daily_summary_slot = now_uk.hour == 8  # 08:01 UK heartbeat always runs
+
+    all_green = (
+        len(tasks) == 0
+        and not job_health["recent_failures"]
+        and job_health["error"] is None
+        and not down_channels
+    )
+
+    if all_green and not is_daily_summary_slot:
+        logger.info("Heartbeat: all green, skipping Claude invocation")
+        return {
+            "__skip__": True,
+            "reason": "all green — no ptasks, no failures, all channels up",
+        }
+
     return {"ptasks": tasks, "count": len(tasks), "job_health": job_health, "channel_health": channel_health}
 
 
@@ -2857,20 +2885,31 @@ async def get_instagram_prep_data() -> dict[str, Any]:
     if not unsplash_key and not pixabay_key:
         return {"error": "No API keys configured", "images": []}
 
-    # Content pillars for variety
+    # Content pillars for variety — queries must include "lego" as a
+    # core term so stock-photo APIs don't drift to unrelated results.
+    # Keep queries short and noun-heavy; Pixabay matches tags, not prose.
     PILLARS = [
-        {"pillar": "LEGO Nostalgia", "queries": ["vintage LEGO classic bricks colorful", "retro LEGO minifigures collection"]},
-        {"pillar": "Product Showcase", "queries": ["LEGO Star Wars set display", "LEGO Technic detailed build"]},
-        {"pillar": "Behind the Scenes", "queries": ["LEGO sorting bricks organizing", "LEGO collection shelf display"]},
-        {"pillar": "Community / Culture", "queries": ["LEGO fan creation MOC", "LEGO convention display"]},
-        {"pillar": "Educational", "queries": ["LEGO architecture detailed", "LEGO engineering mechanism"]},
-        {"pillar": "Lifestyle", "queries": ["LEGO decoration room shelf", "LEGO desk setup creative"]},
-        {"pillar": "Collection Highlight", "queries": ["LEGO impressive collection display", "LEGO minifigure collection rare"]},
+        {"pillar": "LEGO Nostalgia", "queries": ["lego classic bricks", "lego vintage toy"]},
+        {"pillar": "Product Showcase", "queries": ["lego star wars", "lego technic model"]},
+        {"pillar": "Behind the Scenes", "queries": ["lego bricks sorting", "lego collection shelf"]},
+        {"pillar": "Community / Culture", "queries": ["lego city build", "lego minifigures"]},
+        {"pillar": "Educational", "queries": ["lego architecture building", "lego blocks construction"]},
+        {"pillar": "Lifestyle", "queries": ["lego toy display", "lego creative play"]},
+        {"pillar": "Collection Highlight", "queries": ["lego minifigure collection", "lego set display"]},
     ]
 
     import random
     random.shuffle(PILLARS)
     selected_pillars = PILLARS[:3]
+
+    # Relevance keywords — at least one must appear in tags/description
+    # to avoid off-topic stock photos (tea plantations, gourds, etc.)
+    LEGO_KEYWORDS = {"lego", "brick", "bricks", "minifigure", "minifigures", "toy block", "building blocks"}
+
+    def _is_lego_relevant(text: str) -> bool:
+        """Check if image tags/description mention LEGO-related terms."""
+        lower = text.lower()
+        return any(kw in lower for kw in LEGO_KEYWORDS)
 
     async def search_unsplash(client: httpx.AsyncClient, query: str) -> list[dict]:
         if not unsplash_key:
@@ -2879,22 +2918,26 @@ async def get_instagram_prep_data() -> dict[str, Any]:
             resp = await client.get(
                 "https://api.unsplash.com/search/photos",
                 headers={"Authorization": f"Client-ID {unsplash_key}"},
-                params={"query": query, "per_page": 6},
+                params={"query": query, "per_page": 10},
                 timeout=10,
             )
             resp.raise_for_status()
-            return [
-                {
+            results = []
+            for p in resp.json().get("results", []):
+                desc = p.get("alt_description", "") or ""
+                tags_text = " ".join(t.get("title", "") for t in p.get("tags", []))
+                if not _is_lego_relevant(f"{desc} {tags_text} {query}"):
+                    continue
+                results.append({
                     "source": "Unsplash",
                     "photographer": p["user"]["name"],
-                    "desc": p.get("alt_description", "")[:100],
+                    "desc": desc[:100],
                     "w": p["width"], "h": p["height"],
                     "url": p["urls"]["regular"],
                     "trigger": p["links"]["download_location"],
                     "page": p["links"]["html"],
-                }
-                for p in resp.json().get("results", [])
-            ]
+                })
+            return results
         except Exception as e:
             logger.warning(f"Unsplash search failed for '{query}': {e}")
             return []
@@ -2905,23 +2948,26 @@ async def get_instagram_prep_data() -> dict[str, Any]:
         try:
             resp = await client.get(
                 "https://pixabay.com/api/",
-                params={"key": pixabay_key, "q": query, "per_page": 6,
+                params={"key": pixabay_key, "q": query, "per_page": 10,
                         "image_type": "photo", "safesearch": "true"},
                 timeout=10,
             )
             resp.raise_for_status()
-            return [
-                {
+            results = []
+            for p in resp.json().get("hits", []):
+                tags = p.get("tags", "")
+                if not _is_lego_relevant(tags):
+                    continue
+                results.append({
                     "source": "Pixabay",
                     "photographer": p.get("user", "Unknown"),
-                    "desc": p.get("tags", "")[:100],
+                    "desc": tags[:100],
                     "w": p["imageWidth"], "h": p["imageHeight"],
                     "url": p["largeImageURL"],
                     "trigger": None,
                     "page": p["pageURL"],
-                }
-                for p in resp.json().get("hits", [])
-            ]
+                })
+            return results
         except Exception as e:
             logger.warning(f"Pixabay search failed for '{query}': {e}")
             return []
@@ -4225,6 +4271,46 @@ async def get_fitness_advisor_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
+async def get_cost_digest_data() -> dict[str, Any]:
+    """Pre-fetch 24h + 7d Claude cost rollup for cost-digest skill.
+
+    Reads cli_costs.jsonl (router_v2) + channel_costs.jsonl (channel sessions)
+    via the /costs/summary endpoint. Adds run-rate projections vs the Jun 15
+    programmatic credit tiers.
+    """
+    try:
+        from hadley_api.cost_routes import costs_summary
+        day, week = await asyncio.gather(
+            costs_summary(hours=24),
+            costs_summary(hours=24 * 7),
+        )
+
+        # Projections: assume the daily run-rate continues for 30 days.
+        day_usd = day["total_usd"]
+        day_router_v2_usd = day["router_v2"]["cost_usd"]
+        day_channels_usd = day["channels"]["cost_usd"]
+
+        monthly_programmatic_only = day_router_v2_usd * 30
+        monthly_if_channels_reclassified = day_usd * 30
+
+        credit_estimate = {
+            "max_5x_credit_usd": 100.0,
+            "max_20x_credit_usd": 200.0,
+            "monthly_run_rate_usd_programmatic_only": round(monthly_programmatic_only, 2),
+            "monthly_run_rate_usd_if_channels_reclassified": round(monthly_if_channels_reclassified, 2),
+        }
+
+        return {
+            "day": day,
+            "week": week,
+            "credit_estimate": credit_estimate,
+            "timestamp": datetime.now(UK_TZ).strftime("%Y-%m-%d %H:%M"),
+        }
+    except Exception as e:
+        logger.error(f"Cost digest data fetch error: {e}")
+        return {"error": str(e)}
+
+
 # Map skill names to their data fetchers
 # Skills not in this dict use web search (news, etc.)
 SKILL_DATA_FETCHERS = {
@@ -4327,4 +4413,6 @@ SKILL_DATA_FETCHERS = {
     "accountability-monthly": get_accountability_monthly_data,
     # Fitness advisor
     "fitness-advisor": get_fitness_advisor_data,
+    # Cost digest — Claude usage rollup (router_v2 + channels)
+    "cost-digest": get_cost_digest_data,
 }

@@ -9,7 +9,6 @@ Run `!reload-schedule` after editing to apply changes.
 
 | Job | Skill | Schedule | Channel | Enabled |
 |-----|-------|----------|---------|---------|
-| Parser Improvement | parser-improve | 02:00 UK | #peter-heartbeat!quiet | yes |
 | Orphan Embed | orphan-embed | 03:00 UK | #alerts | yes |
 | Morning Laughs | morning-laughs | 06:30 UK | #peterbot | yes |
 | Morning Quality Report | morning-quality-report | 06:45 UK | #peter-heartbeat | yes |
@@ -36,21 +35,21 @@ Run `!reload-schedule` after editing to apply changes.
 | Meal Rating | meal-rating | 20:30 UK | #food-log | yes |
 | Evening Cooking Reminder | cooking-reminder | 20:45 UK | #food-log | yes |
 | Daily Nutrition Summary | nutrition-summary | 21:00 UK | #food-log | yes |
-| Daily Instagram Prep | daily-instagram-prep | 21:05 UK | #peterbot | yes |
+| Daily Instagram Prep | daily-instagram-prep | 21:05 UK | #peterbot | no |
 | Weekly Health Summary | weekly-health | Sunday 09:10 UK | #food-log | yes |
 | Weekly Cut Review | weekly-cut-review | Sunday 09:00 UK | #food-log | yes |
-| Fitness Advisor Check | fitness-advisor | 12:00,16:00,20:00 UK | #food-log | yes |
+| Fitness Advisor Check | fitness-advisor | 20:00 UK | #food-log | yes |
 | Midweek Cut Nudge | fitness-dashboard | Wed 19:00 UK | #food-log | yes |
 | Monthly Health Summary | monthly-health | 1st 09:15 UK | #food-log | yes |
 | Claude History Reminder | - | 1st 10:00 UK | #peterbot | yes |
 | WhatsApp Health Check | whatsapp-keepalive | 08:00,20:00 UK | #peter-heartbeat!quiet | yes |
-| Self-Reflect | self-reflect | 12:00,18:00,23:00 UK | #alerts!quiet | yes |
+| Self-Reflect | self-reflect | 22:00 UK | #alerts!quiet | yes |
 | Email Summary | email-summary | 08:02 UK | #peterbot | yes |
 | Schedule Today | schedule-today | 08:04 UK | #peterbot | yes |
 | Schedule Week | schedule-week | Sunday 18:00 UK | #peterbot | yes |
 | Notion Todos | notion-todos | 08:06 UK | #peterbot | yes |
-| Balance Monitor | balance-monitor | hourly+3 UK | #api-costs | yes |
-| Heartbeat | heartbeat | half-hourly+1 UK | #peter-heartbeat!quiet | yes |
+| Balance Monitor | balance-monitor | 06:03,09:03,12:03,15:03,18:03,21:03 UK | #api-costs | yes |
+| Heartbeat | heartbeat | 00:01,02:01,04:01,06:01,08:01,10:01,12:01,14:01,16:01,18:01,20:01,22:01 UK | #peter-heartbeat!quiet | yes |
 | Healthera Prescriptions | healthera-prescriptions | 09:10 UK | #peterbot | yes |
 | HB Full Sync + Print | hb-full-sync-print | 09:35 UK | #peterbot | yes |
 | Weekly Spellings | school-weekly-spellings | Mon 07:30 UK | #peter-chat+WhatsApp:group | yes |
@@ -63,7 +62,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Ballot Reminders | ballot-reminders | 09:00 UK | #peterbot+WhatsApp:chris | yes |
 | PL Results | pl-results | 06:05 UK | #peterbot+WhatsApp:chris | yes |
 | Amazon Purchases Sync | amazon-purchases | 09:30 UK | #peterbot | yes |
-| Security Monitor | security-monitor | 06:00,10:00,14:00,18:00,22:00 UK | #alerts | yes |
+| Security Monitor | security-monitor | 06:00,22:00 UK | #alerts | yes |
 | Tutor Email Parser | tutor-email-parser | Tue 19:00 UK | #peterbot | yes |
 | Paper Builder | paper-builder | Tue 19:30 UK | #peterbot | yes |
 | Practice Allocate | practice-allocate | Tue 21:00 UK | #peterbot | yes |
@@ -73,6 +72,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Flight Price Monitor | flight-prices | 07:15 UK | #alerts | yes |
 | Weekly Accountability | accountability-weekly | Sunday 19:00 UK | WhatsApp:chris | yes |
 | Monthly Accountability | accountability-monthly | 1st 10:30 UK | #food-log+WhatsApp:chris | yes |
+| Cost Digest | cost-digest | 22:55 UK | #alerts | yes |
 
 ## Interval Jobs
 

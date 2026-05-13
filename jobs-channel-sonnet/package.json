@@ -1,0 +1,18 @@
+{
+  "name": "jobs-channel-sonnet",
+  "version": "0.0.1",
+  "description": "Claude Code channel for Sonnet-tier scheduled jobs (mirrors jobs-channel, model=claude-sonnet-4-6)",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
