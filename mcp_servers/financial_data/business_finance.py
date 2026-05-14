@@ -180,7 +180,8 @@ async def _stock_costs(start: str, end: str) -> float:
         "select": "local_amount",
     }, paginate=True)
 
-    return sum(abs(safe_float(t.get("local_amount"))) for t in txns)
+    # Monzo local_amount is stored in pence (integer) — convert to pounds
+    return sum(abs(safe_float(t.get("local_amount"))) / 100 for t in txns)
 
 
 async def _postage_packing_costs(start: str, end: str) -> dict:
@@ -193,8 +194,9 @@ async def _postage_packing_costs(start: str, end: str) -> dict:
         "select": "local_amount,local_category",
     }, paginate=True)
 
-    postage = sum(abs(safe_float(t.get("local_amount"))) for t in txns if t.get("local_category") == "Postage")
-    packing = sum(abs(safe_float(t.get("local_amount"))) for t in txns if t.get("local_category") == "Packing Materials")
+    # Monzo local_amount is stored in pence (integer) — convert to pounds
+    postage = sum(abs(safe_float(t.get("local_amount"))) / 100 for t in txns if t.get("local_category") == "Postage")
+    packing = sum(abs(safe_float(t.get("local_amount"))) / 100 for t in txns if t.get("local_category") == "Packing Materials")
     return {"postage": postage, "packing": packing}
 
 
@@ -208,10 +210,11 @@ async def _other_costs(start: str, end: str) -> dict:
         "select": "local_amount,local_category",
     }, paginate=True)
 
+    # Monzo local_amount is stored in pence (integer) — convert to pounds
     cats: dict[str, float] = {}
     for t in txns:
         cat = t.get("local_category", "Other")
-        cats[cat] = cats.get(cat, 0) + abs(safe_float(t.get("local_amount")))
+        cats[cat] = cats.get(cat, 0) + abs(safe_float(t.get("local_amount"))) / 100
     return cats
 
 
