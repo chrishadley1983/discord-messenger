@@ -5,6 +5,9 @@
 !.env.sops
 .env.clean.tmp
 
+# Local-only rotated archives — kept on disk for reference, not in repo
+domains/peterbot/wsl_config/HEARTBEAT_ARCHIVE.md
+
 # Python
 __pycache__/
 *.py[cod]
