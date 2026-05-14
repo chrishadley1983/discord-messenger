@@ -384,6 +384,10 @@ async def on_ready():
     )
     logger.info("Japan trip alerts registered (every 15 min, active during trip only)")
 
+    # Prolific studies monitor — CDP-poll waking hours, Discord webhook on new study
+    from domains.prolific import register_prolific_monitor
+    register_prolific_monitor(scheduler)
+
     # WhatsApp incoming messages — internal HTTP server for HadleyAPI to forward to
     from aiohttp import web as aio_web
     from integrations.whatsapp import send_text, send_audio
