@@ -1,5 +1,6 @@
 ---
 name: saturday-sport-preview
+model: claude-sonnet-4-6
 description: Weekly sport preview for the coming week
 trigger:
   - "sport this week"

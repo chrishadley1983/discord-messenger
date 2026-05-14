@@ -1,5 +1,6 @@
 ---
 name: kids-weekly
+model: claude-sonnet-4-6
 description: Weekly kids summary — next week's plan (Sunday) or last week's review (on demand)
 trigger:
   - "kids next week"

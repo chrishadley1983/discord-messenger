@@ -1,5 +1,6 @@
 ---
 name: meal-rating
+model: claude-sonnet-4-6
 description: Prompt for meal ratings and log feedback to meal history
 trigger:
   - "rate dinner"

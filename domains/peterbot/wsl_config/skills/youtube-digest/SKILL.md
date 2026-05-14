@@ -1,5 +1,6 @@
 ---
 name: youtube-digest
+model: claude-sonnet-4-6
 description: Daily YouTube video recommendations in key interest areas
 trigger:
   - "youtube"

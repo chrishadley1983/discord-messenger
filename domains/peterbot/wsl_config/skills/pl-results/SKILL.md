@@ -1,5 +1,6 @@
 ---
 name: pl-results
+model: claude-sonnet-4-6
 description: Morning football results — Premier League, Champions League, Dover Athletic
 trigger:
   - "PL results"

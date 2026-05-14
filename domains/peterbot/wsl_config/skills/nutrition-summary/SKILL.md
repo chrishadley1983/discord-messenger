@@ -1,5 +1,6 @@
 ---
 name: nutrition-summary
+model: claude-sonnet-4-6
 description: Daily nutrition wrap-up at 9pm
 trigger:
   - "nutrition summary"

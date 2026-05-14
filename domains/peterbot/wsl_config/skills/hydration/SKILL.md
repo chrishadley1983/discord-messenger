@@ -1,5 +1,6 @@
 ---
 name: hydration
+model: claude-sonnet-4-6
 description: Post water intake and step progress with motivation
 trigger:
   - "water"

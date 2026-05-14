@@ -1,5 +1,6 @@
 ---
 name: cricket-scores
+model: claude-sonnet-4-6
 description: Daily morning cricket score roundup from yesterday
 trigger:
   - "cricket scores"

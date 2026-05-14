@@ -1,5 +1,6 @@
 ---
 name: kids-daily
+model: claude-sonnet-4-6
 description: Daily kids briefing — today's and tomorrow's activities, kit needed, school notices, spellings
 trigger:
   - "kids today"

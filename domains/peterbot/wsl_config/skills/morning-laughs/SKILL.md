@@ -1,5 +1,6 @@
 ---
 name: morning-laughs
+model: claude-sonnet-4-6
 description: Daily dad jokes and inspirational quote to start the day
 trigger:
   - "tell me a joke"
