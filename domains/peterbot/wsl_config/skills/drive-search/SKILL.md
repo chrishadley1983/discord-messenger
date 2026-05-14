@@ -18,6 +18,19 @@ Search, create, manage, and organise files in Google Drive.
 - "trash {document}", "delete {document}"
 - "recent files", "what's on my drive"
 - "drive storage", "how much storage"
+- **Windows/Drive paths in a message** — e.g. `G:\My Drive\...\<name>.<ext>`, any `[A-Z]:\...` path, or `/mnt/g/...`. These are Chris's Google Drive on Windows. Peter runs in WSL and CANNOT read them directly. The peter-channel forwarder will usually pre-rewrite these into a `[Google Drive file: <filename>...]` hint — treat that hint as a drive-search trigger.
+
+## Handling Windows / Google Drive Paths
+
+When the user message contains a Windows path to a media file (or the forwarder-injected `[Google Drive file: <filename>...]` hint):
+
+1. Extract just the filename (e.g. `chrome_e3kc58HevZ.png`) — ignore the directory.
+2. `GET /drive/search?q=<filename>` via Hadley API.
+3. If exactly one plausible match: `curl -o /tmp/<filename> "http://172.19.64.1:8100/drive/file?file_id=<id>"` to fetch the **actual bytes** into `/tmp/`, then `Read` the `/tmp/` path to view/analyse. Do NOT use `/drive/download` to fetch bytes — it returns metadata JSON, not the file.
+4. If multiple matches: show the top 2-3 and ask which one, OR pick the one whose name matches exactly and mention the others.
+5. **If zero matches or the lookup fails: reply on Discord saying so clearly** — e.g. `Couldn't find "<filename>" in your Drive — can you re-share it or check the filename?`. Never silently drop the request.
+6. Never attempt `Read()` on a `G:\...` or `/mnt/g/...` path — it will fail with a 400 image error. Always go through `/drive/search` → `/drive/file` → `/tmp/<name>` → `Read`.
+7. Sanity-check the downloaded file before `Read`ing it as an image: `file /tmp/<name>` — if it says "JSON text data" or the size is <1KB, something went wrong (probably hit `/drive/download` instead of `/drive/file`). Tell Chris what happened rather than letting `Read` hit a 400.
 
 ## Schedule
 None (conversational only)
@@ -31,7 +44,8 @@ Base URL: `http://172.19.64.1:8100`
 - `GET /drive/recent?limit=10` — Recent files
 - `GET /drive/starred` — Starred files
 - `GET /drive/shared` — Shared with me
-- `GET /drive/download?file_id=<id>` — Download file
+- `GET /drive/download?file_id=<id>` — **Metadata + share link only** (returns JSON, NOT bytes). Use when Chris wants a link to send or share.
+- `GET /drive/file?file_id=<id>` — **Raw bytes** of a file (images, PDFs, etc.). Use this when you need to actually view or process the file. Native Google types (Docs/Sheets/Slides) return 415 — use `/drive/export` instead.
 - `GET /drive/export?file_id=<id>&mime_type=<type>` — Export Google doc
 - `GET /drive/permissions?file_id=<id>` — Get file permissions
 - `GET /drive/storage` — Storage quota
