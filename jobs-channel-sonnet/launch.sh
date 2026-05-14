@@ -21,6 +21,15 @@ if [ -f "$ENVFILE" ]; then
   JOB_TIMEOUT_MS=$(grep JOB_TIMEOUT_MS "$ENVFILE" | cut -d= -f2 | tr -d "\r\n" || true)
 fi
 
+# Node ESM resolution ignores NODE_PATH — it walks the importing file's own
+# node_modules tree. So we need a real node_modules dir alongside src/index.ts.
+# Symlink to jobs-channel's (deps are identical) — idempotent, self-heals if
+# the channel dir is freshly cloned or the link gets removed.
+if [ ! -e "$CHANNEL_DIR/node_modules" ]; then
+  ln -sfn "$SHARED_NODE_MODULES" "$CHANNEL_DIR/node_modules"
+  echo "[$(date)] Created node_modules symlink -> jobs-channel/node_modules"
+fi
+
 cat > /tmp/jobs-channel-sonnet-mcp.json <<EOF
 {
   "mcpServers": {

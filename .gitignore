@@ -8,6 +8,9 @@
 # Local-only rotated archives — kept on disk for reference, not in repo
 domains/peterbot/wsl_config/HEARTBEAT_ARCHIVE.md
 
+# Node — covers all channel sub-projects
+node_modules/
+
 # Python
 __pycache__/
 *.py[cod]
