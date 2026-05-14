@@ -17,9 +17,10 @@ from logger import logger
 from .types import CaptureType, ContentType, ExtractedContent, ItemStatus, KnowledgeItem
 from .config import PRIORITY_EXPLICIT, PRIORITY_SEED, PRIORITY_PASSIVE
 from .extract import extract_content
-from .summarise import generate_summary, extract_title
-from .tag import extract_topics
+from .summarise import generate_summary, extract_title, _fallback_summary
+from .tag import extract_topics, _fallback_topics
 from .extract_structured import extract_structured
+from .ai_combined import extract_all_ai, should_skip_ai
 from .chunk import chunk_text, chunk_for_embedding
 from .embed import generate_embedding, generate_embeddings_batch, EmbeddingError
 from .db import (
@@ -99,59 +100,56 @@ async def process_capture(
         logger.warning(f"Content too short ({extracted.word_count} words), skipping")
         return None
 
-    # Step 2: Generate or use title
-    title = title_override or extracted.title
-    if not title or len(title) < 5:
-        try:
-            title = await extract_title(extracted.text)
-        except Exception as e:
-            logger.warning(f"Title extraction failed: {e}")
-            title = source[:100] if source.startswith('http') else source.split('\n')[0][:100]
-
-    # Determine content type (needed before concurrent calls)
+    # Determine content type (needed before AI call)
     content_type = content_type_override or _detect_content_type(extracted.source, extracted.text)
 
-    # Steps 3-4b: Run summary, topics, and structured extraction concurrently (PR-003)
     # Run structured extraction for all content types except media logs
     needs_structured = (
         not facts_override and not concepts_override
         and content_type not in {ContentType.LISTENING_HISTORY, ContentType.VIEWING_HISTORY}
     )
 
-    async def _safe_summary():
-        try:
-            return await generate_summary(extracted.text, title)
-        except Exception as e:
-            logger.warning(f"Summary generation failed: {e}")
-            return extracted.excerpt or extracted.text[:200]
+    # Steps 2-4: single combined AI call (title + summary + topics + facts + concepts)
+    seed_title = title_override or extracted.title
+    needs_title = not seed_title or len(seed_title) < 5
 
-    async def _safe_topics():
+    if should_skip_ai(extracted.text):
+        # Trivial content: skip Claude entirely, use fallbacks
+        title = seed_title or _fallback_first_line(extracted.text, source)
+        summary = extracted.text.strip()[:200]
+        topics = _fallback_topics(extracted.text, title, content_type.value)
+        facts = facts_override or []
+        concepts = concepts_override or []
+    else:
         try:
-            return await extract_topics(extracted.text, title, content_type=content_type.value)
+            ai_out = await extract_all_ai(
+                extracted.text,
+                seed_title,
+                content_type.value,
+                needs_title=needs_title,
+                needs_structured=needs_structured,
+            )
         except Exception as e:
-            logger.warning(f"Topic extraction failed: {e}")
-            return ['untagged']
+            logger.warning(f"Combined AI extraction failed: {e}")
+            ai_out = {
+                "summary": _fallback_summary(extracted.text),
+                "topics": _fallback_topics(extracted.text, seed_title, content_type.value),
+                "facts": [],
+                "concepts": [],
+            }
+            if needs_title:
+                ai_out["title"] = _fallback_first_line(extracted.text, source)
 
-    async def _safe_structured():
-        if not needs_structured:
-            return {}
-        try:
-            return await extract_structured(extracted.text, title, content_type=content_type.value)
-        except Exception as e:
-            logger.warning(f"Structured extraction failed: {e}")
-            return {}
-
-    summary, topics, structured = await asyncio.gather(
-        _safe_summary(), _safe_topics(), _safe_structured()
-    )
+        title = (ai_out.get("title") if needs_title else seed_title) or _fallback_first_line(extracted.text, source)
+        summary = ai_out["summary"]
+        topics = ai_out["topics"]
+        facts = facts_override or ai_out.get("facts", [])
+        concepts = concepts_override or ai_out.get("concepts", [])
 
     # Merge user tags if provided
     if user_tags:
         topics = list(set(topics + user_tags))[:8]
 
-    # Unpack structured extraction results
-    facts = facts_override or structured.get("facts", [])
-    concepts = concepts_override or structured.get("concepts", [])
     if facts or concepts:
         logger.debug(f"Extracted {len(facts)} facts, {len(concepts)} concepts")
 
@@ -334,6 +332,16 @@ async def process_passive_capture(
         return None
 
 
+def _fallback_first_line(text: str, source: str) -> str:
+    """Cheap title fallback when no Claude call is made."""
+    if source.startswith("http"):
+        return source[:100]
+    first_line = text.split("\n", 1)[0].strip()
+    if 10 <= len(first_line) <= 100:
+        return first_line
+    return (text[:80] + "...") if len(text) > 80 else text
+
+
 def _detect_content_type(source: str, text: str) -> ContentType:
     """Detect the type of content based on source and text."""
     source_lower = source.lower()
@@ -439,6 +447,7 @@ async def prepare_capture(
     user_tags: list[str] | None = None,
     content_type_override: ContentType | None = None,
     source_system: str | None = None,
+    source_message_id: str | None = None,
     text: str | None = None,
     title_override: str | None = None,
     facts_override: list | None = None,
@@ -450,11 +459,18 @@ async def prepare_capture(
     Returns a PreparedItem with chunk texts ready for batch embedding,
     or None if the item should be skipped (duplicate, too short, etc.).
     """
-    # Duplicate check
+    # Duplicate check by source_url
     if '://' in source[:30]:
         existing = await get_item_by_source(source)
         if existing:
             await boost_access(existing.id)
+            return None
+
+    # Secondary duplicate check by source_system + source_message_id (catches items
+    # where the adapter-built source_url differs from the pre-fetch predicted URL).
+    if source_system and source_message_id:
+        from .db import item_exists_by_source
+        if await item_exists_by_source(source_system, source_message_id):
             return None
 
     # Extract content
@@ -477,51 +493,50 @@ async def prepare_capture(
     if extracted.word_count < 5:
         return None
 
-    # Title
-    title = title_override or extracted.title
-    if not title or len(title) < 5:
-        try:
-            title = await extract_title(extracted.text)
-        except Exception:
-            title = source[:100]
-
     content_type = content_type_override or _detect_content_type(extracted.source, extracted.text)
 
-    # Concurrent: summary, topics, structured
     needs_structured = (
         not facts_override and not concepts_override
         and content_type not in {ContentType.LISTENING_HISTORY, ContentType.VIEWING_HISTORY}
     )
 
-    async def _safe_summary():
-        try:
-            return await generate_summary(extracted.text, title)
-        except Exception:
-            return extracted.excerpt or extracted.text[:200]
+    seed_title = title_override or extracted.title
+    needs_title = not seed_title or len(seed_title) < 5
 
-    async def _safe_topics():
+    if should_skip_ai(extracted.text):
+        title = seed_title or _fallback_first_line(extracted.text, source)
+        summary = extracted.text.strip()[:200]
+        topics = _fallback_topics(extracted.text, title, content_type.value)
+        facts = facts_override or []
+        concepts = concepts_override or []
+    else:
         try:
-            return await extract_topics(extracted.text, title, content_type=content_type.value)
-        except Exception:
-            return ['untagged']
+            ai_out = await extract_all_ai(
+                extracted.text,
+                seed_title,
+                content_type.value,
+                needs_title=needs_title,
+                needs_structured=needs_structured,
+            )
+        except Exception as e:
+            logger.warning(f"Combined AI extraction failed: {e}")
+            ai_out = {
+                "summary": _fallback_summary(extracted.text),
+                "topics": _fallback_topics(extracted.text, seed_title, content_type.value),
+                "facts": [],
+                "concepts": [],
+            }
+            if needs_title:
+                ai_out["title"] = _fallback_first_line(extracted.text, source)
 
-    async def _safe_structured():
-        if not needs_structured:
-            return {}
-        try:
-            return await extract_structured(extracted.text, title, content_type=content_type.value)
-        except Exception:
-            return {}
-
-    summary, topics, structured = await asyncio.gather(
-        _safe_summary(), _safe_topics(), _safe_structured()
-    )
+        title = (ai_out.get("title") if needs_title else seed_title) or _fallback_first_line(extracted.text, source)
+        summary = ai_out["summary"]
+        topics = ai_out["topics"]
+        facts = facts_override or ai_out.get("facts", [])
+        concepts = concepts_override or ai_out.get("concepts", [])
 
     if user_tags:
         topics = list(set(topics + user_tags))[:8]
-
-    facts = facts_override or structured.get("facts", [])
-    concepts = concepts_override or structured.get("concepts", [])
 
     # Chunk
     chunks = chunk_text(extracted.text)
@@ -555,6 +570,7 @@ async def prepare_capture(
         site_name=extracted.site_name,
         word_count=extracted.word_count,
         source_system=source_system,
+        source_message_id=source_message_id,
         facts=facts,
         concepts=concepts,
     )
