@@ -17,17 +17,20 @@ import requests as _req
 
 from logger import logger
 
-# Chrome CDP config — must use non-default user-data-dir (Chrome 136+ ignores
-# --remote-debugging-port with the default profile)
+# Chrome CDP config — dedicated profile + port for the seed import so it
+# never collides with the Vinted/BrickLink Chrome (port 9222), which can get
+# saturated and time out Playwright's connect_over_cdp.
+# Chrome 136+ requires a non-default user-data-dir or --remote-debugging-port
+# is silently ignored.
 CHROME_EXE = os.path.join(
     os.getenv("PROGRAMFILES", r"C:\Program Files"),
     "Google", "Chrome", "Application", "chrome.exe",
 )
 CHROME_USER_DATA_DIR = os.path.join(
     os.getenv("LOCALAPPDATA", ""),
-    "Google", "Chrome-Vinted",
+    "Google", "Chrome-SeedImport",
 )
-CDP_PORT = 9222
+CDP_PORT = 9223
 CDP_ENDPOINT = f"http://localhost:{CDP_PORT}"
 
 

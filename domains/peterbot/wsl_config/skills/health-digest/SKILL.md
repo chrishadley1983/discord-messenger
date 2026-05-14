@@ -1,5 +1,6 @@
 ---
 name: health-digest
+model: claude-sonnet-4-6
 description: Morning health digest with sleep, weight, steps, HR and comparison to yesterday
 trigger:
   - "health digest"

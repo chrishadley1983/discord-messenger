@@ -1,5 +1,6 @@
 ---
 name: ballot-reminders
+model: claude-sonnet-4-6
 description: Proactive alerts when ticket ballots open for England Cricket, England Football, Oval Invincibles
 trigger:
   - "ballot"

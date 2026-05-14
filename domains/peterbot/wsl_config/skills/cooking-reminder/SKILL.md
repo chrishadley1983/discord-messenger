@@ -1,5 +1,6 @@
 ---
 name: cooking-reminder
+model: claude-sonnet-4-6
 description: Proactive cooking prep reminders for marinating, defrosting, and advance prep
 trigger:
   - "cooking reminders"

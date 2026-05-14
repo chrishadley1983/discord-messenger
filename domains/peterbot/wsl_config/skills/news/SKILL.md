@@ -1,5 +1,6 @@
 ---
 name: news
+model: claude-sonnet-4-6
 description: Fetch and summarize news based on user request and preferences from memory
 trigger:
   - "news"

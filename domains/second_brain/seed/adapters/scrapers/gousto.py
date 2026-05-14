@@ -29,8 +29,10 @@ RECIPE_URL_PATTERN = re.compile(
 )
 
 # CDP script path (Windows — called via node.exe from WSL)
+# Port 9223 is the seed-import Chrome (Chrome-SeedImport profile), launched
+# by jobs/incremental_seed.py. Separate from the Vinted Chrome on 9222.
 CDP_SCRIPT = "C:/Users/Chris Hadley/claude-projects/chrome-cdp-skill/skills/chrome-cdp/scripts/cdp.mjs"
-CDP_PORT = 9222
+CDP_PORT = 9223
 
 # Hadley family cooks for 4 — scale all recipes to this
 TARGET_SERVINGS = 4

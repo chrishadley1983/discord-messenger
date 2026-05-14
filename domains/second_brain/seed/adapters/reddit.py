@@ -1,13 +1,15 @@
 """Reddit saved/interacted adapter.
 
 Imports saved posts, upvoted content, and commented threads from Reddit
-using cookie auth extracted from the Chrome CDP session (port 9222).
+using cookie auth extracted from the Chrome CDP session (port 9223 —
+the seed-import Chrome profile, separate from the Vinted Chrome on 9222).
 
 No API key or praw required — uses Reddit's .json endpoints with session cookies.
 
 Requires:
-  - Chrome running with --remote-debugging-port=9222
-  - Reddit logged in within that Chrome session
+  - Chrome running with --remote-debugging-port=9223 and the Chrome-SeedImport
+    user-data-dir (launched by jobs/incremental_seed.py)
+  - Reddit logged in within that Chrome profile (one-time manual login)
 """
 
 import asyncio
@@ -18,7 +20,7 @@ from logger import logger
 from ..base import SeedAdapter, SeedItem
 from ..runner import register_adapter
 
-CDP_ENDPOINT = "http://localhost:9222"
+CDP_ENDPOINT = "http://localhost:9223"
 REQUEST_DELAY = 2  # seconds between Reddit API calls
 
 

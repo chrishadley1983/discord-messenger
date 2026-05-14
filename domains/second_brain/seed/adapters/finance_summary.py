@@ -20,7 +20,7 @@ from ..base import SeedAdapter, SeedItem
 from ..runner import register_adapter
 
 # Ensure mcp_servers package is importable
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 if os.path.join(_PROJECT_ROOT, "mcp_servers") not in sys.path:
     sys.path.insert(0, os.path.join(_PROJECT_ROOT, "mcp_servers"))
 

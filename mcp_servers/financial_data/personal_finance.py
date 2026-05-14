@@ -149,9 +149,13 @@ async def budget_status(year: int | None = None, month: int | None = None) -> st
     output += f"**Income:** {gbp(total_income_actual)} actual vs {gbp(total_income_budget)} budgeted\n"
     output += f"**Expenses:** {gbp(total_expense_actual)} actual vs {gbp(total_expense_budget)} budgeted\n\n"
 
+    # Compute variance (budget - actual): positive = under budget, negative = over
+    def _variance(r: dict) -> float:
+        return safe_float(r.get("budget_amount")) - safe_float(r.get("actual_amount"))
+
     # Over/under budget categories
-    over = [(r["category_name"], safe_float(r["variance"])) for r in expense_rows if safe_float(r["variance"]) < 0]
-    under = [(r["category_name"], safe_float(r["variance"])) for r in expense_rows if safe_float(r["variance"]) > 0]
+    over = [(r["category_name"], _variance(r)) for r in expense_rows if _variance(r) < 0]
+    under = [(r["category_name"], _variance(r)) for r in expense_rows if _variance(r) > 0]
 
     over.sort(key=lambda x: x[1])
     under.sort(key=lambda x: x[1], reverse=True)
@@ -175,7 +179,7 @@ async def budget_status(year: int | None = None, month: int | None = None) -> st
             "Income" if r.get("is_income") else "Expense",
             gbp(safe_float(r["budget_amount"])),
             gbp(safe_float(r["actual_amount"])),
-            gbp(safe_float(r["variance"]), show_sign=True),
+            gbp(_variance(r), show_sign=True),
         ])
     output += md_table(["Category", "Type", "Budget", "Actual", "Variance"], table_rows)
 

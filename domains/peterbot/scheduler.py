@@ -764,14 +764,28 @@ class PeterbotScheduler:
 
             # 4. Send to Claude Code with timeout
             try:
-                # JOBS_USE_CHANNEL=1 routes through persistent jobs-channel session
-                # JOBS_USE_CHANNEL=0 (default) uses independent CLI process via router_v2
+                # Routing precedence (since 2026-05 channel migration):
+                #   1. Skill has model: in frontmatter AND maps to a model-specific channel
+                #      (e.g. Sonnet/Haiku skills → jobs-channel-sonnet on :8105)
+                #   2. JOBS_USE_CHANNEL=1 with no model: → default jobs-channel (Opus, :8103)
+                #   3. Last-resort: spawn `claude -p` (programmatic) — used only when
+                #      the targeted channel is down (handled inside _send_to_jobs_channel)
+                #
+                # This keeps all scheduled traffic on the subscription via channels;
+                # claude -p only fires as a degraded fallback.
                 import os
+                skill_model = self._get_skill_model(skill_content)
                 _jobs_use_channel = os.environ.get("JOBS_USE_CHANNEL", "0") == "1"
-                if _jobs_use_channel:
+                target = self._channel_target_for_model(skill_model) if _jobs_use_channel else None
+
+                if target:
+                    logger.info(f"Job {job.name}: routing to {target[0]} ({target[1]}) for model {skill_model or 'default'}")
+                    response = await self._send_to_jobs_channel(context, job=job, target=target, model_for_fallback=skill_model)
+                elif _jobs_use_channel:
                     response = await self._send_to_jobs_channel(context, job=job)
                 else:
-                    response = await self._send_to_claude_code_v2(context, job=job)
+                    logger.info(f"Job {job.name}: channels disabled, using claude -p (model={skill_model or 'default'})")
+                    response = await self._send_to_claude_code_v2(context, job=job, model_override=skill_model)
             except asyncio.TimeoutError:
                 duration = time.time() - start_time
                 logger.error(f"Job {job.name} timed out after {duration:.1f}s")
@@ -911,6 +925,27 @@ class PeterbotScheduler:
 
         return None
 
+    def _get_skill_model(self, skill_content: str) -> Optional[str]:
+        """Extract a `model:` override from the skill's YAML frontmatter.
+
+        Returns the model id (e.g. "claude-sonnet-4-6") or None if the skill
+        doesn't pin a model — in which case the scheduler uses its default
+        routing (jobs-channel when JOBS_USE_CHANNEL=1, else CLI default).
+        """
+        if not skill_content or not skill_content.startswith("---"):
+            return None
+        # Find the end of the frontmatter block
+        end_idx = skill_content.find("\n---", 3)
+        if end_idx == -1:
+            return None
+        frontmatter = skill_content[3:end_idx]
+        for line in frontmatter.splitlines():
+            line = line.strip()
+            if line.lower().startswith("model:"):
+                value = line.split(":", 1)[1].strip().strip('"\'')
+                return value or None
+        return None
+
     def _generate_manifest(self) -> dict:
         """Generate skills manifest from all SKILL.md files.
 
@@ -1027,7 +1062,7 @@ class PeterbotScheduler:
 
         return "\n".join(parts)
 
-    async def _send_to_claude_code_v2(self, context: str, job: JobConfig = None, retry_on_empty: bool = True) -> str:
+    async def _send_to_claude_code_v2(self, context: str, job: JobConfig = None, retry_on_empty: bool = True, model_override: str = "") -> str:
         """Send context to LLM and get response. Routes via invoke_llm().
 
         Uses router_v2.invoke_llm() which auto-fails over to Kimi if Claude
@@ -1037,6 +1072,7 @@ class PeterbotScheduler:
             context: Full context string to send
             job: Optional job config for cost logging
             retry_on_empty: If True, retry once if response is empty
+            model_override: Per-skill model (e.g. "claude-sonnet-4-6"). Empty = use CLI_SCHEDULED_MODEL default.
 
         Returns:
             Response string, or empty string on failure
@@ -1046,6 +1082,7 @@ class PeterbotScheduler:
 
         skill_name = job.skill if job else "unknown"
         channel = job.channel if job else ""
+        use_model = model_override or CLI_SCHEDULED_MODEL
 
         response, provider = await invoke_llm(
             context=context,
@@ -1055,7 +1092,7 @@ class PeterbotScheduler:
             cost_channel=channel,
             cost_message=f"[Skill: {skill_name}]",
             max_turns=CLI_SCHEDULED_MAX_TURNS,
-            model=CLI_SCHEDULED_MODEL,
+            model=use_model,
         )
 
         # Retry once if empty (not an error message)
@@ -1069,7 +1106,7 @@ class PeterbotScheduler:
                 cost_channel=channel,
                 cost_message=f"[Skill: {skill_name} RETRY]",
                 max_turns=CLI_SCHEDULED_MAX_TURNS,
-                model=CLI_SCHEDULED_MODEL,
+                model=use_model,
             )
 
         # Prepend fallback indicator for non-primary providers
@@ -1080,12 +1117,38 @@ class PeterbotScheduler:
 
         return response
 
-    async def _send_to_jobs_channel(self, context: str, job: JobConfig) -> str:
-        """Send job context to the jobs-channel MCP server and wait for response.
+    # Model-to-channel routing map. Channels by name with their HTTP port.
+    # Skills with these `model:` declarations in frontmatter route to the matching
+    # channel; skills with no `model:` declaration route to the default jobs-channel.
+    CHANNEL_BY_MODEL = {
+        "claude-sonnet-4-6": ("jobs-channel-sonnet", 8105),
+        "claude-sonnet-4-5": ("jobs-channel-sonnet", 8105),
+        "claude-haiku-4-5":  ("jobs-channel-sonnet", 8105),
+    }
+    DEFAULT_JOBS_CHANNEL = ("jobs-channel", 8103)
 
-        The jobs-channel runs a persistent Claude Code session. This method
-        POSTs the skill context, waits synchronously for Claude to process
-        it and call the reply tool, then returns the response.
+    def _channel_target_for_model(self, model: str | None) -> tuple[str, int] | None:
+        """Resolve a skill's declared model to a (channel_name, port) target.
+
+        Returns the default jobs-channel target when model is None / unrecognised
+        (keeping the legacy behaviour: no model = Opus channel).
+        """
+        if not model:
+            return self.DEFAULT_JOBS_CHANNEL
+        return self.CHANNEL_BY_MODEL.get(model, self.DEFAULT_JOBS_CHANNEL)
+
+    async def _send_to_jobs_channel(
+        self,
+        context: str,
+        job: JobConfig,
+        target: tuple[str, int] | None = None,
+        model_for_fallback: str | None = None,
+    ) -> str:
+        """Send job context to a jobs channel MCP server and wait for response.
+
+        Defaults to the Opus jobs-channel (port 8103); pass `target` to route
+        to jobs-channel-sonnet (port 8105) or any future channel. Falls back
+        to `claude -p` only when the targeted channel is unreachable.
 
         Same interface as _send_to_claude_code_v2() — scheduler post-processing
         works identically regardless of which method is used.
@@ -1093,26 +1156,26 @@ class PeterbotScheduler:
         import httpx
 
         skill_name = job.skill if job else "unknown"
-        timeout = self.JOB_TIMEOUT_SECONDS + 30  # Extra buffer over channel's internal timeout
+        channel_name, port = target or self.DEFAULT_JOBS_CHANNEL
+        timeout = self.JOB_TIMEOUT_SECONDS + 30
 
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
-                    "http://127.0.0.1:8103/job",
+                    f"http://127.0.0.1:{port}/job",
                     json={"context": context, "skill": skill_name},
                     timeout=timeout,
                 )
                 if resp.status_code == 200:
                     return resp.json().get("response", "")
                 else:
-                    logger.error(f"Jobs channel returned {resp.status_code}: {resp.text}")
+                    logger.error(f"{channel_name} returned {resp.status_code}: {resp.text}")
                     return ""
         except httpx.TimeoutException:
-            raise asyncio.TimeoutError(f"Jobs channel timed out after {timeout}s")
+            raise asyncio.TimeoutError(f"{channel_name} timed out after {timeout}s")
         except Exception as e:
-            logger.error(f"Jobs channel error: {e}, falling back to CLI")
-            # Fall back to direct CLI if channel is down
-            return await self._send_to_claude_code_v2(context, job=job)
+            logger.error(f"{channel_name} error: {e}, falling back to CLI (claude -p)")
+            return await self._send_to_claude_code_v2(context, job=job, model_override=model_for_fallback)
 
     async def _post_to_channel(self, job: JobConfig, message: str, files: list = None):
         """Post message to Discord channel (and optionally WhatsApp).

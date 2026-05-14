@@ -1,11 +1,13 @@
-"""Claude CLI extraction routes.
+"""Claude extraction routes.
 
-Provides a local Claude extraction endpoint that uses `claude -p` (CLI print mode)
-instead of the Anthropic API. This avoids needing an API key — it uses the local
-Claude Code OAuth subscription instead.
+Provides a local Claude extraction endpoint for one-shot prompts.
 
-Uses sync subprocess.run via asyncio.to_thread with shell redirect to temp file
-to avoid Windows async PIPE issues (same pattern as japan_train_status.py).
+Routing (2026-05 channel migration):
+  1. Primary path: POST to extract-channel HTTP on :8106 (persistent Claude Code
+     session on Haiku 4.5 — keeps usage on the subscription, not the new
+     programmatic credit). See docs/MIGRATE_OFF_CLAUDE_P.md.
+  2. Fallback: spawn `claude -p` subprocess (the original behaviour).
+     Used only when extract-channel is unreachable.
 
 Used by Second Brain seed adapters for summarisation, tagging, and structured
 data extraction from emails.
@@ -19,6 +21,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
@@ -27,6 +30,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/claude", tags=["claude"])
 
 CLAUDE_CLI = os.path.expanduser("~/.local/bin/claude")
+EXTRACT_CHANNEL_URL = os.environ.get("EXTRACT_CHANNEL_URL", "http://127.0.0.1:8106")
+EXTRACT_CHANNEL_TIMEOUT = float(os.environ.get("EXTRACT_CHANNEL_TIMEOUT", "90"))
 
 
 class ExtractRequest(BaseModel):
@@ -40,13 +45,47 @@ class ExtractResponse(BaseModel):
     error: Optional[str] = None
 
 
+async def _try_extract_channel(prompt: str) -> Optional[str]:
+    """POST to extract-channel; return text on success, None on failure.
+
+    None means caller should fall back to the CLI subprocess. The channel
+    runs on Haiku 4.5, so model/max_tokens overrides from the request are
+    ignored on this path (callers wanting a specific model should hit the
+    CLI directly or pass it via the prompt itself).
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{EXTRACT_CHANNEL_URL}/extract",
+                json={"prompt": prompt},
+                timeout=EXTRACT_CHANNEL_TIMEOUT,
+            )
+        if resp.status_code != 200:
+            logger.warning(f"extract-channel returned {resp.status_code}; falling back to CLI")
+            return None
+        text = resp.json().get("response", "")
+        if not text:
+            logger.warning("extract-channel returned empty response; falling back to CLI")
+            return None
+        return text
+    except Exception as e:
+        logger.warning(f"extract-channel unreachable ({e}); falling back to CLI")
+        return None
+
+
 @router.post("/extract", response_model=ExtractResponse)
 async def claude_extract(req: ExtractRequest):
-    """Run a Claude extraction via the local CLI.
+    """Run a Claude extraction.
 
-    Uses `claude -p` (print mode) which reads from stdin and writes to stdout.
-    No API key needed — uses the local Claude Code OAuth subscription.
+    Primary path: persistent extract-channel session (Haiku 4.5, on subscription).
+    Fallback: `claude -p` subprocess (programmatic spend after Jun 15 2026).
     """
+    # Channel path first — only fall back if the channel is genuinely down
+    channel_result = await _try_extract_channel(req.prompt)
+    if channel_result is not None:
+        return ExtractResponse(result=channel_result)
+
+    # Fallback: original CLI subprocess
     try:
         result = await asyncio.to_thread(
             _run_claude_cli_sync, req.prompt, req.max_tokens, req.model

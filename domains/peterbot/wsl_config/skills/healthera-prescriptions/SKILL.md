@@ -1,5 +1,6 @@
 ---
 name: healthera-prescriptions
+model: claude-sonnet-4-6
 description: Monitor Healthera prescription emails, ask Chris which meds to order, confirm via browser, and WhatsApp when ready to collect
 trigger:
   - "prescription"

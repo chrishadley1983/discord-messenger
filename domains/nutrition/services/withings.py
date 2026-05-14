@@ -27,22 +27,31 @@ _tokens = {
 }
 
 
-def _load_tokens():
-    """Load tokens from persistent file, falling back to env vars."""
+def _load_tokens(quiet: bool = False) -> bool:
+    """Load tokens from persistent file, falling back to env vars.
+
+    Returns True if the in-memory refresh token changed as a result of the
+    reload (i.e. another process wrote a newer token). Callers use this to
+    decide whether to retry a failed API call before issuing an actual
+    OAuth refresh.
+    """
     global _tokens
+    prev_refresh = _tokens.get("refresh")
     if TOKEN_FILE.exists():
         try:
             saved = json.loads(TOKEN_FILE.read_text())
             if saved.get("access") and saved.get("refresh"):
                 _tokens["access"] = saved["access"]
                 _tokens["refresh"] = saved["refresh"]
-                logger.info("Loaded Withings tokens from persistent file")
-                return
+                if not quiet:
+                    logger.info("Loaded Withings tokens from persistent file")
+                return saved["refresh"] != prev_refresh
         except Exception as e:
             logger.warning(f"Failed to load Withings token file: {e}")
     # Fall back to env vars (initial setup)
     _tokens["access"] = WITHINGS_ACCESS_TOKEN
     _tokens["refresh"] = WITHINGS_REFRESH_TOKEN
+    return _tokens.get("refresh") != prev_refresh
 
 
 def _save_tokens():
@@ -64,7 +73,16 @@ _load_tokens()
 
 
 async def _refresh_token() -> bool:
-    """Refresh Withings OAuth token."""
+    """Refresh Withings OAuth token.
+
+    Reloads from the persistent token file first so we always refresh using
+    the most recently-issued refresh_token. This prevents cross-process
+    desync between DiscordBot and HadleyAPI: each service keeps its own
+    module-level `_tokens` dict, so a refresh in one process would otherwise
+    leave the other holding a stale refresh_token that Withings has already
+    invalidated on rotation.
+    """
+    _load_tokens(quiet=True)
     logger.info("Refreshing Withings token...")
     try:
         async with httpx.AsyncClient() as client:
@@ -125,8 +143,14 @@ async def get_weight(retry: bool = True) -> dict:
             data = response.json()
 
             if data["status"] != 0:
-                # Token may need refresh
+                # Token may need refresh. Another process (DiscordBot vs
+                # HadleyAPI) may have already refreshed and saved the new
+                # tokens — reload from file first and retry before spending
+                # a refresh_token call.
                 if retry:
+                    if _load_tokens(quiet=True):
+                        logger.info("Withings 401 — loaded newer tokens from file, retrying...")
+                        return await get_weight(retry=False)
                     logger.warning("Withings token expired, refreshing...")
                     if await _refresh_token():
                         return await get_weight(retry=False)

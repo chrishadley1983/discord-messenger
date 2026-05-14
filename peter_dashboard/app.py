@@ -95,8 +95,8 @@ MONITORED_SERVICES = {
     },
     "hadley_bricks": {
         "name": "Hadley Bricks",
-        "url": "http://localhost:3000/",
-        "check_type": "http_any",  # Accept any HTTP response (no health endpoint)
+        "url": "http://localhost:3000/api/health",
+        "check_type": "http_any",
         "critical": False,  # Not critical for Peterbot operation
     },
     "peterbot_session": {
@@ -706,7 +706,7 @@ async def get_system_status():
     """Get overall system status with PID tracking."""
     # Run ALL checks in parallel — blocking calls via to_thread
     hadley_task = check_http_service(f"{CONFIG['hadley_api_url']}/health")
-    hb_task = check_http_service("http://localhost:3000/", timeout=3.0, accept_any=True)
+    hb_task = check_http_service("http://localhost:3000/api/health", timeout=3.0, accept_any=True)
     svc_task = asyncio.to_thread(service_manager.status_all)
     tmux_task = asyncio.to_thread(get_tmux_sessions)
 

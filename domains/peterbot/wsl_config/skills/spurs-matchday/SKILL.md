@@ -1,5 +1,6 @@
 ---
 name: spurs-matchday
+model: claude-sonnet-4-6
 description: Morning alert when Spurs are playing today
 trigger:
   - "are spurs playing today"

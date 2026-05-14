@@ -1,5 +1,6 @@
 ---
 name: commitment-nudge
+model: claude-sonnet-4-6
 description: Daily nudge for unfulfilled promises Chris made in WhatsApp and email
 trigger: []
 scheduled: true

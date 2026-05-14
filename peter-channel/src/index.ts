@@ -259,6 +259,28 @@ discord.on(Events.ClientReady, () => {
   log(`Discord connected as ${discord.user?.tag} — listening to ${CHANNEL_IDS.size} channels`);
 });
 
+// Windows Google Drive / WSL mount paths to media files — Peter cannot read these
+// directly in WSL, and attempting to Read() them causes an Anthropic API 400
+// ("Could not process image") that poisons the whole turn. Replace with a
+// placeholder that points Peter at the drive-search skill.
+// Paths have spaces in "My Drive" and "AI Work", so we allow any character
+// except newlines/quotes, but match lazily and anchor on a media extension
+// followed by a word boundary (end-of-string, whitespace, or quote).
+const MEDIA_EXT = "png|jpg|jpeg|gif|webp|heic|bmp|pdf";
+const WINDOWS_MEDIA_PATH_RE = new RegExp(
+  `(?:[A-Za-z]:\\\\|/mnt/[a-z]/)[^\\n\\r"'<>]+?\\.(?:${MEDIA_EXT})(?=$|[\\s"'<>.,;!?])`,
+  "gi"
+);
+function scrubWindowsMediaPaths(text: string): { text: string; scrubbed: string[] } {
+  const scrubbed: string[] = [];
+  const cleaned = text.replace(WINDOWS_MEDIA_PATH_RE, (match) => {
+    const filename = match.split(/[\\/]/).pop() || match;
+    scrubbed.push(filename);
+    return `[Google Drive file: ${filename} — do NOT try to Read this path (WSL cannot access it). Use the drive-search skill: GET /drive/search?q=${encodeURIComponent(filename)} then GET /drive/file?file_id=<id> to fetch bytes into /tmp/<name>. If the file is not found, tell Chris clearly.]`;
+  });
+  return { text: cleaned, scrubbed };
+}
+
 discord.on(Events.MessageCreate, async (message) => {
   // Ignore bots (including ourselves)
   if (message.author.bot) return;
@@ -279,6 +301,13 @@ discord.on(Events.MessageCreate, async (message) => {
       .map((a) => `[${a.name}](${a.url})`)
       .join("\n");
     content += `\n\nAttachments:\n${attachmentList}`;
+  }
+
+  // Scrub Windows/Google Drive media paths from the incoming message
+  const scrub = scrubWindowsMediaPaths(content);
+  content = scrub.text;
+  if (scrub.scrubbed.length > 0) {
+    log(`Scrubbed ${scrub.scrubbed.length} Windows media path(s): ${scrub.scrubbed.join(", ")}`);
   }
 
   if (!content.trim()) return;
@@ -304,7 +333,10 @@ discord.on(Events.MessageCreate, async (message) => {
         // Truncate long messages (scheduled job output can be huge)
         // 1500 chars keeps enough context for skill follow-ups (e.g. pocket money grid)
         const truncated = text.length > 1500 ? text.slice(0, 1500) + "..." : text;
-        lines.push(`${who}: ${truncated}`);
+        // Scrub Windows/Drive paths from historical messages too, otherwise a
+        // prior poison message keeps breaking every subsequent turn.
+        const historyScrubbed = scrubWindowsMediaPaths(truncated).text;
+        lines.push(`${who}: ${historyScrubbed}`);
       }
       if (lines.length > 0) {
         recentHistory = "\n\n[Recent channel history for context]\n" + lines.join("\n");

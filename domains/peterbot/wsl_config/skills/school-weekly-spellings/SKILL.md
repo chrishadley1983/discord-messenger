@@ -1,5 +1,6 @@
 ---
 name: school-weekly-spellings
+model: claude-sonnet-4-6
 description: Weekly spelling list post for Max and Emmie
 trigger:
   - "spellings this week"

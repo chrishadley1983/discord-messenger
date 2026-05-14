@@ -83,7 +83,8 @@ uvicorn hadley_api.main:app --port 8100 --reload
 - `GET /drive/recent?limit=10` - Recent files
 - `GET /drive/starred` - Starred files
 - `GET /drive/shared` - Shared with me
-- `GET /drive/download?file_id=<id>` - Download file
+- `GET /drive/download?file_id=<id>` - Returns metadata + share link (JSON, not bytes)
+- `GET /drive/file?file_id=<id>` - Streams raw file bytes (use for images/PDFs you want to view)
 - `GET /drive/export?file_id=<id>&mime_type=<type>` - Export Google doc
 - `GET /drive/permissions?file_id=<id>` - Get file permissions
 - `GET /drive/storage` - Storage quota

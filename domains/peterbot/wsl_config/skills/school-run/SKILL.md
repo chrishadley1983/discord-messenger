@@ -1,5 +1,6 @@
 ---
 name: school-run
+model: claude-sonnet-4-6
 description: Morning school run traffic report with weather and uniform requirements
 trigger:
   - "school run"
