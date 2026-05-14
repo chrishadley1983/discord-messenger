@@ -24,11 +24,20 @@ CHROME_EXE = Path(
 STUDIES_URL = "https://app.prolific.com/studies"
 LOGIN_URL = "https://app.prolific.com/login"
 
-POLL_INTERVAL_SECONDS = 75
-POLL_JITTER_SECONDS = 15
+# DOM-read interval — pure JS evaluation on a persistent open page, no HTTP
+# to Prolific between reads. Cheap enough that 5s is comfortable. Jitter just
+# avoids perfectly periodic reads.
+POLL_INTERVAL_SECONDS = 5
+POLL_JITTER_SECONDS = 2
 
-ACTIVE_START_HOUR = 8
+# Defence-in-depth — force a full page reload occasionally so we refresh
+# cookies / reset Prolific's SPA state / detect a silently-broken session.
+PAGE_RELOAD_INTERVAL_SECONDS = 15 * 60  # 15 minutes
+
+ACTIVE_START_HOUR = 6
+ACTIVE_START_MINUTE = 30
 ACTIVE_END_HOUR = 23
+ACTIVE_END_MINUTE = 30
 ACTIVE_TIMEZONE = "Europe/London"
 
 DISCORD_WEBHOOK = (

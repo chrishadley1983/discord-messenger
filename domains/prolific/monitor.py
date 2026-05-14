@@ -11,7 +11,9 @@ from logger import logger
 
 from .config import (
     ACTIVE_END_HOUR,
+    ACTIVE_END_MINUTE,
     ACTIVE_START_HOUR,
+    ACTIVE_START_MINUTE,
     ACTIVE_TIMEZONE,
     POLL_INTERVAL_SECONDS,
     POLL_JITTER_SECONDS,
@@ -23,7 +25,10 @@ from .seen import is_new, mark_seen
 
 def _within_active_hours() -> bool:
     now = datetime.now(ZoneInfo(ACTIVE_TIMEZONE))
-    return ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR
+    now_mins = now.hour * 60 + now.minute
+    start_mins = ACTIVE_START_HOUR * 60 + ACTIVE_START_MINUTE
+    end_mins = ACTIVE_END_HOUR * 60 + ACTIVE_END_MINUTE
+    return start_mins <= now_mins < end_mins
 
 
 async def poll_studies() -> None:
@@ -66,5 +71,6 @@ def register_prolific_monitor(scheduler: AsyncIOScheduler) -> None:
     logger.info(
         f"Prolific monitor registered "
         f"({POLL_INTERVAL_SECONDS}s ± {POLL_JITTER_SECONDS}s, "
-        f"active {ACTIVE_START_HOUR:02d}:00-{ACTIVE_END_HOUR:02d}:00 {ACTIVE_TIMEZONE})"
+        f"active {ACTIVE_START_HOUR:02d}:{ACTIVE_START_MINUTE:02d}-"
+        f"{ACTIVE_END_HOUR:02d}:{ACTIVE_END_MINUTE:02d} {ACTIVE_TIMEZONE})"
     )
