@@ -957,6 +957,21 @@ class TravelBookingAdapter(SeedAdapter):
         extraction_type: str,
     ) -> Optional[SeedItem]:
         """Process a single email into a SeedItem."""
+        # Pre-dedup BEFORE the expensive gmail/get + Claude extraction.
+        # Uses two checks to cover both new items (source_system + message_id,
+        # populated once this code has run) and legacy items that were saved
+        # via the email-id fallback source_url branch.
+        from domains.second_brain.db import get_item_by_source, item_exists_by_source
+
+        dedup_key = email_id + ("/checkin" if extraction_type == "checkin" else "")
+        email_source_url = f"travel://{provider.name}/email-{dedup_key}"
+        if await get_item_by_source(email_source_url):
+            logger.debug(f"[travel:{provider.name}] Skipping (source match): {email_id}")
+            return None
+        if await item_exists_by_source(self.source_system, dedup_key):
+            logger.debug(f"[travel:{provider.name}] Skipping (message-id match): {email_id}")
+            return None
+
         # Fetch email with HTML
         response = await client.get(
             f"{self.api_base}/gmail/get",
@@ -1116,10 +1131,16 @@ class TravelBookingAdapter(SeedAdapter):
 
         topics = list(set(provider.topics + ["travel"]))
 
+        # Stable message id used for dedup (source_system + source_message_id).
+        # checkin emails get a suffix to avoid colliding with the booking email.
+        source_msg_id = email_id + ("/checkin" if extraction_type == "checkin" else "")
+        metadata["gmail_message_id"] = email_id
+
         return SeedItem(
             title=title,
             content=content,
             source_url=source_url,
+            source_id=source_msg_id,
             topics=topics,
             created_at=created_at,
             metadata=metadata,

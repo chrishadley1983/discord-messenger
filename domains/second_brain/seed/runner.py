@@ -245,6 +245,7 @@ async def run_seed_import_batched(
                 title_override=item.title,
                 created_at_override=item.created_at,
                 source_system=adapter.source_system,
+                source_message_id=item.source_id,
             )
             if prep:
                 prepared.append(prep)
