@@ -7,8 +7,10 @@
 set -euo pipefail
 
 CHANNEL_DIR="/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/peter-channel"
+PROJECT_ROOT="/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger"
 WORKING_DIR="$HOME/peterbot"
 ENVFILE="$CHANNEL_DIR/.env"
+ROOT_ENVFILE="$PROJECT_ROOT/.env"
 RESTART_LOG="/tmp/peter-channel-restarts.log"
 
 # Read .env (handles Windows line endings)
@@ -17,6 +19,10 @@ DISCORD_CHANNEL_IDS=$(grep DISCORD_CHANNEL_IDS "$ENVFILE" | cut -d= -f2 | tr -d 
 ALLOWED_DISCORD_IDS=$(grep ALLOWED_DISCORD_IDS "$ENVFILE" | cut -d= -f2 | tr -d "\r\n")
 HTTP_PORT=$(grep HTTP_PORT "$ENVFILE" | cut -d= -f2 | tr -d "\r\n")
 HTTP_PORT="${HTTP_PORT:-8104}"
+# Shared secrets from root .env (single source of truth) — required for the
+# channel to authenticate against Hadley API's /peter/build-context and
+# /attachment/download endpoints (added 2026-05).
+HADLEY_AUTH_KEY=$(grep HADLEY_AUTH_KEY "$ROOT_ENVFILE" | cut -d= -f2 | tr -d "\r\n")
 
 for var in DISCORD_BOT_TOKEN DISCORD_CHANNEL_IDS ALLOWED_DISCORD_IDS; do
   if [ -z "${!var}" ]; then
@@ -36,6 +42,7 @@ cat > /tmp/peter-channel-mcp.json <<EOF
         "DISCORD_CHANNEL_IDS": "$DISCORD_CHANNEL_IDS",
         "ALLOWED_DISCORD_IDS": "$ALLOWED_DISCORD_IDS",
         "HTTP_PORT": "$HTTP_PORT",
+        "HADLEY_AUTH_KEY": "${HADLEY_AUTH_KEY:-}",
         "NODE_PATH": "$CHANNEL_DIR/node_modules"
       }
     }
@@ -45,7 +52,6 @@ EOF
 
 cd "$WORKING_DIR"
 
-PROJECT_ROOT="/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger"
 source "$PROJECT_ROOT/scripts/channel-resilience.sh"
 
 RESTART_COUNT=0
