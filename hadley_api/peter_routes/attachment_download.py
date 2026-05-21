@@ -20,9 +20,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from hadley_api.auth import require_auth
 from logger import logger
 
 router = APIRouter(prefix="/attachment", tags=["peter"])
@@ -37,7 +38,11 @@ class DownloadResponse(BaseModel):
     transcriptions: list[str]
 
 
-@router.post("/download", response_model=DownloadResponse)
+@router.post(
+    "/download",
+    response_model=DownloadResponse,
+    dependencies=[Depends(require_auth)],
+)
 async def download_attachments(body: DownloadRequest) -> DownloadResponse:
     """Mirror router_v2._download_attachments for channel callers.
 
@@ -48,7 +53,10 @@ async def download_attachments(body: DownloadRequest) -> DownloadResponse:
     try:
         from domains.peterbot.router_v2 import _download_attachments
     except Exception as e:
-        logger.warning(f"Attachment downloader import failed: {e}")
+        # error not warning: if the downloader can't be imported, every
+        # channel media attachment silently degrades to URL-only — visible
+        # only by URL Read failures inside the session. Loud is better.
+        logger.error(f"Attachment downloader import failed: {e}")
         return DownloadResponse(attachments=body.attachment_urls, transcriptions=[])
 
     if not body.attachment_urls:

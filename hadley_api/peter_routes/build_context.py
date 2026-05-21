@@ -18,6 +18,11 @@ Background: `bot.py:797` and `whatsapp_webhook.py:99-102` route channel
 traffic past `router_v2`, so anything that lives only in
 `memory.build_full_context` was silently bypassed. This endpoint is the
 shared single source of truth.
+
+Drift warning: the parallel implementation in `domains/peterbot/memory.py`
+(`build_full_context`) is still the codepath used by router_v2 itself.
+Changes here should be mirrored there (and vice versa) until v2 is also
+refactored to call this endpoint.
 """
 
 from __future__ import annotations
@@ -25,24 +30,24 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from zoneinfo import ZoneInfo
 
+from hadley_api.auth import require_auth
 from logger import logger
 
 router = APIRouter(prefix="/peter", tags=["peter"])
 
 UK_TZ = ZoneInfo("Europe/London")
 
-# Matches the magic number used in domains/peterbot/memory.py for the
-# synthetic WhatsApp channel. Keep in sync if memory.py changes.
-WHATSAPP_VIRTUAL_CHANNEL_ID = 9999999999
-
 
 class BuildContextRequest(BaseModel):
     message: str
-    channel_id: Optional[int] = None
+    # Channel ID kept as string: Discord snowflakes exceed JS Number safe
+    # range, so the TS callers pass them raw. Python code that needs an
+    # int can int(body.channel_id) — Python has arbitrary precision.
+    channel_id: Optional[str] = None
     channel_name: Optional[str] = None
     sender_number: Optional[str] = None
     is_whatsapp: bool = False
@@ -56,7 +61,11 @@ class BuildContextResponse(BaseModel):
     blocks: list[str]
 
 
-@router.post("/build-context", response_model=BuildContextResponse)
+@router.post(
+    "/build-context",
+    response_model=BuildContextResponse,
+    dependencies=[Depends(require_auth)],
+)
 async def build_context(body: BuildContextRequest) -> BuildContextResponse:
     """Build the full context block a channel should push into its Claude session."""
     parts: list[str] = []

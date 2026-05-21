@@ -1,4 +1,10 @@
-"""Memory client for peterbot - context retrieval and capture via Second Brain."""
+"""Memory client for peterbot - context retrieval and capture via Second Brain.
+
+Drift warning: `build_full_context` here and `hadley_api/peter_routes/
+build_context.py` implement the same context-assembly logic for two callers
+(router_v2 fallback and the channel HTTP endpoint respectively). Keep them
+in sync until v2 is refactored to call the endpoint.
+"""
 
 import asyncio
 import re

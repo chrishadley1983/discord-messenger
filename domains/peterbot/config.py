@@ -101,3 +101,9 @@ SECOND_BRAIN_SAVE_SKILLS: set[str] = {
 # Heuristics for detecting generated documents in conversation responses.
 DOCUMENT_MIN_LENGTH = 800      # Minimum characters to consider as document
 DOCUMENT_MIN_HEADERS = 2       # Minimum markdown headers (# or ##) required
+
+# --- Cost logging ---
+# Approximate USD->GBP rate used by router_v2._log_cost and the channel
+# /response/cost endpoint. Update both call sites together if/when the rate
+# materially diverges; figures land in data/cli_costs.jsonl.
+USD_TO_GBP = 0.79

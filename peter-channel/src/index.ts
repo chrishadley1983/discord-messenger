@@ -103,6 +103,23 @@ const sessionStart = new Date().toISOString();
 
 // Hadley API base URL (accessible from WSL via host gateway)
 const HADLEY_API = "http://172.19.64.1:8100";
+const HADLEY_AUTH_KEY = process.env.HADLEY_AUTH_KEY || "";
+
+// LRU cap so per-channel state maps don't grow unbounded across long sessions
+const STATE_MAP_MAX = 1000;
+function trimState<K, V>(m: Map<K, V>) {
+  while (m.size > STATE_MAP_MAX) {
+    const oldest = m.keys().next().value;
+    if (oldest === undefined) break;
+    m.delete(oldest);
+  }
+}
+
+function hadleyHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json", ...extra };
+  if (HADLEY_AUTH_KEY) h["x-api-key"] = HADLEY_AUTH_KEY;
+  return h;
+}
 
 // ---------------------------------------------------------------------------
 // Reply tool — Claude calls this to send messages back to Discord
@@ -181,7 +198,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const durationMs = startedAt ? Date.now() - startedAt : 0;
   fetch(`${HADLEY_API}/response/cost`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: hadleyHeaders(),
     body: JSON.stringify({
       source: "channel:peter",
       channel: channel.name ? `#${channel.name}` : `Channel ${chat_id}`,
@@ -333,7 +350,7 @@ discord.on(Events.MessageCreate, async (message) => {
     try {
       const r = await fetch(`${HADLEY_API}/attachment/download`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: hadleyHeaders(),
         body: JSON.stringify({ attachment_urls: mediaAttachments }),
         signal: AbortSignal.timeout(45000),
       });
@@ -376,6 +393,8 @@ discord.on(Events.MessageCreate, async (message) => {
   // Track last user message per channel (for Second Brain capture in reply tool)
   lastUserMessage.set(message.channelId, content);
   messageStartTime.set(message.channelId, Date.now());
+  trimState(lastUserMessage);
+  trimState(messageStartTime);
 
   // Fetch recent channel history so Claude has context of what was previously
   // said in this channel — critical for replies to scheduled job output that
@@ -440,10 +459,11 @@ discord.on(Events.MessageCreate, async (message) => {
   try {
     const resp = await fetch(`${HADLEY_API}/peter/build-context`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: hadleyHeaders(),
       body: JSON.stringify({
         message: content,
-        channel_id: parseInt(message.channelId, 10) || null,
+        // Discord snowflakes exceed JS Number safe range — pass as string.
+        channel_id: message.channelId,
         channel_name: (message.channel as TextChannel).name
           ? `#${(message.channel as TextChannel).name}`
           : `Channel ${message.channelId}`,

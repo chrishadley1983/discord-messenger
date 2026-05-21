@@ -1034,6 +1034,11 @@ class PeterbotScheduler:
         Default is off so fixed-data skills (hydration, sports scores) don't
         bloat their prompts with irrelevant matches. Surfacing failures are
         non-fatal — original context is returned unchanged.
+
+        Perf note: this re-parses the skill frontmatter that _get_skill_model
+        already parsed earlier in the same job. yaml.safe_load on ~1KB is
+        microseconds so we accept the duplication for code locality; if the
+        path ever shows up in a profile, pass parsed frontmatter through.
         """
         try:
             frontmatter = self._parse_skill_frontmatter(skill_content) or {}

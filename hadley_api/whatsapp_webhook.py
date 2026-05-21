@@ -109,11 +109,16 @@ async def _whatsapp_channel_healthy() -> bool:
 
     Returns False when the channel is unreachable so the webhook can fall
     back to the bot.py handler instead of silently dropping the message.
+
+    Asymmetry with bot.py's peter-channel probe: whatsapp-channel /health
+    only reports HTTP server up-state (no Discord field equivalent), so we
+    only check status_code==200. peter-channel additionally checks the
+    'discord' field. Both share the same session-hang limitation — see
+    bot._peter_channel_healthy.
     """
     global _whatsapp_channel_health_cache
-    import time as _time
     cached_at, healthy = _whatsapp_channel_health_cache
-    now = _time.monotonic()
+    now = time.monotonic()
     if now - cached_at < _HEALTH_CACHE_TTL:
         return healthy
     try:

@@ -21,15 +21,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from domains.peterbot.config import USD_TO_GBP
+from hadley_api.auth import require_auth
 from logger import logger
 
 router = APIRouter(prefix="/response", tags=["peter"])
 
 COST_LOG_PATH = Path(__file__).resolve().parents[2] / "data" / "cli_costs.jsonl"
-USD_TO_GBP = 0.79
 
 
 class CostLogRequest(BaseModel):
@@ -44,7 +45,7 @@ class CostLogRequest(BaseModel):
     tools_used: Optional[list[str]] = None
 
 
-@router.post("/cost")
+@router.post("/cost", dependencies=[Depends(require_auth)])
 async def log_cost(body: CostLogRequest):
     """Append a cost/volume entry to cli_costs.jsonl from a channel."""
     entry = {

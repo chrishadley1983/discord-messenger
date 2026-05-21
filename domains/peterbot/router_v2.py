@@ -34,6 +34,7 @@ from .config import (
     CLI_WORKING_DIR,
     DOCUMENT_MIN_LENGTH,
     DOCUMENT_MIN_HEADERS,
+    USD_TO_GBP,
 )
 
 # Windows: hide console window when running WSL commands
@@ -46,9 +47,6 @@ if IS_WINDOWS:
 else:
     STARTUPINFO = None
     CREATE_NO_WINDOW = 0
-
-# Approximate USD to GBP conversion rate (updated periodically)
-USD_TO_GBP = 0.79
 
 # Directory for WSL-side PID files (used to kill orphaned processes)
 WSL_PID_DIR = "/tmp/peterbot_pids"

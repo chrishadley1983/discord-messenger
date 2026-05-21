@@ -43,6 +43,22 @@ const HADLEY_AUTH_KEY = process.env.HADLEY_AUTH_KEY || "";
 const lastUserMessage = new Map<string, string>();
 const messageStartTime = new Map<string, number>();
 
+// LRU cap so per-sender state maps don't grow unbounded across long sessions
+const STATE_MAP_MAX = 1000;
+function trimState<K, V>(m: Map<K, V>) {
+  while (m.size > STATE_MAP_MAX) {
+    const oldest = m.keys().next().value;
+    if (oldest === undefined) break;
+    m.delete(oldest);
+  }
+}
+
+function hadleyHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json", ...extra };
+  if (HADLEY_AUTH_KEY) h["x-api-key"] = HADLEY_AUTH_KEY;
+  return h;
+}
+
 // Message volume tracking
 let messagesIn = 0;
 let messagesOut = 0;
@@ -207,7 +223,7 @@ async function handleReply(phone: string, text: string) {
   const durationMs = startedAt ? Date.now() - startedAt : 0;
   fetch(`${HADLEY_API}/response/cost`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: hadleyHeaders(),
     body: JSON.stringify({
       source: "channel:whatsapp",
       channel: "WhatsApp",
@@ -308,6 +324,8 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
     // Track last user message for Second Brain capture
     lastUserMessage.set(reply_to, text);
     messageStartTime.set(reply_to, Date.now());
+    trimState(lastUserMessage);
+    trimState(messageStartTime);
 
     // Pre-build full context via Hadley API for parity with router_v2:
     // Japan trip context, pending-actions block, Second Brain surfacing,
@@ -316,7 +334,7 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
     try {
       const resp = await fetch(`${HADLEY_API}/peter/build-context`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: hadleyHeaders(),
         body: JSON.stringify({
           message: text,
           channel_name: "WhatsApp",

@@ -111,6 +111,11 @@ async def _peter_channel_healthy() -> bool:
     HEALTH_CACHE_TTL seconds, or if we just probed and got a healthy response.
     Returns False when the channel is unreachable / errored — caller should
     fall back to router_v2.
+
+    Known limitation: /health reports Discord+MCP up-state only. A wedged
+    Claude Code session inside the channel will still pass this probe.
+    The 1-min channel watchdog (registered in on_ready) catches dead tmux
+    sessions; for session-level hangs we rely on the per-message timeout.
     """
     global _peter_channel_health_cache
     cached_at, healthy = _peter_channel_health_cache
