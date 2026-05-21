@@ -761,6 +761,7 @@ class PeterbotScheduler:
 
             # 3. Build context
             context = self._build_skill_context(job, skill_content, data)
+            context = await self._maybe_inject_surfacing(context, job, skill_content)
 
             # 4. Send to Claude Code with timeout
             try:
@@ -1020,6 +1021,37 @@ class PeterbotScheduler:
         except yaml.YAMLError as e:
             logger.warning(f"YAML parse error in skill frontmatter: {e}")
             return None
+
+    async def _maybe_inject_surfacing(self, context: str, job: JobConfig, skill_content: str) -> str:
+        """Append Second Brain surfacing block when the skill opts in.
+
+        Skills opt in via SKILL.md frontmatter:
+            surface_knowledge: true
+        or nested under metadata:
+            metadata:
+              surface_knowledge: true
+
+        Default is off so fixed-data skills (hydration, sports scores) don't
+        bloat their prompts with irrelevant matches. Surfacing failures are
+        non-fatal — original context is returned unchanged.
+        """
+        try:
+            frontmatter = self._parse_skill_frontmatter(skill_content) or {}
+            flag = frontmatter.get("surface_knowledge")
+            if flag is None and isinstance(frontmatter.get("metadata"), dict):
+                flag = frontmatter["metadata"].get("surface_knowledge")
+            if not flag:
+                return context
+
+            from domains.second_brain.surfacing import get_context_for_message
+            query = f"{job.skill} {job.name}".strip()
+            knowledge_context = await get_context_for_message(query)
+            if knowledge_context and knowledge_context.strip():
+                logger.info(f"Injected surfacing context for {job.skill}")
+                return context + "\n\n" + knowledge_context.strip()
+        except Exception as e:
+            logger.debug(f"Skill surfacing failed for {job.skill}: {e}")
+        return context
 
     def _build_skill_context(self, job: JobConfig, skill_content: str, data: Optional[dict]) -> str:
         """Build full context for Claude Code execution."""
@@ -1546,6 +1578,7 @@ class PeterbotScheduler:
 
             # 3. Build context (manual execution marker)
             context = self._build_skill_context_manual(job, skill_content, data)
+            context = await self._maybe_inject_surfacing(context, job, skill_content)
 
             # 4. Send to Claude Code
             response = await self._send_to_claude_code_v2(context, job=job)

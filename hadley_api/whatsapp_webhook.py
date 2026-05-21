@@ -95,11 +95,46 @@ ALLOWED_SENDERS_BY_NUMBER = {
 
 # WhatsApp message routing — channel mode or bot.py handler
 _WHATSAPP_USE_CHANNEL = os.getenv("WHATSAPP_USE_CHANNEL", "0") == "1"
-DISCORDBOT_WHATSAPP_URL = (
-    "http://127.0.0.1:8102/whatsapp/message"   # Channel MCP server
-    if _WHATSAPP_USE_CHANNEL else
-    "http://127.0.0.1:8101/whatsapp/message"    # bot.py handler (original)
-)
+_WHATSAPP_CHANNEL_URL = "http://127.0.0.1:8102/whatsapp/message"
+_WHATSAPP_BOT_URL = "http://127.0.0.1:8101/whatsapp/message"
+_WHATSAPP_CHANNEL_HEALTH = "http://127.0.0.1:8102/health"
+
+# Health probe cache so we don't hit the channel /health on every webhook
+_HEALTH_CACHE_TTL = 30  # seconds
+_whatsapp_channel_health_cache: tuple[float, bool] = (0.0, True)
+
+
+async def _whatsapp_channel_healthy() -> bool:
+    """Probe whatsapp-channel /health with a short TTL cache.
+
+    Returns False when the channel is unreachable so the webhook can fall
+    back to the bot.py handler instead of silently dropping the message.
+    """
+    global _whatsapp_channel_health_cache
+    import time as _time
+    cached_at, healthy = _whatsapp_channel_health_cache
+    now = _time.monotonic()
+    if now - cached_at < _HEALTH_CACHE_TTL:
+        return healthy
+    try:
+        async with httpx.AsyncClient(timeout=2) as client:
+            resp = await client.get(_WHATSAPP_CHANNEL_HEALTH)
+            healthy = resp.status_code == 200
+    except Exception as e:
+        logger.debug(f"whatsapp-channel health probe failed: {e}")
+        healthy = False
+    _whatsapp_channel_health_cache = (now, healthy)
+    return healthy
+
+
+async def _resolve_whatsapp_url() -> str:
+    """Pick the active WhatsApp forwarding URL based on flag + channel health."""
+    if not _WHATSAPP_USE_CHANNEL:
+        return _WHATSAPP_BOT_URL
+    if await _whatsapp_channel_healthy():
+        return _WHATSAPP_CHANNEL_URL
+    logger.warning("whatsapp-channel /health unhealthy — routing to bot.py handler")
+    return _WHATSAPP_BOT_URL
 
 # Evolution API config (for media download)
 EVOLUTION_URL = os.getenv("EVOLUTION_API_URL", "http://localhost:8085")
@@ -887,23 +922,25 @@ async def _debounce_flush(sender_number: str):
         "is_voice": has_voice,
     }
 
+    target_url = await _resolve_whatsapp_url()
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                DISCORDBOT_WHATSAPP_URL,
+                target_url,
                 json=_payload,
                 timeout=600,
             )
-            logger.info(f"WhatsApp forward to Peter: {resp.status_code}")
+            logger.info(f"WhatsApp forward to {target_url}: {resp.status_code}")
     except Exception as e:
-        logger.error(f"WhatsApp forward failed: {e}")
-        # Smart fallback: if channel mode is on but unreachable, try bot.py handler
-        if _WHATSAPP_USE_CHANNEL:
-            logger.warning("Channel unreachable — falling back to bot.py handler")
+        logger.error(f"WhatsApp forward failed ({target_url}): {e}")
+        # Belt-and-braces fallback: if we tried the channel and it threw,
+        # try the bot.py handler before giving up.
+        if target_url == _WHATSAPP_CHANNEL_URL:
+            logger.warning("Channel POST exception — falling back to bot.py handler")
             try:
                 async with httpx.AsyncClient() as client:
                     resp = await client.post(
-                        "http://127.0.0.1:8101/whatsapp/message",
+                        _WHATSAPP_BOT_URL,
                         json=_payload,
                         timeout=600,
                     )

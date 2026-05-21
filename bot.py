@@ -97,6 +97,45 @@ scheduler = AsyncIOScheduler(job_defaults={"misfire_grace_time": 60})
 _processed_messages: dict[int, float] = {}  # message_id -> timestamp
 MESSAGE_DEDUP_SECONDS = 5
 
+# Health probe cache for channel smart-fallback. We probe the channel HTTP
+# /health endpoint and cache the result for HEALTH_CACHE_TTL seconds so we
+# don't add latency to every Discord message.
+HEALTH_CACHE_TTL = 30  # seconds
+_peter_channel_health_cache: tuple[float, bool] = (0.0, True)  # (cached_at, healthy)
+
+
+async def _peter_channel_healthy() -> bool:
+    """Probe peter-channel /health with a short TTL cache.
+
+    Returns True if the channel responded healthy within the last
+    HEALTH_CACHE_TTL seconds, or if we just probed and got a healthy response.
+    Returns False when the channel is unreachable / errored — caller should
+    fall back to router_v2.
+    """
+    global _peter_channel_health_cache
+    cached_at, healthy = _peter_channel_health_cache
+    now = time.monotonic()
+    if now - cached_at < HEALTH_CACHE_TTL:
+        return healthy
+
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "http://localhost:8104/health",
+                timeout=aiohttp.ClientTimeout(total=2),
+            ) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"status {resp.status}")
+                data = await resp.json()
+                healthy = data.get("discord") == "connected"
+    except Exception as e:
+        logger.debug(f"peter-channel health probe failed: {e}")
+        healthy = False
+
+    _peter_channel_health_cache = (now, healthy)
+    return healthy
+
 # Peterbot scheduler (Phase 7 - skill-based jobs)
 # Set to True to use new SCHEDULE.md-based scheduler, False for legacy jobs
 USE_PETERBOT_SCHEDULER = True  # Phase 7b complete - skills created
@@ -779,10 +818,16 @@ async def on_message(message):
     # Peterbot domain - Claude Code routing WITH memory context
     # Works in multiple channels (peterbot, ai-briefings, etc.)
     # When PETERBOT_USE_CHANNEL=1, Discord messages are handled by the
-    # channel MCP server (Peter H bot) — skip router_v2 processing here.
+    # channel MCP server (Peter H bot) — but only if the channel is healthy.
+    # If peter-channel /health is unreachable, fall through to router_v2 so
+    # messages aren't silently dropped while the channel is down.
     _PETERBOT_USE_CHANNEL = os.environ.get("PETERBOT_USE_CHANNEL", "0") == "1"
     if message.channel.id in PETERBOT_CHANNEL_IDS and _PETERBOT_USE_CHANNEL:
-        return  # Peter H handles all chat — no fallback to router_v2
+        if await _peter_channel_healthy():
+            return  # Peter H handles it
+        logger.warning(
+            f"peter-channel /health unhealthy — falling back to router_v2 for channel {message.channel.id}"
+        )
     if message.channel.id in PETERBOT_CHANNEL_IDS:
         async with message.channel.typing():
             # Check if buffer needs populating from Discord history (e.g., after restart)

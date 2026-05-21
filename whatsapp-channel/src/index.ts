@@ -41,6 +41,7 @@ const HADLEY_AUTH_KEY = process.env.HADLEY_AUTH_KEY || "";
 // ---------------------------------------------------------------------------
 
 const lastUserMessage = new Map<string, string>();
+const messageStartTime = new Map<string, number>();
 
 // Message volume tracking
 let messagesIn = 0;
@@ -201,6 +202,22 @@ async function handleReply(phone: string, text: string) {
       .catch((e) => log(`Capture failed (non-blocking): ${e}`));
   }
 
+  // Fire-and-forget: log channel turn for dashboard parity
+  const startedAt = messageStartTime.get(phone);
+  const durationMs = startedAt ? Date.now() - startedAt : 0;
+  fetch(`${HADLEY_API}/response/cost`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "channel:whatsapp",
+      channel: "WhatsApp",
+      message_preview: (userMsg || "").slice(0, 80),
+      duration_ms: durationMs,
+      response_chars: text.trim().length,
+    }),
+    signal: AbortSignal.timeout(5000),
+  }).catch((e) => log(`Cost log failed (non-blocking): ${e}`));
+
   return { content: [{ type: "text" as const, text: `Sent text to ${phone}` }] };
 }
 
@@ -290,12 +307,43 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
 
     // Track last user message for Second Brain capture
     lastUserMessage.set(reply_to, text);
+    messageStartTime.set(reply_to, Date.now());
+
+    // Pre-build full context via Hadley API for parity with router_v2:
+    // Japan trip context, pending-actions block, Second Brain surfacing,
+    // channel isolation, UK time. On failure fall back to raw text.
+    let prebuiltContext = text;
+    try {
+      const resp = await fetch(`${HADLEY_API}/peter/build-context`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          channel_name: "WhatsApp",
+          sender_number: sender_number,
+          is_whatsapp: true,
+          include_surfacing: true,
+        }),
+        signal: AbortSignal.timeout(3000),
+      });
+      if (resp.ok) {
+        const json = (await resp.json()) as { context?: string; blocks?: string[]; surfaced_count?: number };
+        if (json.context) {
+          prebuiltContext = json.context;
+          log(`build-context: ${(json.blocks || []).join(",")} (surfaced=${json.surfaced_count || 0})`);
+        }
+      } else {
+        log(`build-context returned ${resp.status} — using raw text`);
+      }
+    } catch (err) {
+      log(`build-context fetch failed (${err}) — using raw text`);
+    }
 
     // Push into Claude Code session
     await mcp.notification({
       method: "notifications/claude/channel",
       params: {
-        content: text,
+        content: prebuiltContext,
         meta: {
           phone: reply_to,
           sender: sender_name,
