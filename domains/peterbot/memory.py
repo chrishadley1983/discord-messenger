@@ -1,13 +1,51 @@
-"""Memory client for peterbot - context retrieval and capture via Second Brain."""
+"""Memory client for peterbot - context retrieval and capture via Second Brain.
+
+Drift warning: `build_full_context` here and `hadley_api/peter_routes/
+build_context.py` implement the same context-assembly logic for two callers
+(router_v2 fallback and the channel HTTP endpoint respectively). Keep them
+in sync until v2 is refactored to call the endpoint.
+"""
 
 import asyncio
+import re
 from collections import deque
 from typing import Optional
+from urllib.parse import quote as _urlquote
 
 from logger import logger
 from .config import (
     RECENT_BUFFER_SIZE,
 )
+
+# Mirrors the scrubber in peter-channel/src/index.ts. Windows/WSL paths to
+# media files appear in Discord messages (e.g. when Chris drags a photo from
+# Google Drive). Claude in WSL can't Read those paths and the attempt yields
+# an Anthropic 400 "Could not process image" that poisons the whole turn.
+# Replace with a placeholder that points Peter at the drive-search skill.
+_MEDIA_EXTS = "png|jpg|jpeg|gif|webp|heic|bmp|pdf"
+_WINDOWS_MEDIA_PATH_RE = re.compile(
+    r'(?:[A-Za-z]:\\|/mnt/[a-z]/)[^\n\r"\'<>]+?\.(?:' + _MEDIA_EXTS + r')(?=$|[\s"\'<>.,;!?])',
+    re.IGNORECASE,
+)
+
+
+def _scrub_windows_media_paths(text: str) -> str:
+    """Replace Windows/WSL media paths with a drive-search hint."""
+    if not text:
+        return text
+
+    def _replace(match: re.Match) -> str:
+        path = match.group(0)
+        filename = path.replace("\\", "/").rsplit("/", 1)[-1]
+        return (
+            f"[Google Drive file: {filename} - do NOT try to Read this path "
+            f"(WSL cannot access it). Use the drive-search skill: "
+            f"GET /drive/search?q={_urlquote(filename)} then "
+            f"GET /drive/file?file_id=<id> to fetch bytes into /tmp/<name>. "
+            f"If the file is not found, tell Chris clearly.]"
+        )
+
+    return _WINDOWS_MEDIA_PATH_RE.sub(_replace, text)
 
 # Per-channel recent conversation buffers
 # Each channel has its own deque to avoid context mixing
@@ -169,9 +207,9 @@ def build_full_context(
         parts.append(recent)
         parts.append("")
 
-    # Add current message
+    # Add current message (with Windows/WSL media-path scrub for anti-poison)
     parts.append("## Current Message")
-    parts.append(message)
+    parts.append(_scrub_windows_media_paths(message))
 
     # Add attachments if present
     if attachment_urls:

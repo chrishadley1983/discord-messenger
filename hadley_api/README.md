@@ -411,6 +411,15 @@ STT (speech-to-text), TTS (text-to-speech), and full conversational voice pipeli
 - `GET /whatsapp/status` - Connection status
 - Voice notes: incoming WhatsApp voice notes are auto-transcribed and routed to Peter. Replies include both text and a voice note.
 
+### Peter Channel Context (shared with peter-channel / whatsapp-channel / scheduler)
+- `POST /peter/build-context` - Build the full context block a channel should push into its Claude session. Bundles channel-isolation header, current UK time, Japan-trip context (WhatsApp during trip window), pending-actions block, Second Brain surfacing, and attachment section with Read-tool guidance. Single source of truth used by every entry point so the channel path stays at feature parity with `router_v2.handle_message`.
+  - Body: `{message, channel_id?, channel_name?, sender_number?, is_whatsapp?, attachment_urls?, include_surfacing?}`
+  - Response: `{context, surfaced_count, blocks}`
+- `POST /response/cost` - Append a best-effort cost/volume entry to `data/cli_costs.jsonl` from a channel reply tool. Channels don't have per-token usage from a running Claude Code session, so this records what we can (source, channel, duration_ms, response_chars) to keep the cost dashboard populated.
+- `POST /attachment/download` - Download Discord image/audio attachments to `data/tmp/attachments/` and transcribe voice notes. Mirrors `router_v2._download_attachments` for the channel path so Discord CDN URLs don't expire before Claude reads them and voice notes get transcribed.
+  - Body: `{attachment_urls: [{url, filename, content_type, size}]}`
+  - Response: `{attachments: [{..., local_path?, transcription?}], transcriptions: [...]}`
+
 ### GCP Monitoring
 - `GET /gcp/usage?hours=24` - API request counts and estimated cost from Cloud Monitoring (last N hours)
 - `GET /gcp/monthly` - Month-to-date spend estimate with full-month projection and top services breakdown

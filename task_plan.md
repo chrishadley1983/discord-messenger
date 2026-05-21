@@ -1,192 +1,88 @@
-# Remote Worker Reliability Plan
+# Task Plan — Channel Pipeline Parity
 
-## Objective
-Make peterbot memory capture reliable during worker outages while maintaining honest operation when context is unavailable.
+Branch: `feature/channel-pipeline-parity`
+Created: 2026-05-21
 
-## Revised Architecture
+## Problem
 
-```
-Discord Message
-      ↓
-router.py
-      ↓
-memory_client.py (consolidated)
-      │
-      ├── get_context()
-      │       ↓
-      │   Circuit Breaker
-      │       ├── CLOSED → Worker → cache response locally
-      │       └── OPEN → Return cached context + degraded mode flag
-      │
-      └── capture_pair()
-              ↓
-      Local SQLite: pending_captures.db
-              ↓
-      Background Processor (every 30s)
-      - One capture at a time
-      - 2-3s delay between sends
-      - Respects circuit breaker
-              ↓
-      Worker (when available)
-```
+When `PETERBOT_USE_CHANNEL=1` / `WHATSAPP_USE_CHANNEL=1` (the primary path since Mar 2026), `bot.py:797` returns immediately and `hadley_api/whatsapp_webhook.py:99-102` forwards to port 8102. Both bypass `router_v2.handle_message`, silently dropping every feature added to v2 after the channel cutover.
 
-## Implementation Phases
+| Feature | v2 | peter-channel | whatsapp-channel | jobs-channel | Severity |
+|---|---|---|---|---|---|
+| Second Brain surfacing (`get_context_for_message`) | yes | NO | NO | NO | HIGH |
+| Provider fallback Claude->cc2->Kimi | yes | NO | NO | partial | HIGH |
+| Japan trip context | yes | NO | NO | NO | HIGH during trip |
+| WhatsApp pending actions block | yes | n/a | NO | n/a | HIGH |
+| Cost logging to `cli_costs.jsonl` | yes | NO | NO | partial | MEDIUM |
+| Attachment download to local tmp | yes | NO (URL only) | NO | n/a | MEDIUM |
+| Voice transcription prepended | yes | n/a | NO | n/a | MEDIUM |
+| Channel isolation header | yes | partial | partial | yes | LOW |
+| Current UK time in context | yes | NO | NO | yes | LOW |
+| Buffer restore on restart | yes | uses last-6 fetch | NO | n/a | LOW |
+| Windows media-path scrubber | NO | yes | NO | NO | reverse drift |
+| Document auto-save | yes | yes | yes | n/a | already wired via /response/capture |
 
-### Phase 1: Consolidate & Persist (Foundation) ✅ COMPLETE
-**Goal**: Single memory client, durable capture queue
+## Solution shape
 
-- [x] Create `pending_captures.db` schema
-- [x] Create `domains/peterbot/capture_store.py` - SQLite persistence layer
-- [x] Refactor `memory.py`:
-  - Write to local DB first (always succeeds)
-  - Attempt immediate send (fire-and-forget)
-  - Return success to caller immediately
-- [x] Remove `domain.py:send_to_memory()` - use `memory.py` everywhere
-- [x] Update `worker_health.py` to use `config.py` WORKER_URL (not hardcoded)
-- [x] End-to-end tests passing (tests/test_phase1_e2e.py)
+Extract v2's `handle_message` context-build into a shared HTTP endpoint on Hadley API. Channels call it before pushing the MCP notification. Channels stay as dumb pipes; the pipeline becomes the single source of truth.
 
-**Schema**:
-```sql
-CREATE TABLE pending_captures (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT NOT NULL,
-    user_message TEXT NOT NULL,
-    assistant_response TEXT NOT NULL,
-    channel TEXT DEFAULT 'peterbot',
-    created_at INTEGER NOT NULL,
-    status TEXT DEFAULT 'pending',  -- pending, sending, sent, failed
-    retries INTEGER DEFAULT 0,
-    last_error TEXT,
-    sent_at INTEGER
-);
+## Phases
 
-CREATE INDEX idx_status ON pending_captures(status);
-CREATE INDEX idx_created ON pending_captures(created_at);
+### Phase 1 — Shared context (HIGH impact, LOW risk)
+
+- **F1** — `POST /peter/build-context` on Hadley API. Lifts `memory.build_full_context` + the surfacing call from `router_v2.py:917-932` into one endpoint. Files: `hadley_api/peter_routes/build_context.py` (new).
+- **F2** — `peter-channel/src/index.ts` calls the endpoint before MCP notification at ~line 374. Falls back to raw content on fetch failure.
+- **F3** — `whatsapp-channel/src/index.ts` calls the endpoint at ~line 294. Passes `sender_number` for pending-actions.
+- **F4** — `scheduler.py:_build_skill_context` calls the endpoint when SKILL.md frontmatter has `metadata.surface_knowledge: true`. Default off so fixed-data skills don't pay the cost.
+
+### Phase 2 — Lifecycle parity (MEDIUM impact)
+
+- **F5** — `POST /response/cost`. Channel reply tools post `{source, channel, duration_ms, response_chars}` to keep `cli_costs.jsonl` populated.
+- **F6** — `POST /attachment/download`. Mirrors `router_v2._download_attachments`; `peter-channel` calls it for image/audio attachments before MCP push.
+- **F7** — Port `peter-channel`'s `WINDOWS_MEDIA_PATH_RE` scrubber into `memory.build_full_context` so v2 fallback also protected.
+
+### Phase 3 — Robustness
+
+- **F8** — Smart fallback. `bot.py:796` and `hadley_api/whatsapp_webhook.py:101` probe channel `/health` (5s cache). If unhealthy, fall through to `router_v2.handle_message`. Currently when `USE_CHANNEL=1` and channel is down, messages are silently dropped.
+
+True provider fallback to cc2/Kimi inside a running channel session is deferred — requires killing and respawning the WSL tmux session with new env vars.
+
+### Phase 4 — Verification and docs
+
+- **F9** — `npx tsc --noEmit` on both channels. No deploy from this branch — channels are NSSM/tmux-managed and Chris restarts them.
+- **F10** — Update `hadley_api/README.md` with new endpoints. Add a section to project `CLAUDE.md` documenting the channel context-build flow.
+
+## Smoke tests
+
+After F1, against the running Hadley API:
+
+```bash
+curl -s -X POST http://localhost:8100/peter/build-context \
+  -H "Content-Type: application/json" \
+  -d '{"message":"what is family fuel","channel_id":1234,"channel_name":"#peterbot"}' | jq .
 ```
 
-### Phase 2: Circuit Breaker (Stability) ✅ COMPLETE
-**Goal**: Stop hammering dead worker, graceful degradation
-
-- [x] Create `domains/peterbot/circuit_breaker.py`
-- [x] Wrap worker calls (both capture and context) with circuit breaker
-- [x] States:
-  - CLOSED: Normal operation
-  - OPEN: Worker down, use fallbacks (5 consecutive failures → OPEN)
-  - HALF_OPEN: Testing recovery after 30s (1 success → CLOSED, 1 failure → OPEN)
-- [x] Add circuit state to health check output
-- [x] Add circuit state to alerts (worker error, local queue building)
-- [x] Comprehensive tests (test_circuit_breaker.py, test_worker_health.py, test_phase2_integration.py)
-
-**Config additions** (`config.py`):
-```python
-# Circuit breaker
-CIRCUIT_FAILURE_THRESHOLD = 5
-CIRCUIT_RECOVERY_TIMEOUT = 30  # seconds
+WhatsApp variant:
+```bash
+curl -s -X POST http://localhost:8100/peter/build-context \
+  -H "Content-Type: application/json" \
+  -d '{"message":"is plan still A","channel_name":"WhatsApp","sender_number":"447855620978","is_whatsapp":true}' | jq .
 ```
 
-### Phase 3: Context Cache & Degraded Mode (Continuity) ✅ COMPLETE
-**Goal**: Peter remains useful during outages, honest about limitations
+## Deploy steps (not executed from this branch — Chris's call)
 
-- [x] Add context cache table:
-```sql
-CREATE TABLE context_cache (
-    query_hash TEXT PRIMARY KEY,
-    context TEXT NOT NULL,
-    fetched_at INTEGER NOT NULL
-);
-```
-- [x] Cache context responses (last 50 queries, expire after 1 hour)
-- [x] When circuit OPEN:
-  - Try cache first (stale OK)
-  - If no cache hit, inject degraded mode notice
-- [x] Degraded mode notice for Peter
-- [x] get_memory_context returns tuple (context, is_degraded)
-- [x] Cache stats exported via memory.get_cache_stats()
-- [x] Comprehensive tests (test_context_cache.py - 12 tests)
+1. Merge to main
+2. NSSM restart HadleyAPI
+3. WSL tmux: `tmux kill-session -t peter-channel`, `-t whatsapp-channel`; watchdog respawns with new TS
+4. Verify channel `/health` and round-trip a message; expect surfacing block visible in `/tmp/peter-channel-app.log`
 
-**Config additions** (`config.py`):
-```python
-# Context cache
-CONTEXT_CACHE_MAX_ENTRIES = 50
-CONTEXT_CACHE_TTL_SECONDS = 3600  # 1 hour
-DEGRADED_MODE_NOTICE = "..."
-```
+## Out of scope (follow-ups)
 
-### Phase 4: Background Processor (Reliability) ✅ COMPLETE
-**Goal**: Drain pending queue when worker available
+- True provider fallback within a running channel session (Claude credits exhausted mid-turn)
+- Per-token cost capture from Claude Code MCP result events
+- Voice transcription for incoming WhatsApp voice notes via channel path
+- Buffer-restore parity for channels (current last-6 Discord fetch works but differently)
 
-- [x] Create `jobs/capture_processor.py`
-- [x] Register with APScheduler (every 30 seconds)
-- [x] Logic:
-  1. Check circuit state - if OPEN, skip
-  2. Get oldest pending capture
-  3. Attempt send (with 5s timeout)
-  4. On success: mark sent, update sent_at
-  5. On failure: increment retries, log error
-  6. If retries >= 5: mark as failed (stop trying)
-  7. Wait 2 seconds before next item
-  8. Process max 10 per cycle (prevent runaway)
-- [x] Add cleanup job (daily at 3:00 AM):
-  - Delete sent captures older than 7 days
-  - Delete failed captures older than 30 days
-  - Clean up expired context cache entries
-- [x] Comprehensive tests (test_capture_processor.py - 10 tests)
-
-**Config additions** (`config.py`):
-```python
-# Background capture processor
-CAPTURE_PROCESSOR_INTERVAL = 30
-CAPTURE_PROCESSOR_MAX_PER_CYCLE = 10
-CAPTURE_PROCESSOR_DELAY_BETWEEN = 2
-```
-
-### Phase 5: Enhanced Monitoring (Visibility)
-**Goal**: Know what's happening
-
-- [ ] Increase health check frequency: 15min → 2min
-- [ ] Add metrics to health check:
-  - `queue_depth`: pending captures count
-  - `circuit_state`: CLOSED/OPEN/HALF_OPEN
-  - `success_rate_1h`: captures sent successfully in last hour
-  - `oldest_pending_age`: seconds since oldest pending capture
-- [ ] Alert thresholds:
-  - queue_depth > 50 → WARNING
-  - queue_depth > 200 → CRITICAL
-  - oldest_pending_age > 3600 (1hr) → WARNING
-  - circuit_state == OPEN for > 30min → CRITICAL
-
-## File Changes
-
-| File | Action | Description |
-|------|--------|-------------|
-| `domains/peterbot/capture_store.py` | CREATE | SQLite persistence for captures + context cache |
-| `domains/peterbot/circuit_breaker.py` | CREATE | Circuit breaker implementation |
-| `domains/peterbot/memory.py` | REFACTOR | Use capture_store, add circuit breaker, context cache |
-| `domains/peterbot/config.py` | MODIFY | Add circuit breaker config, DB paths |
-| `domains/peterbot/domain.py` | MODIFY | Remove send_to_memory(), delegate to memory.py |
-| `jobs/capture_processor.py` | CREATE | Background queue processor |
-| `jobs/worker_health.py` | REFACTOR | Use config URL, add metrics, 2min interval |
-| `jobs/__init__.py` | MODIFY | Register capture_processor job |
-
-## Success Criteria
-
-| Metric | Current | Target |
-|--------|---------|--------|
-| Message loss during 1hr outage | ~100% | <1% |
-| Time to detect worker failure | 15 min | 2 min |
-| Context during outage | None (amnesiac) | Cached/degraded mode |
-| Code duplication | 2 implementations | 1 implementation |
-| Capture queue visibility | None | Real-time metrics |
-
-## Out of Scope (Deferred)
-
-- **Automatic gap detection**: Compare Discord history vs captures to find missed messages. Revisit only if persistent queue proves insufficient.
-- **Worker auto-restart**: Handled by systemd/supervisor, not the bot.
-- **Multi-worker support**: Single worker is sufficient for current scale.
-
-## Error Log
+## Error log
 
 (Track errors encountered during implementation)
-
----
-Created: 2026-02-02

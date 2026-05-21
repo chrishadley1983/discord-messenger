@@ -94,6 +94,7 @@ const mcp = new Server(
 // ---------------------------------------------------------------------------
 
 const lastUserMessage = new Map<string, string>();
+const messageStartTime = new Map<string, number>();
 
 // Message volume tracking for cost visibility
 let messagesIn = 0;   // Messages received from Discord
@@ -102,6 +103,23 @@ const sessionStart = new Date().toISOString();
 
 // Hadley API base URL (accessible from WSL via host gateway)
 const HADLEY_API = "http://172.19.64.1:8100";
+const HADLEY_AUTH_KEY = process.env.HADLEY_AUTH_KEY || "";
+
+// LRU cap so per-channel state maps don't grow unbounded across long sessions
+const STATE_MAP_MAX = 1000;
+function trimState<K, V>(m: Map<K, V>) {
+  while (m.size > STATE_MAP_MAX) {
+    const oldest = m.keys().next().value;
+    if (oldest === undefined) break;
+    m.delete(oldest);
+  }
+}
+
+function hadleyHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json", ...extra };
+  if (HADLEY_AUTH_KEY) h["x-api-key"] = HADLEY_AUTH_KEY;
+  return h;
+}
 
 // ---------------------------------------------------------------------------
 // Reply tool — Claude calls this to send messages back to Discord
@@ -174,6 +192,22 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       .then((r) => log(`Capture: ${r.status}`))
       .catch((e) => log(`Capture failed (non-blocking): ${e}`));
   }
+
+  // Fire-and-forget: log channel turn to cli_costs.jsonl for dashboard parity
+  const startedAt = messageStartTime.get(chat_id);
+  const durationMs = startedAt ? Date.now() - startedAt : 0;
+  fetch(`${HADLEY_API}/response/cost`, {
+    method: "POST",
+    headers: hadleyHeaders(),
+    body: JSON.stringify({
+      source: "channel:peter",
+      channel: channel.name ? `#${channel.name}` : `Channel ${chat_id}`,
+      message_preview: (userMsg || "").slice(0, 80),
+      duration_ms: durationMs,
+      response_chars: text.trim().length,
+    }),
+    signal: AbortSignal.timeout(5000),
+  }).catch((e) => log(`Cost log failed (non-blocking): ${e}`));
 
   return {
     content: [
@@ -294,11 +328,55 @@ discord.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  // Build message content including any attachment URLs
+  // Build message content. Image/audio attachments are downloaded locally
+  // via Hadley API so Claude Code can Read them and so we capture voice-note
+  // transcriptions; everything else keeps the markdown URL fallback.
   let content = message.content || "";
-  if (message.attachments.size > 0) {
-    const attachmentList = message.attachments
-      .map((a) => `[${a.name}](${a.url})`)
+  const rawAttachments = [...message.attachments.values()].map((a) => ({
+    url: a.url,
+    filename: a.name || "file",
+    content_type: a.contentType || "",
+    size: a.size || 0,
+  }));
+  const mediaAttachments = rawAttachments.filter(
+    (a) => a.content_type.startsWith("image/") || a.content_type.startsWith("audio/")
+  );
+  const nonMediaAttachments = rawAttachments.filter(
+    (a) => !a.content_type.startsWith("image/") && !a.content_type.startsWith("audio/")
+  );
+
+  let downloadedAttachments: Array<Record<string, unknown>> = [];
+  if (mediaAttachments.length > 0) {
+    try {
+      const r = await fetch(`${HADLEY_API}/attachment/download`, {
+        method: "POST",
+        headers: hadleyHeaders(),
+        body: JSON.stringify({ attachment_urls: mediaAttachments }),
+        signal: AbortSignal.timeout(45000),
+      });
+      if (r.ok) {
+        const json = (await r.json()) as { attachments: Array<Record<string, unknown>>; transcriptions: string[] };
+        downloadedAttachments = json.attachments || [];
+        if (json.transcriptions && json.transcriptions.length > 0) {
+          const voiceText = json.transcriptions.join("\n");
+          content = content.trim()
+            ? `[Voice note transcription]: ${voiceText}\n\n${content}`
+            : `[Voice note transcription]: ${voiceText}`;
+          log(`Prepended ${json.transcriptions.length} voice transcription(s)`);
+        }
+      } else {
+        log(`/attachment/download returned ${r.status} — falling back to URL markdown`);
+        downloadedAttachments = mediaAttachments;
+      }
+    } catch (err) {
+      log(`/attachment/download failed (${err}) — falling back to URL markdown`);
+      downloadedAttachments = mediaAttachments;
+    }
+  }
+
+  if (nonMediaAttachments.length > 0) {
+    const attachmentList = nonMediaAttachments
+      .map((a) => `[${a.filename}](${a.url})`)
       .join("\n");
     content += `\n\nAttachments:\n${attachmentList}`;
   }
@@ -310,10 +388,13 @@ discord.on(Events.MessageCreate, async (message) => {
     log(`Scrubbed ${scrub.scrubbed.length} Windows media path(s): ${scrub.scrubbed.join(", ")}`);
   }
 
-  if (!content.trim()) return;
+  if (!content.trim() && downloadedAttachments.length === 0) return;
 
   // Track last user message per channel (for Second Brain capture in reply tool)
   lastUserMessage.set(message.channelId, content);
+  messageStartTime.set(message.channelId, Date.now());
+  trimState(lastUserMessage);
+  trimState(messageStartTime);
 
   // Fetch recent channel history so Claude has context of what was previously
   // said in this channel — critical for replies to scheduled job output that
@@ -370,12 +451,47 @@ discord.on(Events.MessageCreate, async (message) => {
     log(`Failed to read active skill context: ${err}`);
   }
 
+  // Pre-build full context via Hadley API. Brings parity with router_v2:
+  // Second Brain surfacing, channel isolation header, current UK time, etc.
+  // On failure (timeout / API down) we fall back to the raw content so the
+  // channel still works — degraded, not dead.
+  let prebuiltContext = content;
+  try {
+    const resp = await fetch(`${HADLEY_API}/peter/build-context`, {
+      method: "POST",
+      headers: hadleyHeaders(),
+      body: JSON.stringify({
+        message: content,
+        // Discord snowflakes exceed JS Number safe range — pass as string.
+        channel_id: message.channelId,
+        channel_name: (message.channel as TextChannel).name
+          ? `#${(message.channel as TextChannel).name}`
+          : `Channel ${message.channelId}`,
+        is_whatsapp: false,
+        include_surfacing: true,
+        attachment_urls: downloadedAttachments.length > 0 ? downloadedAttachments : undefined,
+      }),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (resp.ok) {
+      const json = (await resp.json()) as { context?: string; blocks?: string[]; surfaced_count?: number };
+      if (json.context) {
+        prebuiltContext = json.context;
+        log(`build-context: ${(json.blocks || []).join(",")} (surfaced=${json.surfaced_count || 0})`);
+      }
+    } else {
+      log(`build-context returned ${resp.status} — using raw content`);
+    }
+  } catch (err) {
+    log(`build-context fetch failed (${err}) — using raw content`);
+  }
+
   // Push into Claude Code session
   try {
     await mcp.notification({
       method: "notifications/claude/channel",
       params: {
-        content: content + recentHistory + skillContext,
+        content: prebuiltContext + recentHistory + skillContext,
         meta: {
           chat_id: message.channelId,
           channel_name: (message.channel as TextChannel).name || "unknown",

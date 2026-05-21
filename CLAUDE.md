@@ -24,9 +24,35 @@ Three persistent Claude Code sessions handle all messaging via Anthropic's chann
 - `whatsapp-channel/` — WhatsApp conversations (HTTP :8102, via Evolution API)
 - `jobs-channel/` — Scheduled jobs (HTTP :8103, synchronous reply pattern)
 
-Fallback: `PETERBOT_USE_CHANNEL=0` / `WHATSAPP_USE_CHANNEL=0` / `JOBS_USE_CHANNEL=0` in `.env` reverts to router_v2 (`claude -p` per message). Smart fallback auto-detects dead channel sessions.
+Fallback: `PETERBOT_USE_CHANNEL=0` / `WHATSAPP_USE_CHANNEL=0` / `JOBS_USE_CHANNEL=0` in `.env` reverts to router_v2 (`claude -p` per message). Smart fallback auto-detects dead channel sessions: `bot.py` probes peter-channel `:8104/health` and `whatsapp_webhook.py` probes whatsapp-channel `:8102/health` (30s TTL cache) before routing — if unhealthy, the message falls through to router_v2 instead of being dropped.
+
+**Channel context build**: channels are dumb pipes. Before pushing an MCP notification, each channel POSTs to `POST /peter/build-context` on Hadley API which assembles the channel-isolation header, current UK time, Japan-trip context (WhatsApp), pending-actions block, Second Brain surfacing, and attachment guidance. This keeps the channel path at feature parity with `router_v2.handle_message`. See `hadley_api/peter_routes/build_context.py`.
+
+**Channel cost logging**: channel reply tools POST `/response/cost` so `data/cli_costs.jsonl` records traffic even when claude credits / token usage aren't visible per turn. See `hadley_api/peter_routes/cost_log.py`.
+
+**Channel attachments**: peter-channel POSTs `/attachment/download` for image/audio attachments. Hadley API downloads to `data/tmp/attachments/`, transcribes voice notes via faster-whisper, returns WSL-formatted paths so Claude can `Read` them. Falls back to URL markdown when Hadley API is unreachable. See `hadley_api/peter_routes/attachment_download.py`.
 
 **Key Rule**: Skill files in `wsl_config/skills/` are symlinked to WSL. Changes are immediate - no sync needed.
+
+### Skill-level Second Brain surfacing (scheduled jobs)
+
+Scheduled jobs default to no surfacing (fixed-data skills like hydration check-ins don't need it). A skill can opt in by adding to its SKILL.md frontmatter:
+
+```yaml
+---
+name: my-skill
+surface_knowledge: true
+---
+```
+
+or nested under metadata:
+
+```yaml
+metadata:
+  surface_knowledge: true
+```
+
+When set, `scheduler._maybe_inject_surfacing` calls `domains.second_brain.surfacing.get_context_for_message` with `<skill> <job_name>` as the query and appends matching items to the prompt.
 
 ## Plan Alignment
 
