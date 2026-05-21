@@ -73,6 +73,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Weekly Accountability | accountability-weekly | Sunday 19:00 UK | WhatsApp:chris | yes |
 | Monthly Accountability | accountability-monthly | 1st 10:30 UK | #food-log+WhatsApp:chris | yes |
 | Cost Digest | cost-digest | 22:55 UK | #alerts | yes |
+| Vercel Usage | vercel-usage | 06:45 UK | #api-costs | yes |
 
 ## Interval Jobs
 

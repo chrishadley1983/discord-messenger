@@ -1,0 +1,8 @@
+# Force LF line endings for shell scripts so they execute correctly under
+# WSL/Linux even on Windows checkouts. Without this, git's autocrlf=true
+# (default on Windows) silently converts to CRLF on checkout and bash chokes
+# on the trailing `\r` after every line — broke peter-channel/launch.sh on
+# 2026-05-21 (commit 7d055e0).
+*.sh text eol=lf
+*.bash text eol=lf
+launch.sh text eol=lf

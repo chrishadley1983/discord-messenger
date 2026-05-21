@@ -11,10 +11,11 @@ the same session in headless mode.
 from __future__ import annotations
 
 import asyncio
+import sys
 
 from logger import logger
 
-from .chrome import ensure_chrome_running
+from .chrome import _chrome_alive, ensure_chrome_running
 from .config import CDP_PORT, LOGIN_URL, STUDIES_URL
 
 
@@ -68,6 +69,22 @@ async def _open_login() -> None:
 
 
 def main() -> None:
+    # ensure_chrome_running short-circuits if CDP is already up, so if the bot
+    # has Chrome-Prolific running headless we'd silently attach to the invisible
+    # window. Detect and bail with a clear message instead.
+    if _chrome_alive():
+        print(
+            f"ERROR: Chrome is already listening on CDP port {CDP_PORT}.\n"
+            "The DiscordBot service is probably running it headless, which means\n"
+            "this login script would attach to an invisible window.\n\n"
+            "Stop the bot first, then re-run this script:\n"
+            "    Stop-Service DiscordBot\n"
+            "    python -m domains.prolific.login\n"
+            "    Start-Service DiscordBot   # after you've logged in\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     ensure_chrome_running(headless=False)
     asyncio.run(_open_login())
 

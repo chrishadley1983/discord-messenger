@@ -468,3 +468,38 @@
 - 2026-05-14: My wife said I had to stop acting like a flamingo. I had to put my foot down.
 - 2026-05-14: What do you call a man with a nail in his head? Bob.
 - 2026-05-14: "You just can't beat the person who never gives up." — Babe Ruth
+
+- 2026-05-15: I'm reading a book about glue. I can't put it down.
+- 2026-05-15: I wondered why the football was getting bigger. Then it hit me.
+- 2026-05-15: Why did the baker start therapy? He had too many deep-seated rolls.
+- 2026-05-15: "It's a funny thing about life; if you refuse to accept anything but the best, you very often get it." — W. Somerset Maugham
+
+- 2026-05-16: What do you call a sad cup of coffee? Depresso.
+- 2026-05-16: I tried to make a pizza joke but it was too cheesy.
+- 2026-05-16: What time did the man go to the dentist? Tooth-hurty.
+- 2026-05-16: "A day without laughter is a day wasted." — Charlie Chaplin
+
+- 2026-05-17: I used to be a detective, but I lost the case.
+- 2026-05-17: Why did the banana split? Because it saw the apple turnover!
+- 2026-05-17: What do you call a man with a van on his head? Carl.
+- 2026-05-17: "Tough times never last, but tough people do." — Robert H. Schuller
+
+- 2026-05-18: I used to be a teacher, but I lost my class.
+- 2026-05-18: Why did the music teacher need a ladder? To reach the high notes.
+- 2026-05-18: What do you call a happy cowboy? A jolly rancher.
+- 2026-05-18: "All our dreams can come true, if we have the courage to pursue them." — Walt Disney
+
+- 2026-05-19: I burnt my Hawaiian pizza. Should've used a lower aloha.
+- 2026-05-19: What do you call a duck that gets straight As? A wise quacker.
+- 2026-05-19: Why did the cookie cry? Because its mother had been a wafer so long.
+- 2026-05-19: "In three words I can sum up everything I've learned about life: it goes on." — Robert Frost
+
+- 2026-05-20: What do you call a bear with no ears? B.
+- 2026-05-20: Why don't we play cards in the jungle? Too many cheetahs.
+- 2026-05-20: I used to be a hotel manager, but I kept checking out.
+- 2026-05-20: "The secret of happiness is not in doing what one likes, but in liking what one does." — James M. Barrie
+
+- 2026-05-21: What do you call a woman with one leg? Eileen.
+- 2026-05-21: I've decided to sell my vacuum cleaner — it was just collecting dust.
+- 2026-05-21: Why did the ghost go to the bar? For the boos.
+- 2026-05-21: "You have power over your mind, not outside events. Realise this, and you will find strength." — Marcus Aurelius

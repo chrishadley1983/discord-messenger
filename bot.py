@@ -345,6 +345,11 @@ async def on_ready():
     scheduler.start()
     logger.info(f"Scheduler started with {len(scheduler.get_jobs())} jobs")
 
+    # Watchdog — alerts Discord if any job gets wedged (repeated skips).
+    # Catches the prolific-style failure where a hung run blocks every subsequent tick.
+    from domains.scheduler_watchdog import register as _register_scheduler_watchdog
+    _register_scheduler_watchdog(scheduler)
+
     # Channel watchdog — relaunch dead channel tmux sessions.
     # _launch_channel_sessions() is idempotent (has-session check), so safe
     # to run on a timer. Catches the case where WSL restarts or a tmux
@@ -358,6 +363,13 @@ async def on_ready():
         replace_existing=True,
     )
     logger.info("Channel watchdog registered (every 1 min)")
+
+    # WhatsApp watchdog — restart Evolution API container if it hangs (event
+    # loop stalls but container stays 'Up'; no Docker healthcheck exists).
+    # Skips restart on disconnectionReasonCode 401 (device removed by phone),
+    # which only a fresh QR scan can fix. See domains/whatsapp_watchdog.py.
+    from domains.whatsapp_watchdog import register as _register_whatsapp_watchdog
+    _register_whatsapp_watchdog(scheduler, minutes=2)
 
     # Channel cost tail — read Claude Code transcripts for the 3 channel
     # sessions and emit per-turn USD into data/channel_costs.jsonl.

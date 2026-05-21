@@ -1209,6 +1209,17 @@
     "description": "Daily operations report covering all scheduled jobs across Discord-Messenger and Hadley Bricks",
     "channel": "#alerts"
   },
+  "vercel-usage": {
+    "triggers": [
+      "vercel usage",
+      "vercel limits",
+      "vercel status"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Daily Vercel usage check \u2014 track limits, trends, and flag risks before projects get paused",
+    "channel": null
+  },
   "weekly-cut-review": {
     "triggers": [
       "weekly cut review",

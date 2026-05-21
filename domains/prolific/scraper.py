@@ -23,6 +23,8 @@ from logger import logger
 from .chrome import ensure_chrome_running
 from .config import (
     CDP_PORT,
+    CDP_CONNECT_TIMEOUT_S,
+    EVALUATE_TIMEOUT_S,
     NAV_TIMEOUT_MS,
     PAGE_RELOAD_INTERVAL_SECONDS,
     RENDER_WAIT_MS,
@@ -166,26 +168,25 @@ _state: dict = {
 _state_lock = asyncio.Lock()
 
 
+async def _safe_close(coro, label: str) -> None:
+    """Await a close/stop coroutine with a short timeout. Never raises."""
+    try:
+        await asyncio.wait_for(coro, timeout=5.0)
+    except (asyncio.TimeoutError, Exception) as e:
+        logger.debug(f"Prolific teardown: {label} did not close cleanly ({type(e).__name__})")
+
+
 async def _teardown() -> None:
     """Disconnect Playwright from the running Chrome (Chrome itself keeps running)."""
     page = _state.get("page")
     if page is not None:
-        try:
-            await page.close()
-        except Exception:
-            pass
+        await _safe_close(page.close(), "page.close")
     browser = _state.get("browser")
     if browser is not None:
-        try:
-            await browser.close()
-        except Exception:
-            pass
+        await _safe_close(browser.close(), "browser.close")
     pw = _state.get("playwright")
     if pw is not None:
-        try:
-            await pw.stop()
-        except Exception:
-            pass
+        await _safe_close(pw.stop(), "playwright.stop")
     _state["playwright"] = None
     _state["browser"] = None
     _state["page"] = None
@@ -198,7 +199,10 @@ async def _open_persistent_page():
     from playwright.async_api import async_playwright
 
     pw = await async_playwright().start()
-    browser = await pw.chromium.connect_over_cdp(f"http://127.0.0.1:{CDP_PORT}")
+    browser = await asyncio.wait_for(
+        pw.chromium.connect_over_cdp(f"http://127.0.0.1:{CDP_PORT}"),
+        timeout=CDP_CONNECT_TIMEOUT_S,
+    )
     contexts = browser.contexts
     ctx = contexts[0] if contexts else await browser.new_context()
     page = await ctx.new_page()
@@ -246,6 +250,18 @@ async def fetch_studies() -> list[Study]:
     No HTTP to Prolific between calls — Prolific's own SPA keeps the DOM
     fresh. We just evaluate the extractor JS against the in-memory page.
     """
+    try:
+        return await asyncio.wait_for(_fetch_studies_inner(), timeout=EVALUATE_TIMEOUT_S + 30)
+    except asyncio.TimeoutError:
+        logger.warning("Prolific fetch_studies exceeded watchdog timeout — forcing teardown")
+        try:
+            await _teardown()
+        except Exception:
+            pass
+        return []
+
+
+async def _fetch_studies_inner() -> list[Study]:
     async with _state_lock:
         try:
             page = await _ensure_page()
@@ -266,7 +282,16 @@ async def fetch_studies() -> list[Study]:
             return []
 
         try:
-            raw_cards = await page.evaluate(_EXTRACT_JS)
+            raw_cards = await asyncio.wait_for(
+                page.evaluate(_EXTRACT_JS),
+                timeout=EVALUATE_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Prolific page.evaluate hung >{EVALUATE_TIMEOUT_S}s — tearing down for fresh attempt next tick"
+            )
+            await _teardown()
+            return []
         except Exception as e:
             logger.warning(f"Prolific page.evaluate failed ({e}) — tearing down for fresh attempt next tick")
             await _teardown()

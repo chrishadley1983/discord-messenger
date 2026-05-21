@@ -49,3 +49,9 @@ SEEN_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "prolific_seen.db"
 
 NAV_TIMEOUT_MS = 20_000
 RENDER_WAIT_MS = 3_500
+
+# Hard timeouts so a dead CDP socket or hung Chrome can't freeze the scheduler
+# forever. Playwright's own evaluate/connect have no implicit deadline; without
+# these, max_instances=1 silently drops every subsequent tick.
+CDP_CONNECT_TIMEOUT_S = 10.0
+EVALUATE_TIMEOUT_S = 15.0
