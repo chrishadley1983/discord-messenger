@@ -50,6 +50,11 @@ SEEN_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "prolific_seen.db"
 NAV_TIMEOUT_MS = 20_000
 RENDER_WAIT_MS = 3_500
 
+# How often to re-alert Discord while the session is still expired.
+# Local log warnings happen every reload (15 min) — Discord pings are noisier
+# so throttle them.
+SESSION_EXPIRED_ALERT_INTERVAL_S = 3 * 60 * 60  # 3 hours
+
 # Hard timeouts so a dead CDP socket or hung Chrome can't freeze the scheduler
 # forever. Playwright's own evaluate/connect have no implicit deadline; without
 # these, max_instances=1 silently drops every subsequent tick.
