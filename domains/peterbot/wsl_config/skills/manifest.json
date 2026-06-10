@@ -74,6 +74,21 @@
     "description": "Proactive alerts when ticket ballots open for England Cricket, England Football, Oval Invincibles",
     "channel": "#peterbot+WhatsApp:chris"
   },
+  "book-recommender": {
+    "triggers": [
+      "what should I read next",
+      "what should I listen to next",
+      "book recommendation",
+      "recommend a book",
+      "recommend an audiobook",
+      "next audiobook",
+      "new books"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Personalised audiobook and book recommendations from Chris's Audible history and ratings",
+    "channel": "#peterbot"
+  },
   "chrome-cdp": {
     "triggers": [
       "check this page",

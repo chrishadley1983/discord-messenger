@@ -558,6 +558,17 @@ Uses the same `.env` as the main Discord bot:
 - `PUT /model/switch` - Switch provider: `{"provider": "claude"|"kimi", "reason": "manual"}`
 - `PUT /model/auto-switch` - Toggle auto-recovery: `{"enabled": true|false}`
 
+### Audible
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | /audible/finished | No | Finished audiobooks with Chris's ratings (query: since=ISO date, limit) |
+| GET | /audible/library-context | No | Recommender bundle: recent finished, top-rated, in-progress, favourite authors, stats |
+| GET | /audible/similar/{asin} | No | Catalogue titles similar to a book ("more like this") |
+| GET | /audible/search | No | Search the Audible catalogue (query: q, limit) |
+
+Auth is shared with the audible-mcp project's auth.json (domains/audible/client.py). Note: Audible's account-level recommendations endpoint is deprecated upstream — use /similar per book.
+
 ### Life Admin
 
 Proactive life admin obligation tracking and alerting.

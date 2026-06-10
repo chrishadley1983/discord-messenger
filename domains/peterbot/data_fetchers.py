@@ -2168,6 +2168,66 @@ async def get_email_summary_data() -> dict[str, Any]:
     return result
 
 
+async def get_book_recommender_data() -> dict[str, Any]:
+    """Pre-fetch for the book-recommender skill: taste profile from the
+    Audible library plus 'more like this' seeds for recent favourites."""
+    from domains.audible import client as ac
+
+    try:
+        library = await asyncio.to_thread(ac.get_library)
+    except Exception as e:
+        logger.error(f"Book recommender: Audible library fetch failed: {e}")
+        return {"error": str(e)}
+
+    finished = [b for b in library if b["is_finished"]]
+    owned_titles = sorted({b["title"] for b in library if b.get("title")})
+
+    author_counts: dict[str, int] = {}
+    for b in finished:
+        for a in b.get("authors") or []:
+            author_counts[a] = author_counts.get(a, 0) + 1
+
+    def _slim(b):
+        return {k: b.get(k) for k in (
+            "asin", "title", "authors", "series", "my_rating",
+            "average_rating", "purchase_date", "runtime_hours",
+        )}
+
+    recent = finished[:30]
+    top_rated = sorted(
+        (b for b in finished if b.get("my_rating")),
+        key=lambda b: (-float(b["my_rating"]), str(b.get("purchase_date") or "")),
+    )[:20]
+
+    # "More like this" seeds from the 3 most recent 4★+ books
+    seeds = [b for b in recent if float(b.get("my_rating") or 0) >= 4][:3]
+    similar: dict[str, list] = {}
+    for b in seeds:
+        try:
+            sims = await asyncio.to_thread(ac.get_similar, b["asin"], 8)
+            similar[b["title"]] = [
+                {k: s.get(k) for k in ("title", "authors", "average_rating", "publisher_summary")}
+                for s in sims
+            ]
+        except Exception as e:
+            logger.warning(f"Book recommender: sims failed for {b['title']}: {e}")
+
+    in_progress = [
+        b for b in library
+        if not b["is_finished"] and 1 < (b.get("percent_complete") or 0) < 100
+    ]
+
+    return {
+        "finished_count": len(finished),
+        "recent_finished": [_slim(b) for b in recent],
+        "top_rated": [_slim(b) for b in top_rated],
+        "in_progress": [_slim(b) for b in in_progress],
+        "favourite_authors": sorted(author_counts.items(), key=lambda x: -x[1])[:15],
+        "similar_to_recent_favourites": similar,
+        "owned_titles": owned_titles,
+    }
+
+
 async def get_morning_digest_data() -> dict[str, Any]:
     """Composite pre-fetch for the consolidated morning digest (07:00).
 
@@ -4494,6 +4554,7 @@ SKILL_DATA_FETCHERS = {
     # Phase 8a
     "email-summary": get_email_summary_data,
     "morning-digest": get_morning_digest_data,
+    "book-recommender": get_book_recommender_data,
     "kids-daily": get_school_data,
     "schedule-today": get_schedule_today_data,
     "schedule-week": get_schedule_week_data,

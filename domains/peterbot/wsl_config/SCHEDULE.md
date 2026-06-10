@@ -50,6 +50,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Subscription Monitor | subscription-monitor | Sunday 09:02 UK | #alerts+WhatsApp:chris | yes |
 | Recipe Discovery | recipe-discovery | Sunday 10:00 UK | #food-log | yes |
 | Property Valuation | property-valuation | 1st 10:15 UK | #peterbot | yes |
+| Book Recommendations | book-recommender | 1st 11:00 UK | #peterbot | yes |
 | Saturday Sport Preview | saturday-sport-preview | Sat 08:00 UK | #peterbot+WhatsApp:chris | yes |
 | Spurs Match Day | spurs-matchday | 08:00 UK | #peterbot+WhatsApp:chris | yes |
 | Cricket Scores | cricket-scores | 08:30 UK | #peterbot+WhatsApp:chris | yes |

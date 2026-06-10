@@ -127,6 +127,7 @@ ADAPTER_LABELS = {
     "travel-bookings": "Travel",
     "withings-health": "Withings",
     "reddit-saved": "Reddit",
+    "audible-books": "Audible",
     "school-data": "School",
     "claude-code-history": "Claude Code",
 }
@@ -288,7 +289,7 @@ async def incremental_seed_import(bot=None):
     from domains.second_brain.seed.adapters import (
         calendar, email, github, garmin, garmin_health, bookmarks, email_links,
         hadley_bricks_email, finance_summary, recipes, spotify, netflix, travel,
-        withings, reddit, school, claude_code_history,
+        withings, reddit, school, claude_code_history, audible,
     )
 
     adapters = get_available_adapters()
@@ -327,6 +328,7 @@ async def incremental_seed_import(bot=None):
     adapter_limits["school-data"] = 50        # School events, newsletters, spellings
     adapter_limits["claude-code-history"] = 50 # Recent Claude Code conversations
     adapter_limits["reddit-saved"] = 20       # Saved/upvoted/commented posts
+    adapter_limits["audible-books"] = 300     # Finished audiobooks (dedup by asin; 234 backfill then ~2/week)
 
     # Launch Chrome CDP headless for adapters that need it (Reddit, etc.)
     # Will be terminated after the adapter loop completes.
