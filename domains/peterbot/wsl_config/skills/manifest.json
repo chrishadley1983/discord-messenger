@@ -74,13 +74,6 @@
     "description": "Proactive alerts when ticket ballots open for England Cricket, England Football, Oval Invincibles",
     "channel": "#peterbot+WhatsApp:chris"
   },
-  "brickstop-traffic": {
-    "triggers": [],
-    "conversational": false,
-    "scheduled": false,
-    "description": "One-time traffic update for Brickstop Cafe trip (Sunday 1st Feb 2026)",
-    "channel": null
-  },
   "chrome-cdp": {
     "triggers": [
       "check this page",
@@ -1404,20 +1397,6 @@
     "description": "Daily operations report covering all scheduled jobs across Discord-Messenger and Hadley Bricks",
     "channel": "#alerts"
   },
-  "traffic-check": {
-    "triggers": [
-      "traffic",
-      "how's the traffic",
-      "is there traffic",
-      "school run traffic",
-      "how long to school",
-      "should I leave now"
-    ],
-    "conversational": true,
-    "scheduled": false,
-    "description": "Check current traffic conditions for the school run",
-    "channel": null
-  },
   "trip-prep": {
     "triggers": [
       "trip prep",
@@ -1473,20 +1452,6 @@
     "conversational": true,
     "scheduled": false,
     "description": "Get current weather conditions for Tonbridge",
-    "channel": null
-  },
-  "weather-forecast": {
-    "triggers": [
-      "forecast",
-      "weather this week",
-      "weather tomorrow",
-      "what's the weather like on {day}",
-      "will it rain on Saturday",
-      "weekend weather"
-    ],
-    "conversational": true,
-    "scheduled": false,
-    "description": "Get multi-day weather forecast for planning ahead",
     "channel": null
   },
   "weekly-cut-review": {
