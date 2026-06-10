@@ -73,7 +73,10 @@ Also check for any school events from the calendar (trips, non-uniform days, etc
 
 ### 5. Spellings
 
-The school-run data fetcher already calculates the current spelling week. If pre-fetched data is available, use it. Otherwise note the spellings are in the weekly spellings post.
+School data (including this week's spellings) is pre-fetched into context by `get_school_data`.
+
+- **Mondays**: include the FULL spelling list for both children as a "📝 Spellings this week" section — this replaced the separate Monday weekly-spellings post (2026-06 morning consolidation).
+- **Tue–Fri**: only mention spellings if a spelling test is imminent (e.g. "test tomorrow").
 
 ## Children
 

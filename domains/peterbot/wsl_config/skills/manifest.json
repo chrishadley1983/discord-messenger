@@ -237,7 +237,7 @@
       "unread messages"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Provide a summary of unread emails and inbox status",
     "channel": "#peterbot"
   },
@@ -345,7 +345,7 @@
       "code changes"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Daily and weekly GitHub activity summary across all repos",
     "channel": "#peterbot"
   },
@@ -984,6 +984,17 @@
     "description": "AI and Claude news morning briefing",
     "channel": "#ai-briefings"
   },
+  "morning-digest": {
+    "triggers": [
+      "morning digest",
+      "what's my morning look like",
+      "daily digest"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Consolidated 07:00 morning digest — day ahead, weather, inbox, todos, GitHub",
+    "channel": "#peterbot"
+  },
   "morning-laughs": {
     "triggers": [
       "tell me a joke",
@@ -1041,7 +1052,7 @@
       "outstanding items"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Show and manage tasks from \"Claude Managed To Dos\" database",
     "channel": "#peterbot"
   },
@@ -1242,7 +1253,7 @@
       "what's my day look like"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Show today's calendar events and agenda",
     "channel": "#peterbot"
   },
@@ -1291,7 +1302,7 @@
       "this weeks spellings"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Weekly spelling list post for Max and Emmie",
     "channel": "#peter-chat+WhatsApp:group"
   },

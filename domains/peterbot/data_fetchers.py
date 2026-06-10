@@ -2161,6 +2161,36 @@ async def get_email_summary_data() -> dict[str, Any]:
     return result
 
 
+async def get_morning_digest_data() -> dict[str, Any]:
+    """Composite pre-fetch for the consolidated morning digest (07:00).
+
+    One message replaces the old email-summary / schedule-today /
+    notion-todos / github-activity standalone jobs.
+    """
+    schedule, email, todos, github, weather = await asyncio.gather(
+        get_schedule_today_data(),
+        get_email_summary_data(),
+        get_notion_todos_data(),
+        get_github_daily_data(),
+        _hadley_request("/weather/current"),
+        return_exceptions=True,
+    )
+
+    def _safe(value: Any, label: str) -> Any:
+        if isinstance(value, Exception):
+            logger.warning(f"Morning digest: {label} fetch failed: {value}")
+            return {"error": str(value)}
+        return value
+
+    return {
+        "schedule": _safe(schedule, "schedule"),
+        "email": _safe(email, "email"),
+        "notion_todos": _safe(todos, "notion todos"),
+        "github": _safe(github, "github"),
+        "weather": _safe(weather, "weather"),
+    }
+
+
 async def get_schedule_today_data() -> dict[str, Any]:
     """Fetch today's calendar events via Hadley API."""
     result = await _hadley_request("/calendar/today")
@@ -4446,6 +4476,8 @@ SKILL_DATA_FETCHERS = {
     "price-scanner": get_price_scanner_data,
     # Phase 8a
     "email-summary": get_email_summary_data,
+    "morning-digest": get_morning_digest_data,
+    "kids-daily": get_school_data,
     "schedule-today": get_schedule_today_data,
     "schedule-week": get_schedule_week_data,
     "notion-todos": get_notion_todos_data,

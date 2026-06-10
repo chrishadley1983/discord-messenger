@@ -17,16 +17,15 @@ Run `!reload-schedule` after editing to apply changes.
 | Life Admin Scan | life-admin-scan | 08:30 UK | #alerts+WhatsApp:chris | yes |
 | Life Admin Email Scan | life-admin-email-scan | 03:30 UK | #peter-heartbeat!quiet | yes |
 | Life Admin Dashboard | life-admin-dashboard | Sunday 09:15 UK | #peterbot | yes |
+| Morning Digest | morning-digest | 07:00 UK | #peterbot | yes |
 | Morning Briefing | morning-briefing | 07:01 UK | #ai-briefings | yes |
 | Morning News | news | 07:02 UK | #news | yes |
 | Kids Daily Briefing | kids-daily | 07:25 UK | #peterbot+WhatsApp:group | yes |
 | Morning Cooking Reminder | cooking-reminder | 07:30 UK | #food-log | yes |
 | Price Scanner | price-scanner | Mon 06:00 UK | #food-log | yes |
 | Morning Health Digest | health-digest | 07:55 UK | #food-log | yes |
-| Fitness Dashboard (Cut) | fitness-dashboard | 06:45 UK | #food-log | yes |
 | School Run (Mon-Wed,Fri) | school-run | Mon-Wed,Fri 08:10 UK | #traffic-reports+WhatsApp:group | yes |
 | School Run (Thu) | school-run | Thu 07:45 UK | #traffic-reports+WhatsApp:group | yes |
-| GitHub Activity (Daily) | github-activity | 08:08 UK | #peterbot | yes |
 | GitHub Activity (Weekly) | github-weekly | Sunday 18:05 UK | #peterbot | yes |
 | Kids Weekly (Next Week) | kids-weekly | Sunday 18:10 UK | #peterbot+WhatsApp:group | yes |
 | YouTube Digest | youtube-digest | 09:05 UK | #youtube | yes |
@@ -43,15 +42,11 @@ Run `!reload-schedule` after editing to apply changes.
 | Monthly Health Summary | monthly-health | 1st 09:15 UK | #food-log | yes |
 | Claude History Reminder | - | 1st 10:00 UK | #peterbot | yes |
 | Self-Reflect | self-reflect | 22:00 UK | #alerts!quiet | yes |
-| Email Summary | email-summary | 08:02 UK | #peterbot | yes |
-| Schedule Today | schedule-today | 08:04 UK | #peterbot | yes |
 | Schedule Week | schedule-week | Sunday 18:00 UK | #peterbot | yes |
-| Notion Todos | notion-todos | 08:06 UK | #peterbot | yes |
 | Balance Monitor | balance-monitor | 06:03,09:03,12:03,15:03,18:03,21:03 UK | #api-costs | yes |
 | Heartbeat | heartbeat | 00:01,02:01,04:01,06:01,08:01,10:01,12:01,14:01,16:01,18:01,20:01,22:01 UK | #peter-heartbeat!quiet | yes |
 | Healthera Prescriptions | healthera-prescriptions | 09:10 UK | #peterbot | yes |
 | HB Full Sync + Print | hb-full-sync-print | 09:35 UK | #peterbot | yes |
-| Weekly Spellings | school-weekly-spellings | Mon 07:30 UK | #peter-chat+WhatsApp:group | yes |
 | Subscription Monitor | subscription-monitor | Sunday 09:02 UK | #alerts+WhatsApp:chris | yes |
 | Recipe Discovery | recipe-discovery | Sunday 10:00 UK | #food-log | yes |
 | Property Valuation | property-valuation | 1st 10:15 UK | #peterbot | yes |

@@ -16,7 +16,18 @@ channel: #food-log
 
 ## Purpose
 
-Daily morning digest at 8am UK. Shows overnight health data and compares to previous day. Motivates for the day ahead with goal progress.
+Daily morning digest at 07:55 UK. Shows overnight health data and compares to previous day. Motivates for the day ahead with goal progress.
+
+Since the 2026-06 morning consolidation this message ALSO carries the daily cut check-in (the old 06:45 fitness-dashboard post). Fetch `GET http://172.19.64.1:8100/fitness/dashboard` and append a compact section:
+
+```
+🎯 **Cut** — Day {day_no}/W{week_no}
+Trend {trend_7d}kg ({slope_kg_per_week:+}kg/wk) · {cumulative_loss_kg}kg down
+Today: {workout one-liner} · Budget: {calorie_budget} kcal
+{one-line adherence flag only if something needs attention}
+```
+
+The standalone fitness-dashboard skill remains for on-demand "cut status" questions and the Wednesday evening nudge.
 
 ## Pre-fetched Data
 
