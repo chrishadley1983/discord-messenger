@@ -3770,17 +3770,30 @@ async def get_system_health_data() -> dict[str, Any]:
     """
     import httpx
 
+    result: dict[str, Any] = {}
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get("http://localhost:8100/jobs/health")
             if resp.status_code == 200:
-                return {"system_health": resp.json()}
+                result["system_health"] = resp.json()
             else:
                 logger.warning(f"System health fetch returned {resp.status_code}")
-                return {"error": f"API returned {resp.status_code}"}
+                result["error"] = f"API returned {resp.status_code}"
     except Exception as e:
         logger.error(f"System health fetch error: {e}")
-        return {"error": str(e)}
+        result["error"] = str(e)
+
+    # Skill registry drift (dirs vs manifest.json vs SCHEDULE.md) — silent
+    # drift hides skills from Peter, so surface it in the daily ops report.
+    try:
+        from domains.peterbot.skill_manifest import check_consistency
+
+        result["manifest_check"] = await asyncio.to_thread(check_consistency)
+    except Exception as e:
+        logger.error(f"Manifest consistency check error: {e}")
+        result["manifest_check"] = {"ok": False, "problems": [f"check failed: {e}"]}
+
+    return result
 
 
 async def get_orphan_embed_data() -> dict[str, Any]:
