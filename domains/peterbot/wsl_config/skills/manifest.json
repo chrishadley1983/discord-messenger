@@ -147,6 +147,13 @@
     "description": "Daily morning cricket score roundup from yesterday",
     "channel": "#peterbot+WhatsApp:chris"
   },
+  "daily-batch": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Generate the day's hydration check-ins and cooking reminders in one batch (cost optimisation)",
+    "channel": "#peter-heartbeat!quiet"
+  },
   "daily-instagram-prep": {
     "triggers": [],
     "conversational": false,

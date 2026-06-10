@@ -10,6 +10,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Job | Skill | Schedule | Channel | Enabled |
 |-----|-------|----------|---------|---------|
 | Orphan Embed | orphan-embed | 03:00 UK | #alerts | yes |
+| Daily Message Batch | daily-batch | 06:55 UK | #peter-heartbeat!quiet | yes |
 | Morning Laughs | morning-laughs | 06:30 UK | #peterbot | yes |
 | Morning Quality Report | morning-quality-report | 06:45 UK | #peter-heartbeat | yes |
 | System Health | system-health | 06:50 UK | #alerts | yes |

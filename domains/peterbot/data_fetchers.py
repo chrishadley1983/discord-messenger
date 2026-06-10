@@ -57,12 +57,90 @@ async def get_nutrition_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
+DAILY_BATCH_PATH = Path(__file__).resolve().parent / "wsl_config" / "data" / "daily_batch.json"
+
+
+class _SafeFormatDict(dict):
+    """format_map helper that leaves unknown {placeholders} untouched."""
+
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def _progress_bar(pct: float) -> str:
+    filled = max(0, min(10, round(pct / 10)))
+    return "▓" * filled + "░" * (10 - filled)
+
+
+def _load_daily_batch() -> Optional[dict]:
+    """Load today's pre-generated message batch, or None if missing/stale."""
+    try:
+        batch = json.loads(DAILY_BATCH_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    today = datetime.now(UK_TZ).strftime("%Y-%m-%d")
+    if batch.get("date") != today:
+        logger.info(f"Daily batch is stale ({batch.get('date')} != {today}), ignoring")
+        return None
+    return batch
+
+
+async def get_daily_batch_gen_data() -> dict[str, Any]:
+    """Pre-fetch for the daily-batch generator skill (06:55)."""
+    from domains.nutrition.config import get_live_targets
+
+    try:
+        targets = await get_live_targets()
+    except Exception as e:
+        logger.warning(f"Daily batch: live targets failed, using defaults: {e}")
+        from domains.nutrition.config import DAILY_TARGETS
+        targets = dict(DAILY_TARGETS)
+
+    cooking_morning, cooking_evening = await asyncio.gather(
+        _hadley_request("/meal-plan/reminders?timing=morning"),
+        _hadley_request("/meal-plan/reminders?timing=night_before"),
+    )
+
+    return {
+        "date": datetime.now(UK_TZ).strftime("%Y-%m-%d"),
+        "water_target": targets.get("water_ml"),
+        "steps_target": targets.get("steps"),
+        "cooking_morning": cooking_morning,
+        "cooking_evening": cooking_evening,
+    }
+
+
 async def get_hydration_data() -> dict[str, Any]:
     """Fetch hydration and steps data for hydration skill.
 
-    Returns:
-        Dict with water intake, steps, targets, and time info
+    If today's pre-generated batch has a message for this hour, return it as
+    a __direct__ post (live numbers substituted, no LLM call). Otherwise fall
+    back to the legacy LLM flow.
     """
+    batch = _load_daily_batch()
+    if batch:
+        hour_key = f"{datetime.now(UK_TZ).hour:02d}"
+        template = (batch.get("hydration") or {}).get(hour_key)
+        if template:
+            live = await _get_hydration_live_data()
+            if "error" not in live:
+                message = str(template).format_map(_SafeFormatDict(
+                    water_ml=f"{live['water_ml']:,}ml",
+                    water_target=f"{live['water_target']:,}ml",
+                    water_pct=round(live["water_pct"]),
+                    water_bar=_progress_bar(live["water_pct"]),
+                    steps=f"{live['steps']:,}",
+                    steps_target=f"{live['steps_target']:,}",
+                    steps_pct=round(live["steps_pct"]),
+                    steps_bar=_progress_bar(live["steps_pct"]),
+                ))
+                return {"__direct__": message}
+            logger.warning("Hydration batch hit but live data failed; falling back to LLM")
+    return await _get_hydration_live_data()
+
+
+async def _get_hydration_live_data() -> dict[str, Any]:
+    """Live water/steps numbers (legacy LLM pre-fetch payload)."""
     from domains.nutrition.services import get_today_totals, get_steps
     from domains.nutrition.config import get_live_targets
 
@@ -2001,8 +2079,22 @@ async def get_meal_rating_data() -> dict[str, Any]:
 
 
 async def get_cooking_reminder_data() -> dict[str, Any]:
-    """Fetch cooking reminders. Returns evening or morning reminders based on time of day."""
+    """Fetch cooking reminders. Returns evening or morning reminders based on time of day.
+
+    Prefers today's pre-generated batch message (__direct__, no LLM call);
+    a null batch slot means no reminders today (__skip__). Falls back to the
+    legacy LLM flow when the batch is missing/stale.
+    """
     hour = datetime.now(UK_TZ).hour
+    slot = "morning" if hour < 12 else "evening"
+
+    batch = _load_daily_batch()
+    if batch and "cooking" in batch:
+        message = (batch.get("cooking") or {}).get(slot, "__absent__")
+        if message is None:
+            return {"__skip__": True, "reason": f"batch: no {slot} cooking reminders today"}
+        if message != "__absent__" and str(message).strip():
+            return {"__direct__": str(message)}
 
     if hour < 12:
         # Morning run — defrost reminders for today
@@ -4402,6 +4494,7 @@ SKILL_DATA_FETCHERS = {
     "amazon-purchases": get_amazon_purchases_data,
     # Cooking reminders
     "cooking-reminder": get_cooking_reminder_data,
+    "daily-batch": get_daily_batch_gen_data,
     # 11+ Mate
     "tutor-email-parser": get_tutor_email_data,
     "paper-builder": get_paper_builder_data,

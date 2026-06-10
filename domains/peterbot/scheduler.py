@@ -735,6 +735,27 @@ class PeterbotScheduler:
                                 pass
                         return
 
+                    # Check for __direct__ signal — fetcher already has the final
+                    # message (e.g. from the pre-generated daily batch); post it
+                    # without an LLM call.
+                    if isinstance(data, dict) and data.get("__direct__"):
+                        message = str(data["__direct__"])
+                        logger.info(f"Job {job.name}: direct post from fetcher (no LLM call)")
+                        await self._post_to_channel(job, message)
+                        self.last_job_status[job.skill] = True
+                        if health_tracker:
+                            health_tracker.record_job_result(
+                                job.name, success=True,
+                                duration_seconds=time.time() - start_time,
+                                response_length=len(message)
+                            )
+                        if JOB_HISTORY_ENABLED:
+                            try:
+                                record_job_complete(job_id, success=True, output=f"DIRECT: {message[:400]}", execution_id=execution_id)
+                            except Exception:
+                                pass
+                        return
+
                     # Extract file attachments if present
                     if isinstance(data, dict) and "files_to_attach" in data:
                         files_to_attach = data.pop("files_to_attach", [])
