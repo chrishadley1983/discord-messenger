@@ -151,7 +151,7 @@ Five-stage processing for Claude's responses:
 | Traffic/Travel | school-run, school-pickup, traffic-check, directions, trip-prep |
 | Monitoring | heartbeat, balance-monitor, api-usage, ring-status |
 | Media | news, youtube-digest, football-scores, spurs-match |
-| Utilities | weather, weather-forecast, ev-charging, whatsapp-keepalive |
+| Utilities | weather, directions, ev-charging |
 
 **Skill structure**:
 ```
@@ -305,7 +305,6 @@ Unified memory system using Supabase PostgreSQL + pgvector.
 |-----|----------|---------|
 | capture_cleanup | daily 3:00 AM | Clean old captures |
 | incremental_seed | daily 1:00 AM | Second Brain seed imports |
-| embedding_report | daily 3:00 AM | Embedding statistics |
 
 ### Skill-Based Jobs (from SCHEDULE.md)
 
@@ -539,7 +538,6 @@ Discord-Messenger/
 │   ├── worker_health.py
 │   ├── capture_processor.py
 │   ├── incremental_seed.py
-│   └── embedding_report.py
 │
 ├── migrations/                 # SQL migrations
 │   ├── 001_create_reminders_table.sql
