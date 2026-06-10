@@ -154,13 +154,6 @@
     "description": "Generate the day's hydration check-ins and cooking reminders in one batch (cost optimisation)",
     "channel": "#peter-heartbeat!quiet"
   },
-  "daily-instagram-prep": {
-    "triggers": [],
-    "conversational": false,
-    "scheduled": false,
-    "description": "Daily Instagram post preparation for Hadley Bricks. Sources 3 candidate images, applies the Instagram photo optimizer to each, posts the optimized images to Discord at 9pm for Chris to pick one to post the next day. Use when the skill is triggered by schedule or when the user says \"instagram prep\", \"prepare insta\", \"daily instagram\", or \"instagram tomorrow\".\n",
-    "channel": "#peterbot"
-  },
   "daily-recipes": {
     "triggers": [
       "recipe ideas",
@@ -1518,13 +1511,6 @@
     "scheduled": true,
     "description": "Weekly health summary with trends, grades, and insights",
     "channel": "#food-log"
-  },
-  "whatsapp-keepalive": {
-    "triggers": [],
-    "conversational": false,
-    "scheduled": true,
-    "description": "Check Evolution API WhatsApp connection health",
-    "channel": "#peter-heartbeat!quiet"
   },
   "youtube-digest": {
     "triggers": [

@@ -67,17 +67,10 @@ from domains.second_brain.passive import (
     process_passive_message,
 )
 
-# Import standalone jobs (legacy - kept for manual triggers during migration)
-from jobs import (
-    register_balance_monitor,
-    register_school_run,
-    register_nutrition_morning,
-    register_hydration_checkin,
-    register_weekly_health,
-    register_monthly_health,
-    register_withings_sync,
-    register_youtube_feed
-)
+# Legacy standalone-job registration was removed 2026-06 — all scheduled
+# output goes through SCHEDULE.md skills (USE_PETERBOT_SCHEDULER).
+# jobs/*.py modules remain only as helper libraries for data_fetchers and
+# as bot.py-registered infrastructure jobs (seeding, syncs — no Discord output).
 
 # Initialize bot
 intents = discord.Intents.default()
@@ -330,16 +323,12 @@ async def on_ready():
         peterbot_scheduler.start_reload_watcher()
         peterbot_scheduler.start_nag_checker()
     else:
-        # Legacy: Register standalone jobs (remove after Phase 7b migration)
-        register_balance_monitor(scheduler, bot)
-        register_school_run(scheduler, bot)
-        register_withings_sync(scheduler)  # Sync weight data before morning message
-        register_nutrition_morning(scheduler, bot)
-        register_hydration_checkin(scheduler, bot)
-        register_weekly_health(scheduler, bot)
-        register_monthly_health(scheduler, bot)
-        register_youtube_feed(scheduler, bot)
-        logger.info("Using legacy job registration (Phase 7 scheduler disabled)")
+        # Legacy standalone registration was deleted 2026-06; SCHEDULE.md
+        # skills are the only supported path for scheduled Discord output.
+        logger.error(
+            "USE_PETERBOT_SCHEDULER is disabled but legacy job registration "
+            "no longer exists — no scheduled jobs will post"
+        )
 
     # Start scheduler
     scheduler.start()
