@@ -49,6 +49,7 @@ env/
 # Claude Code local settings (keep commands)
 .claude/*
 !.claude/commands/
+!.claude/workflows/
 .mcp.json
 
 # Logs
