@@ -139,6 +139,11 @@ async def _resolve_whatsapp_url() -> str:
     if await _whatsapp_channel_healthy():
         return _WHATSAPP_CHANNEL_URL
     logger.warning("whatsapp-channel /health unhealthy — routing to bot.py handler")
+    try:
+        from domains.peterbot.fallback_stats import record_fallback
+        record_fallback("whatsapp-channel", "health probe failed")
+    except Exception:
+        pass
     return _WHATSAPP_BOT_URL
 
 # Evolution API config (for media download)

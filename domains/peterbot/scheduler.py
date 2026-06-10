@@ -1242,6 +1242,11 @@ class PeterbotScheduler:
             raise asyncio.TimeoutError(f"{channel_name} timed out after {timeout}s")
         except Exception as e:
             logger.error(f"{channel_name} error: {e}, falling back to CLI (claude -p)")
+            try:
+                from domains.peterbot.fallback_stats import record_fallback
+                record_fallback(channel_name, f"{type(e).__name__}: {e}")
+            except Exception:
+                pass
             return await self._send_to_claude_code_v2(context, job=job, model_override=model_for_fallback)
 
     async def _post_to_channel(self, job: JobConfig, message: str, files: list = None):

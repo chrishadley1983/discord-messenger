@@ -845,6 +845,11 @@ async def on_message(message):
         logger.warning(
             f"peter-channel /health unhealthy — falling back to router_v2 for channel {message.channel.id}"
         )
+        try:
+            from domains.peterbot.fallback_stats import record_fallback
+            record_fallback("peter-channel", f"health probe failed (channel {message.channel.id})")
+        except Exception:
+            pass
     if message.channel.id in PETERBOT_CHANNEL_IDS:
         async with message.channel.typing():
             # Check if buffer needs populating from Discord history (e.g., after restart)
