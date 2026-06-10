@@ -108,6 +108,37 @@ History shows repeated parser bugs (leakage, stale extraction, wrapped lines). T
 
 ---
 
+## Implementation status (same day, 2026-06-10)
+
+All improvement areas and deprecations were implemented, verified by a 10-agent
+workflow (2 blockers found and fixed), and deployed (DiscordBot restarted, 60
+jobs loaded, HadleyBricks on a production build).
+
+| Item | Status |
+|------|--------|
+| 1.1 Manifest drift | ✅ `skill_manifest.py` generator (SKILL.md source of truth), wired into `load_schedule()` + system-health drift check; 118 skills |
+| 1.2 Hydration cost | ✅ `daily-batch` skill (06:55) + `__direct__` scheduler posts — 17 LLM calls/day → 1 |
+| 1.3 Recurring failures | ✅ Auth failures degrade to 24h-throttled reminder (narrow hint matching); empty responses retry once (channel paths) |
+| 1.4 HadleyBricks dev-mode | ✅ TS errors fixed (unified-markdown WIP fields optional), production build live, dashboard service config fixed |
+| 1.5 Uncommitted code | ✅ All committed; `.cache` (live Spotify token!) untracked + gitignored — **rotate Spotify app credentials** (token remains in git history) |
+| 1.6 Morning flood | ✅ 3 themed digests (Morning 07:00, Family/kids 07:25, Health 07:55); time-critical jobs stay separate |
+| 1.7 Dead-man's switch | ✅ healthchecks.io check `peter-pc-deadman`, bot pings every 5 min (verified live), email alert if silent ~20 min |
+| 1.8 Parser regression tests | ⏸️ Deferred — router_v2 instrumented instead; parser machinery is deprecation-bound |
+| Legacy jobs/*.py | ✅ Dead else-branch + 4 unused modules deleted; remaining modules are fetcher libraries/infra |
+| router_v2 | ✅ Instrument-only (per decision): activations → `data/fallback_events.jsonl` + throttled #alerts |
+| whatsapp-keepalive | ✅ Removed; superseded by 2-min auto-restart watchdog (verified all paths incl. 401 handling) |
+| daily-instagram-prep | ✅ Removed (job + skill + dangling fetcher entry) |
+| weather/traffic dupes | ✅ Merged (weather+forecast, directions+traffic); brickstop-traffic deleted |
+| extract-channel / jobs-channel-sonnet | ⚠️ **Audit was wrong — these are production** (Sonnet/Haiku job routing :8105, extraction :8106). Kept; node_modules symlinks gitignored |
+| brave-search MCP | ✅ Removed from WSL config (backup kept); news + life-admin-compare skills point at SearXNG |
+| osaka-mint-check / trip-prep / spotify adapter | ⏸️ Deferred until after the Japan trip / Spotify export import |
+
+**Outstanding for Chris**: (1) WhatsApp linked device was revoked (401) — re-pair
+via QR (watchdog alerted, won't restart-loop); (2) log into Reddit in the
+Chrome-Vinted profile to clear the nightly seed skip; (3) rotate Spotify app
+credentials (historic `.cache` in git); (4) Notion todos fetcher reports
+"database not configured" — config gap predating this work.
+
 ## Suggested immediate actions (this week)
 
 1. Commit the two watchdog files (bot.py depends on them at startup).
