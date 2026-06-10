@@ -10,6 +10,7 @@ domains/peterbot/wsl_config/HEARTBEAT_ARCHIVE.md
 
 # Node — covers all channel sub-projects
 node_modules/
+node_modules
 
 # Python
 __pycache__/
