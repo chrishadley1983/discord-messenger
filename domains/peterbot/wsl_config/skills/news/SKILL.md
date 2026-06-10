@@ -54,7 +54,7 @@ Context about why this matters.
 ## Search Efficiency
 
 - Use **2-3 searches maximum** — don't iterate across every provider
-- Prefer `brave_news_search` for headlines, fall back to others only if it fails
+- Prefer SearXNG (`searxng_web_search`) for headlines, fall back to others only if it fails
 - Spend most of the time composing, not searching
 
 ## Deduplication
