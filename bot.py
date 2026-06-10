@@ -360,6 +360,30 @@ async def on_ready():
     from domains.whatsapp_watchdog import register as _register_whatsapp_watchdog
     _register_whatsapp_watchdog(scheduler, minutes=2)
 
+    # Dead-man's switch — ping healthchecks.io every 5 min. All other
+    # monitoring runs on this machine; if the whole PC dies, healthchecks.io
+    # notices the silence and emails Chris from outside.
+    _hc_ping_url = os.environ.get("HEALTHCHECKS_PING_URL", "").strip()
+    if _hc_ping_url:
+        async def _deadman_ping():
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=10) as client:
+                    await client.get(_hc_ping_url)
+            except Exception as e:
+                logger.warning(f"Dead-man ping failed: {e}")
+
+        scheduler.add_job(
+            _deadman_ping,
+            "interval", minutes=5,
+            id="deadman_ping",
+            max_instances=1,
+            replace_existing=True,
+        )
+        logger.info("Dead-man's switch registered (healthchecks.io ping every 5 min)")
+    else:
+        logger.warning("HEALTHCHECKS_PING_URL not set — dead-man's switch disabled")
+
     # Channel cost tail — read Claude Code transcripts for the 3 channel
     # sessions and emit per-turn USD into data/channel_costs.jsonl.
     # Runs every 5 min, resumes from saved offsets. See domains/peterbot/channel_cost_tail.py.
