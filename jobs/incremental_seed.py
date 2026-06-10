@@ -8,10 +8,12 @@ Duplicates are automatically skipped by source_url check in runner.
 """
 
 import asyncio
+import json
 import os
 import subprocess
 import time as _time
 from dataclasses import dataclass
+from pathlib import Path
 
 import requests as _req
 
@@ -140,6 +142,49 @@ class _AdapterOutcome:
     imported: int = 0
     skipped: int = 0
     failed: int = 0
+    auth_needed: bool = False
+
+
+# Validation failures that mean "a human needs to re-authenticate", not "the
+# adapter is broken". These degrade to skipped-with-alert instead of failing
+# the whole job every night (alert fatigue is how real failures get missed).
+_AUTH_HINTS = ("cookie", "log in", "log into", "login", "auth", "credential", "token")
+
+_AUTH_ALERTS_PATH = Path(__file__).resolve().parent.parent / "data" / "seed_auth_alerts.json"
+_AUTH_ALERT_INTERVAL_H = 24
+
+
+def _is_auth_failure(error: str) -> bool:
+    err = error.lower()
+    return any(hint in err for hint in _AUTH_HINTS)
+
+
+def _auth_alert_due(label: str) -> bool:
+    """True if we haven't alerted about this adapter's auth in the last 24h.
+    Records the alert timestamp when returning True."""
+    from datetime import datetime, timedelta
+
+    alerts: dict = {}
+    try:
+        alerts = json.loads(_AUTH_ALERTS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+
+    last = alerts.get(label)
+    if last:
+        try:
+            if datetime.now() - datetime.fromisoformat(last) < timedelta(hours=_AUTH_ALERT_INTERVAL_H):
+                return False
+        except ValueError:
+            pass
+
+    alerts[label] = datetime.now().isoformat()
+    try:
+        _AUTH_ALERTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _AUTH_ALERTS_PATH.write_text(json.dumps(alerts, indent=2), encoding="utf-8")
+    except OSError as e:
+        logger.warning(f"Could not persist seed auth alert state: {e}")
+    return True
 
 
 def _build_summary_message(outcomes: list[_AdapterOutcome]) -> str:
@@ -334,8 +379,15 @@ async def incremental_seed_import(bot=None):
                 # Validate first (tracked separately for summary)
                 is_valid, val_err = await adapter.validate()
                 if not is_valid:
-                    logger.warning(f"Adapter {adapter_name} validation failed: {val_err}")
-                    outcomes.append(_AdapterOutcome(label=label, validated=False, validate_error=val_err))
+                    auth_needed = _is_auth_failure(val_err)
+                    if auth_needed:
+                        logger.warning(f"Adapter {adapter_name} skipped (auth needed): {val_err}")
+                    else:
+                        logger.warning(f"Adapter {adapter_name} validation failed: {val_err}")
+                    outcomes.append(_AdapterOutcome(
+                        label=label, validated=False, validate_error=val_err,
+                        auth_needed=auth_needed,
+                    ))
                     continue
 
                 # Use batched import for adapters with many items (saves embedding API calls)
@@ -413,8 +465,12 @@ async def incremental_seed_import(bot=None):
         except Exception as e:
             logger.error(f"Failed to post seed summary to Discord: {e}")
 
-    # Return dict for _tracked_job wrapper to interpret
-    validation_failures = [o for o in outcomes if not o.validated]
+    # Return dict for _tracked_job wrapper to interpret. Auth-needed adapters
+    # degrade to "skipped" — they don't fail the job (a human has to act, and
+    # the throttled alert below already asked them to), so the nightly failure
+    # webhook only fires for genuinely broken adapters.
+    validation_failures = [o for o in outcomes if not o.validated and not o.auth_needed]
+    auth_skipped = [o for o in outcomes if o.auth_needed]
     all_ok = len(validation_failures) == 0 and total_failed == 0
     failure_summary = "; ".join(
         f"{o.label}: {o.validate_error}" for o in validation_failures
@@ -422,14 +478,31 @@ async def incremental_seed_import(bot=None):
     if total_failed > 0:
         failure_summary += f"; {total_failed} items failed to import"
 
-    return {
-        "Incremental Seed": (
-            all_ok,
-            f"{total_imported} imported, {total_skipped} skipped, "
-            f"{len(validation_failures)} adapters failed"
-            + (f" ({failure_summary})" if failure_summary else "")
-        )
-    }
+    # One actionable alert per adapter per 24h instead of nightly failure noise
+    if bot and auth_skipped:
+        for o in auth_skipped:
+            if not _auth_alert_due(o.label):
+                continue
+            try:
+                channel = bot.get_channel(ALERTS_CHANNEL_ID) or await bot.fetch_channel(ALERTS_CHANNEL_ID)
+                await channel.send(
+                    f"\U0001F511 **Seed adapter needs re-auth: {o.label}**\n"
+                    f"`{o.validate_error}`\n"
+                    f"The nightly import will keep skipping {o.label} until this is fixed. "
+                    f"(Reminder repeats every {_AUTH_ALERT_INTERVAL_H}h.)"
+                )
+            except Exception as e:
+                logger.error(f"Failed to post auth alert for {o.label}: {e}")
+
+    detail = (
+        f"{total_imported} imported, {total_skipped} skipped, "
+        f"{len(validation_failures)} adapters failed"
+        + (f" ({failure_summary})" if failure_summary else "")
+    )
+    if auth_skipped:
+        detail += f"; {len(auth_skipped)} awaiting auth ({', '.join(o.label for o in auth_skipped)})"
+
+    return {"Incremental Seed": (all_ok, detail)}
 
 
 def register_incremental_seed(scheduler, bot=None):

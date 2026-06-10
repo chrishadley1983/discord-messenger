@@ -779,14 +779,23 @@ class PeterbotScheduler:
                 _jobs_use_channel = os.environ.get("JOBS_USE_CHANNEL", "0") == "1"
                 target = self._channel_target_for_model(skill_model) if _jobs_use_channel else None
 
-                if target:
-                    logger.info(f"Job {job.name}: routing to {target[0]} ({target[1]}) for model {skill_model or 'default'}")
-                    response = await self._send_to_jobs_channel(context, job=job, target=target, model_for_fallback=skill_model)
-                elif _jobs_use_channel:
-                    response = await self._send_to_jobs_channel(context, job=job)
-                else:
+                async def _send_once() -> str:
+                    if target:
+                        logger.info(f"Job {job.name}: routing to {target[0]} ({target[1]}) for model {skill_model or 'default'}")
+                        return await self._send_to_jobs_channel(context, job=job, target=target, model_for_fallback=skill_model)
+                    if _jobs_use_channel:
+                        return await self._send_to_jobs_channel(context, job=job)
                     logger.info(f"Job {job.name}: channels disabled, using claude -p (model={skill_model or 'default'})")
-                    response = await self._send_to_claude_code_v2(context, job=job, model_override=skill_model)
+                    return await self._send_to_claude_code_v2(context, job=job, model_override=skill_model)
+
+                response = await _send_once()
+
+                # Retry once on empty response — transient channel hiccups
+                # (e.g. paper-builder 2026-06-09) shouldn't fail the job.
+                if not response or not response.strip():
+                    logger.warning(f"Job {job.name}: empty response, retrying once")
+                    await asyncio.sleep(5)
+                    response = await _send_once()
             except asyncio.TimeoutError:
                 duration = time.time() - start_time
                 logger.error(f"Job {job.name} timed out after {duration:.1f}s")
