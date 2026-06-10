@@ -2177,7 +2177,9 @@ async def get_morning_digest_data() -> dict[str, Any]:
     schedule, email, todos, github, weather = await asyncio.gather(
         get_schedule_today_data(),
         get_email_summary_data(),
-        get_notion_todos_data(),
+        # ptasks personal_todo, not Notion — Notion was never configured
+        # (no NOTION_API_KEY anywhere); ptasks is Peter's actual todo system.
+        _hadley_request("/ptasks/list/personal_todo"),
         get_github_daily_data(),
         _hadley_request("/weather/current"),
         return_exceptions=True,
@@ -2189,10 +2191,19 @@ async def get_morning_digest_data() -> dict[str, Any]:
             return {"error": str(value)}
         return value
 
+    todos = _safe(todos, "todos")
+    if isinstance(todos, dict) and "tasks" in todos:
+        todos = todos["tasks"]
+    if isinstance(todos, list):
+        todos = [
+            t for t in todos
+            if t.get("status") not in ("done", "cancelled", "parked")
+        ]
+
     return {
         "schedule": _safe(schedule, "schedule"),
         "email": _safe(email, "email"),
-        "notion_todos": _safe(todos, "notion todos"),
+        "todos": todos,
         "github": _safe(github, "github"),
         "weather": _safe(weather, "weather"),
     }

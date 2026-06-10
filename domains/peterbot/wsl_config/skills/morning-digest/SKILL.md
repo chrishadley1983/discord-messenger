@@ -21,7 +21,7 @@ ONE well-composed morning message replacing four separate jobs (email summary, s
 `data` contains five sections (each may carry an `error` key — degrade gracefully, never show raw errors):
 - `schedule` — today's calendar events
 - `email` — unread inbox summary
-- `notion_todos` — open Notion todos
+- `todos` — open personal todos (ptasks `personal_todo` list)
 - `github` — yesterday's GitHub activity
 - `weather` — current conditions for Tonbridge
 
@@ -43,7 +43,7 @@ ONE well-composed morning message replacing four separate jobs (email summary, s
 {only emails that actually need attention, one line each}
 
 ✅ **Todos**
-{top 3-5 open Notion todos, most urgent first}
+{top 3-5 open personal todos (ptasks), most urgent first}
 
 🐙 **GitHub** — {one-line summary of yesterday's commits/PRs across repos, only if there was activity}
 ```
