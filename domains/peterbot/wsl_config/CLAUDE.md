@@ -43,6 +43,7 @@ Base URL: `http://172.19.64.1:8100` — full reference in `hadley_api/README.md`
 - `/ptasks` CRUD (`peter_queue` for bugs, `personal_todo` for todos, `idea` for ideas)
 - `/life-admin/obligations` / `/life-admin/alerts` / `/life-admin/dashboard`
 - `/accountability/goals` / `/accountability/mood` / `/accountability/journal`
+- `/audible/library-context` / `/audible/finished` / `/audible/similar/{asin}` / `/audible/search?q=` — Chris's LIVE Audible library (234+ finished books with his star ratings). For ANY book/audiobook question use these + the `book-recommender` skill — never guess from old conversations.
 
 Mutating endpoints require `x-api-key` header. 503 = `.env` needs reload.
 
