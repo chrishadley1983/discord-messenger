@@ -129,3 +129,7 @@ tabelog_combined.json
 
 # Supabase temp
 supabase/.temp/
+
+# Runtime artifacts (contain secrets / PID churn)
+.cache
+bot.lock
