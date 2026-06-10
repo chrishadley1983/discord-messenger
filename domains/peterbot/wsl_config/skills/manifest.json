@@ -174,11 +174,17 @@
       "how do I get to {place}",
       "route to {destination}",
       "how long to {place}",
-      "best way to {place}"
+      "best way to {place}",
+      "traffic",
+      "how's the traffic",
+      "is there traffic",
+      "school run traffic",
+      "how long to school",
+      "should I leave now"
     ],
     "conversational": true,
     "scheduled": false,
-    "description": "Get directions and route planning for ad-hoc journeys",
+    "description": "Directions, route planning, and live traffic checks (merged from the old traffic-check skill)",
     "channel": null
   },
   "drive-search": {
@@ -1458,11 +1464,17 @@
       "is it raining",
       "how cold is it",
       "temperature",
-      "do I need a jacket/umbrella"
+      "do I need a jacket/umbrella",
+      "forecast",
+      "weather this week",
+      "weather tomorrow",
+      "what's the weather like on {day}",
+      "will it rain on Saturday",
+      "weekend weather"
     ],
     "conversational": true,
     "scheduled": false,
-    "description": "Get current weather conditions for Tonbridge",
+    "description": "Current conditions and multi-day forecast for Tonbridge (merged from the old weather + weather-forecast skills)",
     "channel": null
   },
   "weekly-cut-review": {

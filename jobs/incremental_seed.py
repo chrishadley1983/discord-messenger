@@ -148,7 +148,19 @@ class _AdapterOutcome:
 # Validation failures that mean "a human needs to re-authenticate", not "the
 # adapter is broken". These degrade to skipped-with-alert instead of failing
 # the whole job every night (alert fatigue is how real failures get missed).
-_AUTH_HINTS = ("cookie", "log in", "log into", "login", "auth", "credential", "token")
+# Deliberately NARROW phrases: bare 'auth'/'token' would also match genuine
+# breakage like 'Unauthorized: 401' or 'Invalid token format in settings.yml',
+# silencing the failure webhook for exactly the class of bug it exists to catch.
+_AUTH_HINTS = (
+    "cookie",
+    "log in",
+    "log into",
+    "login",
+    "re-authenticate",
+    "token expired",
+    "expired token",
+    "session expired",
+)
 
 _AUTH_ALERTS_PATH = Path(__file__).resolve().parent.parent / "data" / "seed_auth_alerts.json"
 _AUTH_ALERT_INTERVAL_H = 24

@@ -124,18 +124,25 @@ async def get_hydration_data() -> dict[str, Any]:
         if template:
             live = await _get_hydration_live_data()
             if "error" not in live:
-                message = str(template).format_map(_SafeFormatDict(
-                    water_ml=f"{live['water_ml']:,}ml",
-                    water_target=f"{live['water_target']:,}ml",
-                    water_pct=round(live["water_pct"]),
-                    water_bar=_progress_bar(live["water_pct"]),
-                    steps=f"{live['steps']:,}",
-                    steps_target=f"{live['steps_target']:,}",
-                    steps_pct=round(live["steps_pct"]),
-                    steps_bar=_progress_bar(live["steps_pct"]),
-                ))
-                return {"__direct__": message}
-            logger.warning("Hydration batch hit but live data failed; falling back to LLM")
+                try:
+                    # format_map raises ValueError on an unmatched brace —
+                    # one stray '{' from the generator must only degrade
+                    # this hour's post, not crash the fetch.
+                    message = str(template).format_map(_SafeFormatDict(
+                        water_ml=f"{live['water_ml']:,}ml",
+                        water_target=f"{live['water_target']:,}ml",
+                        water_pct=round(live["water_pct"]),
+                        water_bar=_progress_bar(live["water_pct"]),
+                        steps=f"{live['steps']:,}",
+                        steps_target=f"{live['steps_target']:,}",
+                        steps_pct=round(live["steps_pct"]),
+                        steps_bar=_progress_bar(live["steps_pct"]),
+                    ))
+                    return {"__direct__": message}
+                except ValueError as e:
+                    logger.warning(f"Hydration batch template malformed ({e}); falling back to LLM")
+            else:
+                logger.warning("Hydration batch hit but live data failed; falling back to LLM")
     return await _get_hydration_live_data()
 
 
@@ -4459,7 +4466,6 @@ SKILL_DATA_FETCHERS = {
     "school-run": get_school_run_data,
     "school-pickup": get_school_pickup_data,
     "morning-briefing": get_morning_briefing_data,
-    "whatsapp-health": get_whatsapp_health_data,
     "football-scores": get_football_scores_data,
     "pl-results": get_pl_results_data,
     "spurs-live": get_spurs_live_data,
@@ -4514,7 +4520,6 @@ SKILL_DATA_FETCHERS = {
     # Self-Reflect - memories, brain saves, job history
     "self-reflect": get_self_reflect_data,
     # Instagram - pre-source images via APIs
-    "daily-instagram-prep": get_instagram_prep_data,
     # School - spellings + events
     "school-weekly-spellings": get_school_data,
     # GitHub activity

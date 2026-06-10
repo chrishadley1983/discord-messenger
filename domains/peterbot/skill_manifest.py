@@ -148,15 +148,20 @@ def build_manifest() -> dict[str, dict[str, Any]]:
         md = _parse_markdown_sections(text)
         old = existing.get(name, {})
 
+        # SKILL.md is the source of truth: frontmatter, then markdown
+        # sections, and only then whatever the old manifest carried. (The
+        # old-manifest-first order meant SKILL.md trigger edits never
+        # propagated for frontmatter-less skills — e.g. the weather/
+        # directions merges.)
         triggers = (
             _normalise_triggers(fm.get("trigger") or fm.get("triggers"))
-            or _normalise_triggers(old.get("triggers"))
             or _normalise_triggers(md.get("triggers"))
+            or _normalise_triggers(old.get("triggers"))
         )
         description = (
             fm.get("description")
-            or old.get("description")
             or md.get("description")
+            or old.get("description")
             or name.replace("-", " ")
         )
         sched_info = schedule.get(name, {})
@@ -235,6 +240,18 @@ def check_consistency() -> dict[str, Any]:
     if flag_mismatch:
         problems.append(
             f"manifest 'scheduled' flag disagrees with SCHEDULE.md: {', '.join(flag_mismatch)}"
+        )
+
+    channel_mismatch = sorted(
+        name
+        for name, info in schedule.items()
+        if info.get("scheduled")
+        and name in manifest
+        and manifest[name].get("channel") != info.get("channel")
+    )
+    if channel_mismatch:
+        problems.append(
+            f"manifest channel disagrees with SCHEDULE.md: {', '.join(channel_mismatch)}"
         )
 
     return {"ok": not problems, "problems": problems}

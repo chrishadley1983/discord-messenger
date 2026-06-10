@@ -139,6 +139,6 @@ Want me to add a task to transfer the domain?
 - Never claim exact quotes — use "typically", "often", "many report"
 - Always suggest a deadline to act by (a few days before renewal)
 - If Chris asks to compare something not tracked, offer to add the obligation first
-- Use web search tools (SearXNG, Brave) for current pricing data
+- Use web search tools (SearXNG) for current pricing data
 - For energy: reference Ofgem price cap as a benchmark
 - Offer to create a reminder or task for the follow-up action

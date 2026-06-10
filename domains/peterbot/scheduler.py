@@ -723,45 +723,58 @@ class PeterbotScheduler:
                     data = await fetcher()
                     logger.debug(f"Pre-fetched data for {job.skill}")
 
-                    # Check for __skip__ signal — fetcher says don't invoke Claude
-                    if isinstance(data, dict) and data.get("__skip__"):
-                        reason = data.get("reason", "skip requested")
-                        logger.info(f"Job {job.name} skipped by fetcher: {reason}")
-                        self.last_job_status[job.skill] = True
-                        if JOB_HISTORY_ENABLED:
-                            try:
-                                record_job_complete(job_id, success=True, output=f"SKIP: {reason}", execution_id=execution_id)
-                            except Exception:
-                                pass
-                        return
-
-                    # Check for __direct__ signal — fetcher already has the final
-                    # message (e.g. from the pre-generated daily batch); post it
-                    # without an LLM call.
-                    if isinstance(data, dict) and data.get("__direct__"):
-                        message = str(data["__direct__"])
-                        logger.info(f"Job {job.name}: direct post from fetcher (no LLM call)")
-                        await self._post_to_channel(job, message)
-                        self.last_job_status[job.skill] = True
-                        if health_tracker:
-                            health_tracker.record_job_result(
-                                job.name, success=True,
-                                duration_seconds=time.time() - start_time,
-                                response_length=len(message)
-                            )
-                        if JOB_HISTORY_ENABLED:
-                            try:
-                                record_job_complete(job_id, success=True, output=f"DIRECT: {message[:400]}", execution_id=execution_id)
-                            except Exception:
-                                pass
-                        return
-
                     # Extract file attachments if present
                     if isinstance(data, dict) and "files_to_attach" in data:
                         files_to_attach = data.pop("files_to_attach", [])
                         logger.debug(f"Found {len(files_to_attach)} files to attach")
                 except Exception as e:
                     logger.warning(f"Data fetch failed for {job.skill}: {e}")
+                    data = None
+
+            # __skip__ / __direct__ are handled OUTSIDE the fetch try/except so
+            # post/record errors aren't mislabelled as fetch failures and can
+            # never fall through to an LLM call with the raw signal payload.
+
+            # __skip__ — fetcher says don't invoke Claude
+            if isinstance(data, dict) and data.get("__skip__"):
+                reason = data.get("reason", "skip requested")
+                logger.info(f"Job {job.name} skipped by fetcher: {reason}")
+                self.last_job_status[job.skill] = True
+                if JOB_HISTORY_ENABLED:
+                    try:
+                        record_job_complete(job_id, success=True, output=f"SKIP: {reason}", execution_id=execution_id)
+                    except Exception:
+                        pass
+                return
+
+            # __direct__ — fetcher already has the final message (e.g. from the
+            # pre-generated daily batch); post it without an LLM call.
+            if isinstance(data, dict) and data.get("__direct__"):
+                message = str(data["__direct__"])
+                logger.info(f"Job {job.name}: direct post from fetcher (no LLM call)")
+                try:
+                    await self._post_to_channel(job, message)
+                    post_ok, post_err = True, None
+                except Exception as e:
+                    post_ok, post_err = False, str(e)
+                    logger.error(f"Job {job.name}: direct post failed: {e}")
+                self.last_job_status[job.skill] = post_ok
+                if health_tracker:
+                    health_tracker.record_job_result(
+                        job.name, success=post_ok,
+                        duration_seconds=time.time() - start_time,
+                        response_length=len(message),
+                        error=post_err,
+                    )
+                if JOB_HISTORY_ENABLED:
+                    try:
+                        if post_ok:
+                            record_job_complete(job_id, success=True, output=f"DIRECT: {message[:400]}", execution_id=execution_id)
+                        else:
+                            record_job_complete(job_id, success=False, error=f"direct post failed: {post_err}", execution_id=execution_id)
+                    except Exception:
+                        pass
+                return
 
             # 2. Load skill
             skill_content = self._load_skill(job.skill)
@@ -813,7 +826,11 @@ class PeterbotScheduler:
 
                 # Retry once on empty response — transient channel hiccups
                 # (e.g. paper-builder 2026-06-09) shouldn't fail the job.
-                if not response or not response.strip():
+                # Channel paths only: _send_to_claude_code_v2 already has its
+                # own retry_on_empty, so retrying the CLI branch here would
+                # stack up to 4 LLM attempts.
+                _channel_path = bool(target) or _jobs_use_channel
+                if _channel_path and (not response or not response.strip()):
                     logger.warning(f"Job {job.name}: empty response, retrying once")
                     await asyncio.sleep(5)
                     response = await _send_once()
@@ -978,59 +995,22 @@ class PeterbotScheduler:
         return None
 
     def _generate_manifest(self) -> dict:
-        """Generate skills manifest from all SKILL.md files.
+        """Regenerate manifest.json via domains.peterbot.skill_manifest.
 
-        Scans skills directory, parses YAML frontmatter, and writes manifest.json.
-        Peter loads this manifest to know available skills and their triggers.
-
-        Returns:
-            The generated manifest dict
+        The old inline generator only read YAML frontmatter, so every
+        frontmatter-less skill vanished from the manifest on each schedule
+        load (103 vs 118 entries). skill_manifest handles frontmatter,
+        markdown sections, and SCHEDULE.md-authoritative scheduled/channel.
         """
-        manifest = {}
-
-        # Scan all skill directories
-        if not self.skills_path.exists():
-            logger.warning(f"Skills path not found: {self.skills_path}")
-            return manifest
-
-        for skill_dir in self.skills_path.iterdir():
-            if not skill_dir.is_dir():
-                continue
-            if skill_dir.name.startswith("_"):
-                continue  # Skip template
-
-            skill_file = skill_dir / "SKILL.md"
-            if not skill_file.exists():
-                continue
-
-            try:
-                content = skill_file.read_text(encoding="utf-8")
-                frontmatter = self._parse_skill_frontmatter(content)
-
-                if frontmatter:
-                    skill_name = frontmatter.get("name", skill_dir.name)
-                    manifest[skill_name] = {
-                        "triggers": frontmatter.get("trigger", []),
-                        "conversational": frontmatter.get("conversational", True),
-                        "scheduled": frontmatter.get("scheduled", False),
-                        "description": frontmatter.get("description", ""),
-                        "channel": frontmatter.get("channel", "#peterbot"),
-                    }
-                    logger.debug(f"Added skill to manifest: {skill_name}")
-
-            except Exception as e:
-                logger.warning(f"Failed to parse skill {skill_dir.name}: {e}")
-
-        # Write manifest.json
-        manifest_path = self.skills_path / "manifest.json"
         try:
-            with open(manifest_path, "w", encoding="utf-8") as f:
-                json.dump(manifest, f, indent=2)
-            logger.info(f"Generated skills manifest with {len(manifest)} skills")
-        except Exception as e:
-            logger.error(f"Failed to write manifest: {e}")
+            from domains.peterbot.skill_manifest import write_manifest
 
-        return manifest
+            manifest = write_manifest()
+            logger.info(f"Generated skills manifest with {len(manifest)} skills")
+            return manifest
+        except Exception as e:
+            logger.error(f"Failed to regenerate manifest (keeping existing file): {e}")
+            return {}
 
     def _parse_skill_frontmatter(self, content: str) -> Optional[dict]:
         """Parse YAML frontmatter from SKILL.md content.

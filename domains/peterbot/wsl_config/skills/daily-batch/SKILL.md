@@ -26,7 +26,7 @@ One Claude call each morning (06:55) writes ALL of today's fixed-format messages
 
 ## Task
 
-Write the file `~/peterbot/data/daily_batch.json` (use the Write tool) with this exact structure, then reply `NO_REPLY`.
+Write the file `/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/domains/peterbot/wsl_config/data/daily_batch.json` (use the Write tool — this EXACT absolute path; do NOT write to ~/peterbot/data/, which is a separate directory the scheduler never reads) with this exact structure, then reply `NO_REPLY`.
 
 ```json
 {

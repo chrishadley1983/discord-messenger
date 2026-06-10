@@ -47,7 +47,6 @@ FILES = [
     ("skills/school-pickup/SKILL.md", ".claude/skills/school-pickup"),
     ("skills/school-run/SKILL.md", ".claude/skills/school-run"),
     ("skills/weekly-health/SKILL.md", ".claude/skills/weekly-health"),
-    ("skills/whatsapp-keepalive/SKILL.md", ".claude/skills/whatsapp-keepalive"),
     ("skills/youtube-digest/SKILL.md", ".claude/skills/youtube-digest"),
     ("skills/self-reflect/SKILL.md", ".claude/skills/self-reflect"),
     # Phase 9: Browser Purchasing
