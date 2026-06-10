@@ -20,7 +20,7 @@ NSSM_SERVICE_NAMES = {
     "hadley_api": "HadleyAPI",
     "discord_bot": "DiscordBot",
     "peter_dashboard": "PeterDashboard",
-    "hadley_bricks": None,  # Not NSSM-managed
+    "hadley_bricks": "HadleyBricks",  # NSSM service: start-production.cmd (next start)
 }
 
 
@@ -101,7 +101,9 @@ SERVICES = {
         name="Hadley Bricks",
         pid_file="hadley_bricks.pid",
         port=3000,
-        start_cmd=["cmd", "/c", "npm", "run", "dev"],
+        # Fallback only — normal control path is the HadleyBricks NSSM service,
+        # which runs start-production.cmd (next start, production build).
+        start_cmd=["cmd", "/c", r"C:\Users\Chris Hadley\claude-projects\hadley-bricks-inventory-management\start-production.cmd"],
         cwd=r"C:\Users\Chris Hadley\claude-projects\hadley-bricks-inventory-management",
         process_pattern="next"  # Next.js process pattern
     ),
