@@ -134,10 +134,14 @@ jobs loaded, HadleyBricks on a production build).
 | osaka-mint-check / trip-prep / spotify adapter | ⏸️ Deferred until after the Japan trip / Spotify export import |
 
 **Outstanding for Chris**: (1) WhatsApp linked device was revoked (401) — re-pair
-via QR (watchdog alerted, won't restart-loop); (2) log into Reddit in the
-Chrome-Vinted profile to clear the nightly seed skip; (3) rotate Spotify app
-credentials (historic `.cache` in git); (4) Notion todos fetcher reports
-"database not configured" — config gap predating this work.
+via QR (watchdog alerted, won't restart-loop).
+
+Resolved since: (2) Reddit re-login done 10 Jun evening — adapter validate()
+passes (root cause of repeated CDP weirdness was a leaked headless Chrome from
+14 May holding the Chrome-SeedImport profile; killed). (3) Spotify rotation —
+accepted risk: leaked `.cache` held only the refresh token, unusable without
+the client secret which never leaked. (4) Notion todos — digest now reads
+ptasks `personal_todo` instead; Notion remains unconfigured by choice.
 
 ## Suggested immediate actions (this week)
 
