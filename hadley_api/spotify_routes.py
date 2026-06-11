@@ -240,6 +240,25 @@ async def playlists(limit: int = 20):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/audiobooks")
+async def audiobooks(limit: int = 50):
+    """Get user's saved audiobook library."""
+    try:
+        books = await asyncio.to_thread(spotify.saved_audiobooks, limit)
+        return {"count": len(books), "audiobooks": books}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/playback-snapshot")
+async def playback_snapshot():
+    """Current playback incl. podcasts/audiobooks (used by the playback poller)."""
+    try:
+        return await asyncio.to_thread(spotify.playback_snapshot)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/play-playlist")
 async def play_playlist(req: PlayRequest):
     """Find a playlist by name and play it."""

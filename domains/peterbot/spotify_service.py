@@ -371,3 +371,78 @@ def play_playlist_by_name(name: str, device_id: str = None) -> dict:
 
     # Fallback to global search
     return search_and_play(name, search_type="playlist", device_id=device_id)
+
+
+# --- Audiobooks & Playback Capture ---
+
+def saved_audiobooks(limit: int = 50) -> list[dict]:
+    """Chris's saved Spotify audiobook library."""
+    sp = get_client()
+    if hasattr(sp, "current_user_saved_audiobooks"):
+        results = sp.current_user_saved_audiobooks(limit=limit)
+    else:
+        results = sp._get("me/audiobooks", limit=limit)
+
+    books = []
+    for it in results.get("items", []):
+        book = it.get("audiobook") or it
+        books.append({
+            "name": book.get("name", "Unknown"),
+            "authors": [a.get("name", "") for a in book.get("authors", [])],
+            "narrators": [n.get("name", "") for n in book.get("narrators", [])],
+            "publisher": book.get("publisher", ""),
+            "total_chapters": book.get("total_chapters"),
+            "uri": book.get("uri"),
+            "description": (book.get("description") or "")[:300],
+        })
+    return books
+
+
+def playback_snapshot() -> dict:
+    """Current playback including podcasts/audiobooks, normalised for logging.
+
+    Unlike now_playing(), passes additional_types="episode" — without it the
+    player API returns item=null for podcast episodes and audiobook chapters,
+    which is why they never show up in listening history.
+    """
+    sp = get_client()
+    playback = sp.current_playback(additional_types="episode")
+    if not playback or not playback.get("item") or not playback.get("is_playing"):
+        return {"playing": False}
+
+    item = playback["item"]
+    item_type = item.get("type", playback.get("currently_playing_type", "unknown"))
+
+    # Parent container differs by type: album (track), show (podcast),
+    # audiobook (chapter) — probe defensively.
+    parent = item.get("album") or item.get("show") or item.get("audiobook") or {}
+    if item_type == "episode" and item.get("show", {}).get("publisher"):
+        kind = "podcast"
+    elif item_type in ("chapter", "audiobook") or item.get("audiobook"):
+        kind = "audiobook"
+    elif item_type == "track":
+        kind = "music"
+    else:
+        kind = item_type
+
+    creators = (
+        [a.get("name", "") for a in item.get("artists", [])]
+        or [a.get("name", "") for a in parent.get("authors", [])]
+        or ([parent.get("publisher", "")] if parent.get("publisher") else [])
+    )
+
+    return {
+        "playing": True,
+        "kind": kind,
+        "name": item.get("name", "Unknown"),
+        "parent": parent.get("name", ""),
+        # Audiobooks surface as shows/episodes in the player API — the seed
+        # adapter reclassifies podcast→audiobook by matching parent_uri
+        # against the saved-audiobook library.
+        "parent_uri": parent.get("uri", ""),
+        "creators": [c for c in creators if c],
+        "uri": item.get("uri"),
+        "progress_ms": playback.get("progress_ms", 0),
+        "duration_ms": item.get("duration_ms", 0),
+        "device": playback.get("device", {}).get("name", ""),
+    }

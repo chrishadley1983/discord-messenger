@@ -2,6 +2,26 @@
 
 READ THIS when Chris asks about music, Spotify, playback control, or anything audio-related.
 
+## Data Source Routing (IMPORTANT)
+
+Use sources in this order — do NOT lead with the claude.ai Spotify connector:
+
+1. **Listening history** ("what have I listened to", "have I played X") → **Second Brain** (`listening_history` items, seeded nightly — see Listening History section below)
+2. **Playback, devices, playlists, now-playing** → **Hadley API `/spotify/*`** (tables below; uses its own OAuth, independent of claude.ai)
+3. **claude.ai Spotify connector** (`mcp__claude_ai_Spotify__*` tools) → LAST resort only, for things the above can't do
+
+**If a claude.ai connector returns an auth error** ("requires re-authorization" / "token expired"):
+1. Do NOT stop or just apologise — fall back to Second Brain / `/spotify/*` and answer from there
+2. Tell Chris once, briefly: the connector needs re-auth at claude.ai → Settings → Connectors
+3. Surface it to #alerts (throttled, safe to fire on every occurrence):
+   ```bash
+   curl -s -X POST "http://172.19.64.1:8100/alert" -H "x-api-key: $HADLEY_AUTH_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"message": "claude.ai Spotify connector token expired — re-auth at claude.ai > Settings > Connectors", "source": "connector-auth"}'
+   ```
+
+This applies to ALL claude.ai connectors (Spotify, Gmail, Calendar, Audible…), not just Spotify — adjust the message accordingly.
+
 ## Spotify API — Base URL: `http://172.19.64.1:8100`
 
 ### Playback Control
@@ -83,6 +103,24 @@ Or use the `search_knowledge` MCP tool with queries like:
 | "what are my top tracks/artists" | Search Second Brain for `spotify top tracks` |
 | "what did I listen to on Saturday" | Search Second Brain for `spotify listening YYYY-MM-DD` |
 | "how much have I been listening" | Search Second Brain for `spotify listening` and summarise track counts |
+
+## Audiobooks & Podcasts on Spotify
+
+Spotify's recently-played API only returns music, so audiobook/podcast data has its own paths:
+
+| Question | Action |
+|----------|--------|
+| "what audiobooks do I have on Spotify" | GET `/spotify/audiobooks` (saved library, live) |
+| "have I listened to [book] on Spotify" | Search Second Brain for `spotify audiobook [title]` |
+| "what podcasts have I been listening to" | Search Second Brain for `spotify podcast` |
+
+**Second Brain audiobook/podcast data:**
+- `Spotify Audiobook Listening: <title>` items — total hours, chapters, date range (full history back to 2010, from data export backfill, `spotify://export/audiobook/...`)
+- `Spotify Podcasts & Audiobooks — YYYY-MM-DD` daily items — from the 5-min playback poller (live going forward, includes progress position, `spotify://playback/...`)
+- `Spotify Audiobook: <title>` items — saved library snapshot
+- Music history: monthly summaries 2010→now (`spotify://export/music/YYYY-MM`) + daily/weekly items
+
+**Gotcha:** a book appearing with ~0.0h hours was just browsed/sampled, not listened to. Real listens have meaningful hours (e.g. 12h = a full book).
 
 ## Response Style
 
