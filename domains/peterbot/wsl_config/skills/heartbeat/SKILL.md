@@ -29,6 +29,16 @@ Run these checks:
 2. Attempt a restart via the Dashboard API (see Self-Healing section in CLAUDE.md)
 3. Report the restart attempt result
 
+**Connector auth check**: If any claude.ai MCP connector tool (Spotify, Gmail, Calendar, Audible…) returns an auth error ("requires re-authorization" / "token expired") during this heartbeat's work — or you know one failed earlier in this session — surface it:
+1. Include it in your status line: `⚠️ Connector expired: <name>`
+2. Post it to #alerts (the endpoint throttles duplicates, so always safe to call):
+   ```bash
+   curl -s -X POST "http://172.19.64.1:8100/alert" -H "x-api-key: $HADLEY_AUTH_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"message": "claude.ai <name> connector token expired — re-auth at claude.ai > Settings > Connectors", "source": "connector-auth"}'
+   ```
+Do NOT probe connectors just to test them — only report failures you actually encountered.
+
 If any check fails → Include failure in status output
 
 ### 2. Peter Queue Tasks (if healthy)

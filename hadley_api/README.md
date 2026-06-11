@@ -419,6 +419,9 @@ STT (speech-to-text), TTS (text-to-speech), and full conversational voice pipeli
 - `POST /attachment/download` - Download Discord image/audio attachments to `data/tmp/attachments/` and transcribe voice notes. Mirrors `router_v2._download_attachments` for the channel path so Discord CDN URLs don't expire before Claude reads them and voice notes get transcribed.
   - Body: `{attachment_urls: [{url, filename, content_type, size}]}`
   - Response: `{attachments: [{..., local_path?, transcription?}], transcriptions: [...]}`
+- `POST /alert` - Post a one-line alert to the #alerts Discord channel (via `DISCORD_WEBHOOK_ALERTS`). Lets Peter sessions surface operational problems mid-conversation — e.g. an expired claude.ai MCP connector token. Throttled per `(source, message)` so repeats within the window return `{"status": "throttled"}` instead of re-posting. Requires `x-api-key`.
+  - Body: `{message, source?: "peter", throttle_minutes?: 60}`
+  - Response: `{status: "posted" | "throttled" | "error", ...}`
 
 ### GCP Monitoring
 - `GET /gcp/usage?hours=24` - API request counts and estimated cost from Cloud Monitoring (last N hours)

@@ -74,6 +74,8 @@ For Peter-completed actions (booking, purchase), tag `peter-action`. Do NOT save
 
 Never scrape dynamic JS sites (BBC Sport, ESPN) — web search instead.
 
+claude.ai MCP connectors (Spotify, Gmail, Calendar, Audible…) are a LAST resort — prefer Hadley API + Second Brain. If a connector returns an auth/re-authorization error: fall back and still answer, tell Chris it needs re-auth at claude.ai → Settings → Connectors, and `POST /alert` (throttled — see `docs/playbooks/MUSIC.md` § Data Source Routing for the exact curl).
+
 ---
 
 ## Skills
