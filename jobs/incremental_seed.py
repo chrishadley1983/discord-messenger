@@ -123,6 +123,11 @@ ADAPTER_LABELS = {
     "finance-summary": "Finance",
     "family-fuel-recipes": "Recipes",
     "spotify-listening": "Spotify",
+    "spotify-playback": "Spotify Playback",
+    "spotify-extended": "Spotify Export",
+    "whatsapp-evolution": "WhatsApp",
+    "channel-conversations": "Peter Chats",
+    "energy-monthly": "Energy",
     "netflix-viewing": "Netflix",
     "travel-bookings": "Travel",
     "withings-health": "Withings",
@@ -289,7 +294,8 @@ async def incremental_seed_import(bot=None):
     from domains.second_brain.seed.adapters import (
         calendar, email, github, garmin, garmin_health, bookmarks, email_links,
         hadley_bricks_email, finance_summary, recipes, spotify, netflix, travel,
-        withings, reddit, school, claude_code_history, audible,
+        withings, reddit, school, claude_code_history, audible, spotify_playback,
+        spotify_extended, whatsapp_evolution, channel_conversations, energy_monthly,
     )
 
     adapters = get_available_adapters()
@@ -319,7 +325,11 @@ async def incremental_seed_import(bot=None):
 
     # Finance summary runs monthly (2nd of month generates previous month's summary)
     from datetime import date
-    if date.today().day <= 3:
+    # Window is a week, not 3 days — if the seed misses a few nights (machine
+    # off, job failure) a narrow gate silently skips the whole month (June
+    # 2026's summary was lost this way). Dedupe by source_url makes the extra
+    # runs free.
+    if date.today().day <= 7:
         adapter_limits["finance-summary"] = 1
 
     # New adapters
@@ -329,6 +339,11 @@ async def incremental_seed_import(bot=None):
     adapter_limits["claude-code-history"] = 50 # Recent Claude Code conversations
     adapter_limits["reddit-saved"] = 20       # Saved/upvoted/commented posts
     adapter_limits["audible-books"] = 300     # Finished audiobooks (dedup by asin; 234 backfill then ~2/week)
+    adapter_limits["spotify-playback"] = 60   # Podcast/audiobook daily summaries + saved audiobook library
+    adapter_limits["spotify-extended"] = 600  # Export backfill — no-op unless data/spotify_export/ has files
+    adapter_limits["whatsapp-evolution"] = 100  # Weekly chat transcripts from chris-whatsapp instance
+    adapter_limits["channel-conversations"] = 60  # Daily Chris<->Peter extracts from channel transcripts
+    adapter_limits["energy-monthly"] = 24     # Monthly home energy summaries (dedupe by month)
 
     # Launch Chrome CDP headless for adapters that need it (Reddit, etc.)
     # Will be terminated after the adapter loop completes.

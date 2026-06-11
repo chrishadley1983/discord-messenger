@@ -402,12 +402,28 @@ async def on_ready():
     )
     logger.info("Channel cost tail registered (every 5 min)")
 
+    # Spotify playback poller — captures podcasts/audiobooks the
+    # recently-played API never returns. Quiet infra job, no Discord output.
+    # See domains/peterbot/spotify_playback_log.py.
+    from domains.peterbot.spotify_playback_log import register as _register_spotify_poll
+    _register_spotify_poll(scheduler, minutes=5)
+
+    # Octopus Home Mini live telemetry — 30s poll into energy_live +
+    # data/energy_telemetry.jsonl, with stall alerting baked in.
+    # See domains/energy/telemetry.py.
+    from domains.energy.telemetry import register as _register_energy_telemetry
+    _register_energy_telemetry(scheduler)
+
+    # Appliance event detection over the telemetry stream (kettle/oven/EV,
+    # sustained-load alerts). See domains/energy/events.py.
+    from domains.energy.events import register as _register_energy_events
+    _register_energy_events(scheduler)
+
     # Legacy jobs — wrap with execution tracking before registration
     # This records start/complete in job_history.db and alerts #alerts on failure
     import jobs.incremental_seed as _seed_mod
     import jobs.school_sync as _school_mod
     import jobs.energy_sync as _energy_mod
-    import jobs.whatsapp_sync as _wa_mod
 
     _seed_mod.incremental_seed_import = _tracked_job(
         "incremental_seed", _seed_mod.incremental_seed_import)
@@ -421,10 +437,6 @@ async def on_ready():
         "energy_weekly_digest", _energy_mod.energy_weekly_digest)
     _energy_mod.energy_monthly_billing = _tracked_job(
         "energy_monthly_billing", _energy_mod.energy_monthly_billing)
-    _wa_mod.whatsapp_web_scrape = _tracked_job(
-        "whatsapp_web_scrape", _wa_mod.whatsapp_web_scrape)
-    _wa_mod.whatsapp_export_scan = _tracked_job(
-        "whatsapp_export_scan", _wa_mod.whatsapp_export_scan)
 
     # Incremental seed import — daily at 1am UK, loads calendar/email/GitHub/Garmin
     _seed_mod.register_incremental_seed(scheduler, bot=bot)
@@ -438,9 +450,9 @@ async def on_ready():
     _energy_mod.register_energy_sync(scheduler, bot=bot)
     logger.info("Energy sync jobs registered (daily 10:00 AM + weekly Sunday 9:00 AM + monthly 1st 10:30 AM UK)")
 
-    # WhatsApp — daily export scan at 10am, weekly reminder Sunday 9am
-    _wa_mod.register_whatsapp_sync(scheduler, bot=bot)
-    logger.info("WhatsApp sync jobs registered (daily 10:00 AM + weekly Sunday 9:00 AM UK)")
+    # WhatsApp chat ingestion now runs as the whatsapp-evolution seed adapter
+    # inside incremental_seed (jobs/whatsapp_sync.py retired Jun 2026 — its
+    # scraper scripts were deleted in Mar 2026 and it silently no-opped since).
 
     # Japan trip — proactive WhatsApp alerts every 15 min (active Apr 3-19 only)
     from domains.peterbot.japan_alerts import check_and_send_alerts as _japan_alerts

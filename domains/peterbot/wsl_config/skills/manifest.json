@@ -262,6 +262,22 @@
     "description": "Provide a summary of unread emails and inbox status",
     "channel": "#peterbot"
   },
+  "energy": {
+    "triggers": [
+      "energy",
+      "electricity",
+      "how much power",
+      "what's using power",
+      "energy usage today",
+      "is the oven on",
+      "ev charge",
+      "car charging"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Live home energy — current demand, today's usage/cost, appliance events, EV charging",
+    "channel": null
+  },
   "ev-charging": {
     "triggers": [
       "car charging",

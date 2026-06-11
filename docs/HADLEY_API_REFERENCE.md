@@ -478,7 +478,17 @@ Mind map visualization from Second Brain data.
 
 ---
 
-## Spotify `/spotify` (17 endpoints)
+## Energy `/energy` (5 endpoints — Octopus Home Mini live telemetry, Jun 2026)
+
+| Method | Path | Parameters | Purpose |
+|--------|------|------------|---------|
+| GET | `/energy/live` | -- | Current demand (W) from Home Mini, today-so-far kWh/£, current rate, off-peak flag |
+| GET | `/energy/today` | `include_curve` (bool) | Today's totals + optional 1-minute demand curve |
+| GET | `/energy/summary` | `days` (default 7) | Complete daily summaries, both fuels (official data, lags 1-2 days) |
+| GET | `/energy/ev` | -- | Intelligent Go planned + completed EV charge dispatches |
+| GET | `/energy/events` | `hours` (default 24) | Detected appliance events (kettle/oven_or_heater/ev_charge/spike/high_load) |
+
+## Spotify `/spotify` (19 endpoints)
 
 | Method | Path | Parameters | Purpose |
 |--------|------|------------|---------|
@@ -500,6 +510,8 @@ Mind map visualization from Second Brain data.
 | POST | `/spotify/play-playlist` | body: playlist data | Play a playlist |
 | GET | `/spotify/recommend` | -- | Get recommendations based on current playback |
 | POST | `/spotify/play-similar` | -- | Play similar tracks |
+| GET | `/spotify/audiobooks` | `limit` (default 50) | Saved audiobook library (name, authors, narrators) |
+| GET | `/spotify/playback-snapshot` | -- | Current playback incl. podcasts/audiobooks (feeds the 5-min playback poller) |
 
 **Example -- `/spotify/play`:**
 ```json

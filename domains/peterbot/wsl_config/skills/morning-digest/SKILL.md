@@ -24,6 +24,7 @@ ONE well-composed morning message replacing four separate jobs (email summary, s
 - `todos` — open personal todos (ptasks `personal_todo` list)
 - `github` — yesterday's GitHub activity
 - `weather` — current conditions for Tonbridge
+- `energy` — recent daily energy summaries (`days[]`: kwh, cost, EV flag per fuel)
 
 ## Output Format
 
@@ -46,6 +47,8 @@ ONE well-composed morning message replacing four separate jobs (email summary, s
 {top 3-5 open personal todos (ptasks), most urgent first}
 
 🐙 **GitHub** — {one-line summary of yesterday's commits/PRs across repos, only if there was activity}
+
+⚡ **Energy** — {latest complete day: "X kWh elec / Y kWh gas, £Z" + "(EV charged)" if flagged — one line, skip if data missing}
 ```
 
 ## Guidelines

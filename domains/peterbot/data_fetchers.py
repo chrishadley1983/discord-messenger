@@ -6,7 +6,7 @@ Skills without a fetcher use web search during execution.
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -2234,7 +2234,7 @@ async def get_morning_digest_data() -> dict[str, Any]:
     One message replaces the old email-summary / schedule-today /
     notion-todos / github-activity standalone jobs.
     """
-    schedule, email, todos, github, weather = await asyncio.gather(
+    schedule, email, todos, github, weather, energy = await asyncio.gather(
         get_schedule_today_data(),
         get_email_summary_data(),
         # ptasks personal_todo, not Notion — Notion was never configured
@@ -2242,6 +2242,8 @@ async def get_morning_digest_data() -> dict[str, Any]:
         _hadley_request("/ptasks/list/personal_todo"),
         get_github_daily_data(),
         _hadley_request("/weather/current"),
+        # Latest complete day + EV flag (Home Mini era, Jun 2026)
+        _hadley_request("/energy/summary?days=3"),
         return_exceptions=True,
     )
 
@@ -2266,6 +2268,7 @@ async def get_morning_digest_data() -> dict[str, Any]:
         "todos": todos,
         "github": _safe(github, "github"),
         "weather": _safe(weather, "weather"),
+        "energy": _safe(energy, "energy"),
     }
 
 
@@ -3993,7 +3996,99 @@ async def get_system_health_data() -> dict[str, Any]:
         logger.error(f"Manifest consistency check error: {e}")
         result["manifest_check"] = {"ok": False, "problems": [f"check failed: {e}"]}
 
+    # Seed data freshness — job stats can lie ("success" while ingesting
+    # nothing: the WhatsApp scraper no-opped for 3 months with green stats),
+    # so assert the newest Second Brain item per source is recent enough.
+    result["seed_freshness"] = await _check_seed_freshness()
+
     return result
+
+
+# Source-url prefix → max acceptable age in days for the newest item.
+# Cadences: WhatsApp emits weekly transcripts; Spotify daily summaries and
+# email import run nightly.
+SEED_FRESHNESS_RULES = [
+    ("whatsapp", "whatsapp://*", 10),
+    ("spotify-daily", "spotify://daily/*", 3),
+    ("email", "gmail://*", 3),
+    # Chris↔Peter conversation capture (channel-conversations adapter,
+    # channel:// items). Its predecessor (discord:// via router_v2) died
+    # silently in Apr 2026; Chris chats with Peter most days.
+    ("peter-conversations", "channel://*", 14),
+    # Garmin activities (workouts). Verified Jun 2026: adapter works — the
+    # newest activity in Garmin Connect itself was 3 May, so staleness here
+    # usually means Chris isn't recording activities, not a pipeline fault.
+    # Generous window to avoid nagging about real-world gaps.
+    ("garmin-activities", "https://connect.garmin.com/*", 30),
+]
+
+
+async def _check_seed_freshness() -> dict[str, Any]:
+    """Age of the newest knowledge item per seed source, flagging stale ones."""
+    import httpx
+    from config import SUPABASE_URL, SUPABASE_KEY
+
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    out: dict[str, Any] = {"sources": {}, "stale": []}
+    now = datetime.now(timezone.utc)
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            for label, pattern, max_age_days in SEED_FRESHNESS_RULES:
+                resp = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/knowledge_items",
+                    headers=headers,
+                    params={
+                        "select": "created_at",
+                        "source_url": f"like.{pattern}",
+                        "order": "created_at.desc",
+                        "limit": "1",
+                    },
+                )
+                rows = resp.json() if resp.status_code == 200 else []
+                if not rows:
+                    out["sources"][label] = {"newest": None, "stale": True}
+                    out["stale"].append(f"{label}: no items at all")
+                    continue
+                newest = datetime.fromisoformat(
+                    rows[0]["created_at"].replace("Z", "+00:00"))
+                age_days = round((now - newest).total_seconds() / 86400, 1)
+                is_stale = age_days > max_age_days
+                out["sources"][label] = {
+                    "newest": newest.date().isoformat(),
+                    "age_days": age_days,
+                    "max_age_days": max_age_days,
+                    "stale": is_stale,
+                }
+                if is_stale:
+                    out["stale"].append(
+                        f"{label}: newest item {age_days}d old (max {max_age_days}d)")
+
+            # Live energy telemetry (energy_live table, not knowledge_items):
+            # the Home Mini poller writes every 30s — >30 min old means the
+            # poller, the Mini, or Kraken is down.
+            resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/energy_live",
+                headers=headers,
+                params={"select": "minute_start", "order": "minute_start.desc", "limit": "1"},
+            )
+            rows = resp.json() if resp.status_code == 200 else []
+            if rows:
+                newest = datetime.fromisoformat(rows[0]["minute_start"].replace("Z", "+00:00"))
+                age_min = round((now - newest).total_seconds() / 60)
+                stale = age_min > 30
+                out["sources"]["energy-live"] = {
+                    "newest": rows[0]["minute_start"], "age_minutes": age_min, "stale": stale}
+                if stale:
+                    out["stale"].append(f"energy-live: telemetry {age_min} min old (max 30)")
+            else:
+                out["sources"]["energy-live"] = {"newest": None, "stale": True}
+                out["stale"].append("energy-live: no telemetry rows at all")
+    except Exception as e:
+        logger.error(f"Seed freshness check error: {e}")
+        out["error"] = str(e)
+
+    return out
 
 
 async def get_orphan_embed_data() -> dict[str, Any]:

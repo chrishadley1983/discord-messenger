@@ -112,3 +112,17 @@ Base URL: `http://172.19.64.1:8100`
 - "Send me a WhatsApp with this image" → `/whatsapp/send?message=...&media_url=...`
 - "Fetch this PDF for me" → `/fetch-url?url=...`
 - "Get the content from this URL" → `/fetch-url?url=...`
+
+## Energy (Live — Octopus Home Mini)
+
+Live home energy at 10-second resolution. Full guidance in `skills/energy/SKILL.md`.
+
+| Question | Endpoint |
+|----------|----------|
+| Current power draw / "what's using power" | GET `/energy/live` |
+| Today's usage + cost so far | GET `/energy/today` |
+| Appliance events (kettle/oven/EV/spikes) | GET `/energy/events?hours=6` |
+| EV charging slots + history | GET `/energy/ev` |
+| Daily history (complete days, lags 1-2 days) | GET `/energy/summary?days=7` |
+
+For "today" questions ALWAYS use `/energy/live` or `/energy/today` — the daily summaries lag.
