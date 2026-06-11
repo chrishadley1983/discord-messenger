@@ -4,7 +4,7 @@ Legacy register_* scheduler registration is deprecated — all scheduled
 Discord output is defined in wsl_config/SCHEDULE.md and executed by
 PeterbotScheduler. The modules here remain because data_fetchers.py imports
 their fetch/format helpers, and bot.py registers a few infrastructure syncs
-(incremental_seed, school_sync, energy_sync, whatsapp_sync).
+(incremental_seed, school_sync, energy_sync).
 """
 
 from .morning_briefing import register_morning_briefing
