@@ -90,3 +90,38 @@ Implementation is NOT done until all T-checks pass.
 
 **Cutover sequence:** C1 anytime → C2 step 1 + observe 24h (T2-T6) →
 C2 step 2 (remove Vercel crons) → T5 next-day verification → close.
+
+---
+
+## 5. Post-implementation findings (12 Jun 2026, production validation workflow)
+
+**Validation outcome:** bricqer-batch-sync ✅ (71 batches, verified in history),
+scanner-image-cleanup ✅, skills-via-proxy ✅ (incl. POST body forwarding read
+in proxy code), registration + induced-401 ✅, vercel.json cron-free on
+origin/main ✅ (PR #435).
+
+**Hardenings added from findings:** embedded-failure detection (a 200
+`{success:true}` carrying usersFailed/failures/errors counters now raises),
+startup catch-up replay (MemoryJobStore can't replay missed slots across
+restarts — a boot-time check re-runs any UTC slot missed today), retry-once
+15 min after a failure.
+
+**KNOWN ISSUE — ebay-stock-sync fails locally:** persistent `fetch failed`
+inside EbayStockService.triggerImport when run on the local box (worked from
+Vercel at 06:04). Python reaches api.ebay.com/apiz.ebay.com fine from the
+same box → Node/undici-specific (IPv6? specific feed host?). NOT data-loss:
+the 09:35 local full-sync covers eBay daily via a working path. The 06:00
+job will alert until fixed; diagnose from the HadleyBricks NSSM server logs.
+
+**MAJOR DISCOVERY — GCP Cloud Scheduler estate:** 37+ ENABLED jobs in GCP
+project gen-lang-client-0823893317 (europe-west2) target
+hadley-bricks-…vercel.app/api/cron/* — full-sync 6x daily (300s-class),
+amazon-two-phase-sync every 10 min, ebay-auction-sniper every 15 min,
+multiple 30-min/hourly pollers. This is the MAJORITY of the Fluid CPU burn;
+the original attribution (~75% to the 3 vercel.json crons) was wrong, and
+the fleet has grown since the Mar 2026 jobs audit (27 → 37+). The "~90%
+drop" projection will NOT materialise from this migration alone.
+**DECISION NEEDED (Chris):** migrate the GCP fleet to local scheduling
+(big move — business-critical frequencies incl. the auction sniper), or
+trim/slow the worst offenders (full-sync 6x daily?), or accept Vercel Pro.
+Tomorrow's daily report projections give the empirical burn rate either way.
