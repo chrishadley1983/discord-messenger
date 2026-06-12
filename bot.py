@@ -458,12 +458,9 @@ async def on_ready():
     # 2026; see docs/plans/vercel-fluid-cpu-migration.md). Tracked so any
     # failure alerts #alerts; coalesce covers the box-was-off-overnight case.
     import jobs.hb_crons as _hb_crons_mod
-    _hb_crons_mod.hb_ebay_stock_sync = _tracked_job(
-        "hb_ebay_stock_sync", _hb_crons_mod.hb_ebay_stock_sync)
-    _hb_crons_mod.hb_bricqer_batch_sync = _tracked_job(
-        "hb_bricqer_batch_sync", _hb_crons_mod.hb_bricqer_batch_sync)
-    _hb_crons_mod.hb_scanner_image_cleanup = _tracked_job(
-        "hb_scanner_image_cleanup", _hb_crons_mod.hb_scanner_image_cleanup)
+    for _hb_job_id in _hb_crons_mod.CRON_SPECS:
+        setattr(_hb_crons_mod, _hb_job_id,
+                _tracked_job(_hb_job_id, getattr(_hb_crons_mod, _hb_job_id)))
     _hb_crons_mod.register_hb_crons(scheduler, bot=bot)
 
     # Japan trip — proactive WhatsApp alerts every 15 min (active Apr 3-19 only)
