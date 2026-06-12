@@ -22,16 +22,16 @@ Automatically scans Gmail for Vinted and eBay purchase confirmation emails, then
 
 ## API Endpoints
 
-All endpoints require the Hadley Bricks service API key (`HADLEY_BRICKS_API_KEY` env var).
+Auth is handled by the Hadley API proxy (key injected server-side) — do NOT send x-api-key yourself.
 
-**Base URL**: `https://hadley-bricks-inventory-management.vercel.app`
+**Base URL**: `http://172.19.64.1:8100/hb`
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/service/purchases/scan-emails` | GET | Scan Gmail for purchase emails |
-| `/api/service/inventory/lookup-asin` | GET | Find Amazon ASIN for a set |
-| `/api/service/amazon/competitive-summary` | GET | Get buy box / competitive pricing |
-| `/api/service/purchases/batch-import` | POST | Create purchase + inventory records |
+| `/service/purchases/scan-emails` | GET | Scan Gmail for purchase emails |
+| `/service/inventory/lookup-asin` | GET | Find Amazon ASIN for a set |
+| `/service/amazon/competitive-summary` | GET | Get buy box / competitive pricing |
+| `/service/purchases/batch-import` | POST | Create purchase + inventory records |
 
 ## Safety: First-Run Protection
 
@@ -46,8 +46,7 @@ Emails before this date are silently ignored - they won't appear as candidates a
 ### 1. Scan for New Purchases
 
 ```bash
-curl -s -X GET "${HADLEY_BRICKS_URL}/api/service/purchases/scan-emails?days=7" \
-  -H "x-api-key: ${HADLEY_BRICKS_API_KEY}"
+curl -s -X GET "${HADLEY_BRICKS_URL}/service/purchases/scan-emails?days=7"
 ```
 
 Response includes candidates with:
@@ -69,14 +68,12 @@ If `set_number` is null, try to extract from `set_name` pattern matching.
 
 **b) Look up ASIN:**
 ```bash
-curl -s -X GET "${HADLEY_BRICKS_URL}/api/service/inventory/lookup-asin?setNumber=${SET_NUMBER}" \
-  -H "x-api-key: ${HADLEY_BRICKS_API_KEY}"
+curl -s -X GET "${HADLEY_BRICKS_URL}/service/inventory/lookup-asin?setNumber=${SET_NUMBER}"
 ```
 
 **c) Get buy box pricing:**
 ```bash
-curl -s -X GET "${HADLEY_BRICKS_URL}/api/service/amazon/competitive-summary?asins=${ASIN}" \
-  -H "x-api-key: ${HADLEY_BRICKS_API_KEY}"
+curl -s -X GET "${HADLEY_BRICKS_URL}/service/amazon/competitive-summary?asins=${ASIN}"
 ```
 
 **d) Calculate list price:**
@@ -91,9 +88,7 @@ Example: Buy box £55.20 → list at £54.99
 ### 3. Batch Import
 
 ```bash
-curl -s -X POST "${HADLEY_BRICKS_URL}/api/service/purchases/batch-import" \
-  -H "x-api-key: ${HADLEY_BRICKS_API_KEY}" \
-  -H "Content-Type: application/json" \
+curl -s -X POST "${HADLEY_BRICKS_URL}/service/purchases/batch-import" \n  -H "Content-Type: application/json" \
   -d '{
     "items": [
       {
@@ -210,7 +205,7 @@ Import these purchases? (yes/no)
 
 ```bash
 HADLEY_BRICKS_API_KEY=hb_sk_...  # Service API key with write permission
-HADLEY_BRICKS_URL=https://hadley-bricks-inventory-management.vercel.app
+HADLEY_BRICKS_URL=http://172.19.64.1:8100/hb
 ```
 
 ## Testing

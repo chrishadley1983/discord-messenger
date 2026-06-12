@@ -454,6 +454,18 @@ async def on_ready():
     # inside incremental_seed (jobs/whatsapp_sync.py retired Jun 2026 — its
     # scraper scripts were deleted in Mar 2026 and it silently no-opped since).
 
+    # Hadley Bricks crons — migrated off Vercel (Fluid CPU exhaustion, Jun
+    # 2026; see docs/plans/vercel-fluid-cpu-migration.md). Tracked so any
+    # failure alerts #alerts; coalesce covers the box-was-off-overnight case.
+    import jobs.hb_crons as _hb_crons_mod
+    _hb_crons_mod.hb_ebay_stock_sync = _tracked_job(
+        "hb_ebay_stock_sync", _hb_crons_mod.hb_ebay_stock_sync)
+    _hb_crons_mod.hb_bricqer_batch_sync = _tracked_job(
+        "hb_bricqer_batch_sync", _hb_crons_mod.hb_bricqer_batch_sync)
+    _hb_crons_mod.hb_scanner_image_cleanup = _tracked_job(
+        "hb_scanner_image_cleanup", _hb_crons_mod.hb_scanner_image_cleanup)
+    _hb_crons_mod.register_hb_crons(scheduler, bot=bot)
+
     # Japan trip — proactive WhatsApp alerts every 15 min (active Apr 3-19 only)
     from domains.peterbot.japan_alerts import check_and_send_alerts as _japan_alerts
     scheduler.add_job(
