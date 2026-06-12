@@ -125,3 +125,65 @@ drop" projection will NOT materialise from this migration alone.
 (big move — business-critical frequencies incl. the auction sniper), or
 trim/slow the worst offenders (full-sync 6x daily?), or accept Vercel Pro.
 Tomorrow's daily report projections give the empirical burn rate either way.
+
+---
+
+## 6. PLAN v2 (12 Jun 2026) — data-driven, replaces section 2's projections
+
+**Method correction:** v1 attributed CPU by wall-time heuristic and never
+enumerated route invokers. v2 is built from (a) the full GCP Cloud Scheduler
+fleet listing (40 jobs) and (b) 30 days of real per-job durations from
+job_execution_history.
+
+### Targets (88% of measured wall time, 7 jobs)
+
+| Job | GCP schedule | Wall hrs/30d | Action |
+|---|---|---|---|
+| amazon-pricing | */30 | 9.16 | migrate local |
+| full-sync | 45 3,7,11,15,19,23 | 8.32 | migrate local (note: also question 6x/day — local already runs one at 09:35) |
+| ebay-fp-cleanup | 0,15,30,45 4 * * * | 4.97 | migrate local |
+| investment-sync | 0 7 | 1.73 | migrate local |
+| cost-allocation | 15 21 | 1.72 | migrate local |
+| ebay-pricing | 0 2 | 1.68 | migrate local |
+| retirement-sync | 0 6 | 0.95 | migrate local |
+
+**Deliberately NOT migrating:** ebay-auction-sniper (*/15, 2.37h wall but
+3s/run; live-bid latency + reliability favours cloud — revisit only if
+still over after phase 1) and all trivial pollers (amazon-two-phase 0.5s,
+minifig pollers 0.2s etc. — micro-burn, migration risk exceeds benefit).
+
+### Mechanism
+Extend jobs/hb_crons.py CRON_SPECS with the 7 routes at identical UTC
+schedules (tracked + embedded-failure detection + retry; catch-up for the
+daily ones only — multi-daily self-heal on the next slot). GCP jobs are
+**paused, not deleted** (gcloud scheduler jobs pause) = instant rollback.
+
+### Sequencing — test-THEN-cutover per job (v1 lesson, the eBay case)
+For each job, in order of burn: (1) invoke the route on localhost:3000 with
+cron auth, (2) verify duration + a real effect in job_execution_history /
+domain tables, (3) only then register locally + pause the GCP job, (4) next
+scheduled local run verified green before starting the next job. Any local
+failure (ebay-stock-sync-style) = leave that job on GCP, file the defect.
+
+### Risks (v2)
+| Risk | Mitigation |
+|---|---|
+| A route works on Vercel but not locally (proven class: ebay-stock-sync 'fetch failed') | per-job test-before-cutover gate; GCP job stays enabled until local proof |
+| Local box outage hits 7 more business jobs | daily ones get catch-up replay; sub-daily self-heal; tracked alerts + dead-man already in place; bids (sniper) deliberately not moved |
+| full-sync 6x/day x 166s on local hardware contends with 09:35 full-sync + Peter | jobs are sequential per schedule; box already runs heavier work; monitor first-week durations in job history |
+| CPU-vs-wall ratio unknown — even 88% wall might not be 88% CPU | daily report projections give empirical burn within ~3 days of each phase |
+| GCP pause forgotten → double runs if local also registered | pause in the SAME working session as local registration; routes idempotent |
+
+### Open defects folded in
+1. ebay-stock-sync local 'fetch failed' (Node/undici; Python fine) — diagnose
+   via HadleyBricks NSSM logs; until fixed it alerts daily at 06:00.
+2. delivery-report 18% failure rate, investment-retrain 100% (894s timeout)
+   — pre-existing, surfaced by the duration analysis; triage separately.
+
+### Workflow test spec (hand over at implementation)
+Per migrated job: invoke → duration < route maxDuration*0.9 → effect row in
+job_execution_history with items_failed=0 → embedded-failure counters zero
+→ GCP job state=PAUSED → next-day local run green. Plus adversarial review
+of the extended CRON_SPECS (schedule transcription errors UTC, overlap
+windows, catch-up applicability flags) and a day-3 projection check
+(<2%/day Fluid CPU).
