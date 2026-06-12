@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
-from .config import SMART_DEVICE_ID, SUPABASE_KEY, SUPABASE_URL
+from .config import SUPABASE_KEY, SUPABASE_URL
 
 _SB_HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
 
@@ -73,22 +73,44 @@ def _is_offpeak_rate(rate: float | None, windows: list[dict]) -> bool:
     return rate <= min(w["rate"] for w in windows) + 0.01
 
 
-def live_status() -> dict:
-    """Current demand straight from Kraken + today-so-far from energy_live."""
-    from .kraken import gql
+def _latest_telemetry_sample() -> dict:
+    """Newest raw sample from the poller's local log — no Kraken call.
 
+    The bot's 30s poller is the single Kraken consumer; a second direct
+    query from this endpoint caused KT-CT-1199 rate limiting. Reading the
+    log tail gives <=40s freshness for free.
+    """
+    import json
+    from .config import TELEMETRY_LOG
+    try:
+        with open(TELEMETRY_LOG, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 4096))
+            lines = f.read().decode("utf-8", errors="ignore").strip().splitlines()
+        for line in reversed(lines):
+            try:
+                s = json.loads(line)
+                if s.get("readAt") and s.get("demand") is not None:
+                    return s
+            except json.JSONDecodeError:
+                continue
+    except OSError:
+        pass
+    return {}
+
+
+def live_status() -> dict:
+    """Current demand from the poller's telemetry log + today from energy_live."""
     now = datetime.now(timezone.utc)
-    data = gql(
-        """query($d: String!, $s: DateTime!, $e: DateTime!) {
-             smartMeterTelemetry(deviceId: $d, grouping: TEN_SECONDS, start: $s, end: $e) {
-               readAt demand
-             }
-           }""",
-        {"d": SMART_DEVICE_ID, "s": (now - timedelta(minutes=3)).isoformat(),
-         "e": now.isoformat()},
-    )
-    samples = data.get("smartMeterTelemetry") or []
-    current = samples[-1] if samples else {}
+    sample = _latest_telemetry_sample()
+    current = {"readAt": sample.get("readAt"), "demand": sample.get("demand")}
+    # stale if the poller hasn't written for 3+ minutes
+    samples = []
+    if current["readAt"]:
+        age = (now - datetime.fromisoformat(
+            current["readAt"].replace("Z", "+00:00"))).total_seconds()
+        if age < 180:
+            samples = [current]
 
     today = today_curve()
     windows = _rate_windows()
