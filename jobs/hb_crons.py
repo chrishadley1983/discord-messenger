@@ -91,7 +91,7 @@ CRON_SPECS: dict[str, dict] = {
     "hb_investment_retrain": {
         "path": "/api/cron/investment-retrain",
         "trigger": {"day": 1, "hour": 5, "minute": 0, "timezone": "UTC"},
-        "catch_up": None, "timeout": 2400,
+        "catch_up": None, "timeout": 3900,  # measured: 41 min
     },
 }
 
