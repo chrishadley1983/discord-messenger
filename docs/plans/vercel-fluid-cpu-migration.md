@@ -187,3 +187,38 @@ job_execution_history with items_failed=0 → embedded-failure counters zero
 of the extended CRON_SPECS (schedule transcription errors UTC, overlap
 windows, catch-up applicability flags) and a day-3 projection check
 (<2%/day Fluid CPU).
+
+---
+
+## 7. Phase 2 cutover record (12 Jun 2026)
+
+**Correction to v2 table:** amazon-pricing + ebay-pricing GCP jobs target a
+Cloud Run service (pricing-sync-driver), NOT Vercel — their 10.8 wall-hrs
+never burned Fluid CPU. True Vercel set = 5 jobs (~17.7 wall-hrs) + the
+dead investment-retrain.
+
+**Gates (production, per job):** full-sync ✅ 123s local (also: ALL 671
+historical runs were GCP-fired — the believed daily local run used a
+different route; and items_failed=1 is chronic on every run = sub-sync
+defect, filed); ebay-fp-cleanup ✅ 150s; investment-sync ✅ 139s (caveat:
+price-alerts has no dedup — re-runs re-send Discord alerts); cost-allocation
+✅ 97s (idempotent, converges); retirement-sync ✅ on parity (Brick Tap
+sheet 400 chronic everywhere, filed).
+
+**Cutover:** 9 jobs registered locally (bot log 10:58), 6 GCP jobs PAUSED
+(verified). investment-retrain backfill running locally (first possible
+completion ever — needs ~15+ min vs Vercel's 300s cap). Review fixes
+applied: catch-up dead zone, trailing-25h window, tracked retries, HB
+readiness gate.
+
+**delivery-report fix:** root cause was a Royal Mail uib-modal popup
+(30 May–1 Jun) blocking the Export click — scraper now dismisses overlays;
+Cloud Run image rebuilding via cloudbuild.
+
+**Deletion:** one-shot evidence check 17 Jun 09:23 deletes the 6 paused GCP
+jobs only if 5 clean days of local runs (session-bound scheduler — if it
+never fires, jobs simply stay PAUSED; this doc records the obligation).
+
+**Open defects (filed, not blocking):** ebay-stock-sync local 'fetch
+failed' (Node); full-sync chronic items_failed=1 sub-sync; Brick Tap 400;
+investment-sync price-alert dedup; cost-allocation items_failed hardcoded 0.
