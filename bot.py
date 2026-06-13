@@ -419,6 +419,12 @@ async def on_ready():
     from domains.energy.events import register as _register_energy_events
     _register_energy_events(scheduler)
 
+    # Extract-channel recycler — restart the stateless Haiku extraction
+    # session before its context fills and it wedges (which silently slowed
+    # everything that extracts ~20x). See domains/peterbot/extract_channel_recycle.py.
+    from domains.peterbot.extract_channel_recycle import register as _register_extract_recycle
+    _register_extract_recycle(scheduler, minutes=4)
+
     # Legacy jobs — wrap with execution tracking before registration
     # This records start/complete in job_history.db and alerts #alerts on failure
     import jobs.incremental_seed as _seed_mod
