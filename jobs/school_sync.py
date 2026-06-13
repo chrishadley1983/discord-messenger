@@ -57,9 +57,12 @@ async def school_daily_sync(bot=None):
 
     results = {}
 
-    # Run Gmail parser
+    # Run Gmail parser. 300s (was 120): since Jun 2026 extraction routes
+    # through Hadley API /claude/extract (slower than the old direct API
+    # key) and the parser reconnects stale Gmail sockets mid-run, so a
+    # multi-email day legitimately exceeds 120s.
     success, output = await asyncio.to_thread(
-        _run_script, "Gmail Parser", "gmail_school_parser.py", timeout=120
+        _run_script, "Gmail Parser", "gmail_school_parser.py", timeout=300
     )
     results["Gmail Parser"] = (success, output)
     logger.info(f"Gmail Parser: {'OK' if success else 'FAILED'}")
