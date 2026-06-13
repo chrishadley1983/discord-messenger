@@ -54,7 +54,9 @@ def _restart_session() -> None:
 def _health() -> dict | None:
     try:
         return httpx.get(EXTRACT_HEALTH, timeout=5).json()
-    except Exception:
+    except Exception as e:
+        # distinguish a mid-restart bounce from a genuinely dead session
+        logger.debug(f"extract-channel /health unreachable: {e}")
         return None
 
 
