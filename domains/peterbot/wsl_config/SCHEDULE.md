@@ -69,6 +69,8 @@ Run `!reload-schedule` after editing to apply changes.
 | Monthly Accountability | accountability-monthly | 1st 10:30 UK | #food-log+WhatsApp:chris | yes |
 | Cost Digest | cost-digest | 22:55 UK | #alerts | yes |
 | Vercel Usage | vercel-usage | 06:45 UK | #api-costs | yes |
+| habit-checkin | habit-checkin | 21:00 UK | #peter-chat | yes |
+| habit-weekly | habit-weekly | Sunday 20:00 UK | #peter-chat | yes |
 
 ## Interval Jobs
 

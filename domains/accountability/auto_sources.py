@@ -292,9 +292,41 @@ async def fetch_source_history(source_key: str, days: int = 31) -> list[dict]:
                         for d, v in sorted(daily.items(), reverse=True)
                     ]
                 return []
+
+            elif agg in ("count_week", "exists_today"):
+                # Fitness sources (strength sessions / mobility) use a DATE
+                # column and count rows. History = one data point per day with
+                # value = number of qualifying sessions that day. Without this
+                # branch the function fell through to an implicit `return None`,
+                # which crashed /accountability/goals with
+                # "TypeError: 'NoneType' object is not iterable".
+                params = {
+                    "select": f"{date_col},{column}",
+                    f"{date_col}": f"gte.{cutoff}",
+                    "order": f"{date_col}.desc",
+                    **config.get("filter", {}),
+                }
+                if config["table"] == "fitness_workout_sessions":
+                    params["session_type"] = "not.in.(mobility,rest)"
+                resp = await client.get(url, headers=_read_headers(), params=params)
+                if resp.status_code == 200:
+                    daily: dict[str, float] = {}
+                    for row in resp.json():
+                        d = str(row[date_col])[:10]
+                        daily[d] = daily.get(d, 0) + 1.0
+                    return [
+                        {"date": d, "value": v}
+                        for d, v in sorted(daily.items(), reverse=True)
+                    ]
+                return []
     except Exception as e:
         logger.error(f"Fetch source history error for {source_key}: {e}")
         return []
+
+    # Unknown / unhandled aggregation — never return None. A None return here
+    # propagates into the route's list-comprehension and 500s the whole
+    # endpoint, taking down every goal because of one misconfigured source.
+    return []
 
 
 async def run_auto_updates(target_date: str | None = None) -> dict:

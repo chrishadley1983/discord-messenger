@@ -4569,6 +4569,33 @@ async def get_accountability_monthly_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
+async def get_habit_checkin_data() -> dict[str, Any]:
+    """Live stats for the private daily habit check-in (replaces the old
+    hardcoded placeholder JSON). Skips the 9pm prompt on day 0, or if a
+    result was already logged today (don't double-ask)."""
+    try:
+        from domains.accountability.habit_service import get_habit_status
+        status = await get_habit_status()
+        if status.get("day_number", 0) < 1:
+            return {"__skip__": True, "reason": "habit day 0 — no check-in yet"}
+        if status.get("logged_today"):
+            return {"__skip__": True, "reason": "habit already logged today"}
+        return status
+    except Exception as e:
+        logger.error(f"Habit check-in data fetch error: {e}")
+        return {"error": str(e)}
+
+
+async def get_habit_weekly_data() -> dict[str, Any]:
+    """Live stats for the Sunday weekly habit review."""
+    try:
+        from domains.accountability.habit_service import get_habit_status
+        return await get_habit_status()
+    except Exception as e:
+        logger.error(f"Habit weekly data fetch error: {e}")
+        return {"error": str(e)}
+
+
 async def get_fitness_advisor_data() -> dict[str, Any]:
     """Pre-fetch fitness advisor data for the proactive advisor skill."""
     try:
@@ -4721,6 +4748,9 @@ SKILL_DATA_FETCHERS = {
     # Accountability Tracker
     "accountability-weekly": get_accountability_weekly_data,
     "accountability-monthly": get_accountability_monthly_data,
+    # Private habit tracker (sensitive — see habit_service.py)
+    "habit-checkin": get_habit_checkin_data,
+    "habit-weekly": get_habit_weekly_data,
     # Fitness advisor
     "fitness-advisor": get_fitness_advisor_data,
     # Cost digest — Claude usage rollup (router_v2 + channels)

@@ -414,6 +414,28 @@
     "description": "Add shopping list to Sainsbury's trolley and book delivery slot",
     "channel": null
   },
+  "habit-checkin": {
+    "triggers": [
+      "habit check",
+      "habit status",
+      "where am I",
+      "streak"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Private daily habit accountability check-in",
+    "channel": "#peter-chat"
+  },
+  "habit-weekly": {
+    "triggers": [
+      "habit week",
+      "weekly habit"
+    ],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Private weekly habit accountability summary",
+    "channel": "#peter-chat"
+  },
   "hb-add-inventory": {
     "triggers": [
       "add inventory",

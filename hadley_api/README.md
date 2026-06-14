@@ -545,6 +545,18 @@ Tables:
 - `fitness_mobility_sessions` — mobility slots (morning/evening unique per day)
 - `fitness_weekly_checkins` — persisted Sunday snapshots
 
+## Accountability & Habit Tracker
+
+Goals/mood/journal under `/accountability/*` (all auth required). Key reads:
+- `GET /accountability/goals` — active goals + computed status (auto-sourced goals read from their source table)
+- `GET /accountability/summary` — all goals + mood + journal for the dashboard (batched queries)
+- `GET /accountability/report?period=week|month` — aggregated report data
+
+Private single-habit tracker (SENSITIVE — the habit is never named in any output):
+- `GET /accountability/habit` — live streak/score stats: `{day_number, current_streak, longest_streak, total_yes, total_no, total_days, last_result, percentage, week_results, week_number, logged_today, start_date}`
+- `POST /accountability/habit` — log a result. Body: `{result: "Y"|"N", date?: "YYYY-MM-DD"}` (defaults today; upserts one row per day)
+- Table `habit_log` (log_date PK, RLS on / service-role only). Consumed by the `habit-checkin` (9pm) and `habit-weekly` (Sun 8pm) skills via data fetchers; the 9pm job auto-skips on day 0 or if already logged.
+
 ## Environment Variables
 
 Uses the same `.env` as the main Discord bot:
