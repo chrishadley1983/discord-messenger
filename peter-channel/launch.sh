@@ -7,6 +7,13 @@
 # Prefer the user-space native Claude Code install (2.1.170+, dynamic
 # workflows) over the stale root-owned npm one at /usr/bin/claude.
 export PATH="$HOME/.local/bin:$PATH"
+# The MCP init handshake must finish within this window or Claude Code drops the
+# channel (→ :8104 never binds → bot.py falls back to router_v2). Cold tsx
+# transpile + discord.js import measures ~21s and crossed the 30s default on
+# ~1 in 3 starts under WSL load. 90s gives ~4x headroom so the timeout — the
+# root cause of the fallback flapping — effectively stops firing. The watchdog
+# (bot.py) still heals a genuine hang; this just stops the false ones.
+export MCP_TIMEOUT=90000
 set -euo pipefail
 
 CHANNEL_DIR="/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/peter-channel"
