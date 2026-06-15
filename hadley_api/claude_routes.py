@@ -53,8 +53,14 @@ class ExtractResponse(BaseModel):
 # min, Second Brain seeding crawled (Spotify import took 4.5h). After
 # _BREAKER_THRESHOLD consecutive channel failures we OPEN the breaker and go
 # straight to the CLI (~7s) for _BREAKER_COOLDOWN_S, then probe once to
-# auto-recover. The CLI fallback is also on-subscription, so this is a
-# latency fix, not a cost change.
+# auto-recover. Trade-off: the CLI fallback is `claude -p`, which from
+# 2026-06-15 bills as programmatic spend (NOT the subscription the
+# extract-channel runs on — see claude_extract() below and
+# docs/MIGRATE_OFF_CLAUDE_P.md). So an open breaker briefly shifts extract
+# traffic onto the metered path, bounded by _BREAKER_COOLDOWN_S. This is a
+# latency fix with a small, time-boxed metered-cost side effect — recycle the
+# wedged extract-channel session to close the breaker (and stop the spend)
+# sooner.
 _BREAKER_THRESHOLD = 3
 _BREAKER_COOLDOWN_S = 600.0
 _channel_fail_streak = 0

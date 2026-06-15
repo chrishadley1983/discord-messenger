@@ -129,9 +129,12 @@ def _format_youtube_batch(batch: list[dict]) -> str:
 
 def _call_claude(content: str) -> list[dict]:
     """Call Claude API for place extraction."""
+    import time
+
     import anthropic
 
     client = anthropic.Anthropic()
+    _t0 = time.monotonic()
     response = client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=4096,
@@ -139,6 +142,19 @@ def _call_claude(content: str) -> list[dict]:
             {"role": "user", "content": f"{EXTRACTION_PROMPT}\n\n{content}"}
         ],
     )
+
+    # Audit this raw-API-key call to the shared ai_api_usage log (fire-and-forget).
+    try:
+        from domains.api_usage.audit_log import log_ai_usage
+        log_ai_usage(
+            feature="japan_scraper",
+            model=CLAUDE_MODEL,
+            usage=getattr(response, "usage", None),
+            request_ms=(time.monotonic() - _t0) * 1000,
+            anthropic_message_id=getattr(response, "id", None),
+        )
+    except Exception:
+        pass
 
     text = response.content[0].text.strip()
 

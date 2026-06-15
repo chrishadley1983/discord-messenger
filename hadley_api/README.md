@@ -607,6 +607,14 @@ Proactive life admin obligation tracking and alerting.
 
 - `GET /jobs/health?hours=24` - Unified job health across DM + HB. Returns per-system stats: total, success, errors, success_rate, failures[], per_job[]. DM data from SQLite job_history.db, HB data from Supabase job_execution_history via HB API proxy.
 
+### AI API-usage audit & reconciliation
+
+Shared `ai_api_usage` table (Supabase `modjoikyuhqzouxvieua`) records every raw Anthropic-API-key call across all projects; reconciled daily against Anthropic's Admin usage report. See `docs/AI_USAGE_AUDIT.md`.
+
+- `GET /usage/audit?hours=24` - Logged spend by project / feature / model (estimated cost).
+- `GET /usage/reconcile?days=7` - Latest Anthropic-truth-vs-logged rows + gaps (`console` rows = Workbench/manual usage, not a gap).
+- `POST /usage/reconcile/run?days=3` - Run reconciliation now (needs `ANTHROPIC_ADMIN_KEY`).
+
 ## Notes
 
 - All Google APIs have full CRUD access (read, create, update, delete)
