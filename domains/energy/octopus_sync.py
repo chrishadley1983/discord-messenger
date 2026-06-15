@@ -257,6 +257,20 @@ def calculate_daily_summary(
     offpeak_kwh = 0.0
     cost_pence = 0.0
 
+    # Intelligent Go bills dispatched daytime EV slots at the off-peak unit
+    # rate, but the published rate schedule only encodes the fixed 23:30-05:30
+    # window. So for any slot we classify as off-peak (clock OR dispatch) we
+    # cost the cheapest unit rate of the day. For clock-window slots this is a
+    # no-op (they already resolve to the cheap rate); it corrects daytime
+    # dispatch slots that would otherwise be billed at the peak rate, keeping
+    # the £ consistent with the off-peak kWh split.
+    offpeak_rate = None
+    if fuel == "electricity" and rates:
+        offpeak_rate = min(
+            (rt["value_inc_vat"] for rt in rates if rt.get("value_inc_vat") is not None),
+            default=None,
+        )
+
     for r in readings:
         kwh = r["consumption"]
         if fuel == "gas":
@@ -264,13 +278,16 @@ def calculate_daily_summary(
 
         total_kwh += kwh
         rate = get_rate_for_interval(r["interval_start"], rates, fuel)
-        cost_pence += kwh * rate
 
         if fuel == "electricity":
             if is_offpeak_interval(r["interval_start"], dispatches):
                 offpeak_kwh += kwh
+                if offpeak_rate is not None:
+                    rate = offpeak_rate
             else:
                 peak_kwh += kwh
+
+        cost_pence += kwh * rate
 
     is_ev = fuel == "electricity" and offpeak_kwh > EV_OFFPEAK_THRESHOLD_KWH
 
