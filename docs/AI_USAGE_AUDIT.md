@@ -78,7 +78,17 @@ and cost_report, sums `ai_api_usage` by day×model, and upserts
   can't be pinned down.
 
 **Requires `ANTHROPIC_ADMIN_KEY`** (an org-admin-only Admin API key, created in
-Console → Settings → Admin keys — distinct from a normal API key). Until it's set, reconcile logs a warning and
+Console → Settings → Admin keys — distinct from a normal API key).
+
+**Individual / API-plan accounts (no admin key possible):** Anthropic's Admin API
+is unavailable for individual accounts — there's no "Admin keys" menu and none can
+be minted (would require converting to a Team org). Use the Console **cost CSV
+export** instead (Usage → Export): it includes an `api_key` column, so cost is
+attributable per project with no admin key. Reconcile with
+`python -m domains.api_usage.reconcile_csv <export.csv> --store`, or
+`POST /usage/reconcile/csv` (CSV as the request body). Same gap report
+(`ai_usage_reconciliation`), account-tier-independent. See
+`domains/api_usage/reconcile_csv.py`. Until it's set, reconcile logs a warning and
 skips cleanly. Runs daily 07:30 UK (`domains/api_usage/schedules.py`), or:
 
 ```
