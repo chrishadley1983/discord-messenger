@@ -100,14 +100,39 @@ def fetch_standing_charges(fuel: str) -> list[dict]:
 
 
 def is_offpeak(interval_start_iso: str) -> bool:
-    """Check if a half-hour interval falls in Intelligent Go off-peak (23:30-05:30 UTC)."""
+    """Check if a half-hour interval falls in the fixed Intelligent Go off-peak
+    window (23:30-05:30 local time).
+
+    Octopus returns consumption timestamps with a local offset, so ``dt.hour``
+    is the local wall-clock hour — this matches the local cheap window directly.
+    """
     dt = datetime.fromisoformat(interval_start_iso.replace("Z", "+00:00"))
     h, m = dt.hour, dt.minute
-    # Off-peak: 23:30 to 05:30 UTC
+    # Off-peak: 23:30 to 05:30 local
     if h > OFFPEAK_START_HOUR or (h == OFFPEAK_START_HOUR and m >= OFFPEAK_START_MIN):
         return True
     if h < OFFPEAK_END_HOUR or (h == OFFPEAK_END_HOUR and m < OFFPEAK_END_MIN):
         return True
+    return False
+
+
+def is_offpeak_interval(interval_start_iso: str, dispatches: dict | None = None) -> bool:
+    """Off-peak if inside the fixed Intelligent Go window OR an Octopus EV
+    dispatch slot.
+
+    Intelligent Octopus Go "bump charges" the car outside 23:30-05:30 (e.g. a
+    cheap daytime slot it dispatches) and still bills those half-hours at the
+    off-peak rate. A clock-only check therefore misattributes daytime EV
+    charging as peak — the cause of "EV (peak: 22.4, off-peak: 5.1)" on a day
+    the car actually charged cheaply during the day.
+    """
+    if is_offpeak(interval_start_iso):
+        return True
+    if dispatches:
+        from .dispatches import in_dispatch_window
+        dt = datetime.fromisoformat(interval_start_iso.replace("Z", "+00:00"))
+        if in_dispatch_window(dt, dispatches):
+            return True
     return False
 
 
@@ -218,9 +243,15 @@ def store_tariff_rates(sb, rates: list[dict], fuel: str, rate_type: str, product
 
 
 def calculate_daily_summary(
-    readings: list[dict], fuel: str, rates: list[dict], standing_charge_pence: float
+    readings: list[dict], fuel: str, rates: list[dict], standing_charge_pence: float,
+    dispatches: dict | None = None,
 ) -> dict:
-    """Calculate daily summary from half-hourly readings."""
+    """Calculate daily summary from half-hourly readings.
+
+    ``dispatches`` (Octopus planned/completed EV charge slots) lets off-peak
+    attribution count daytime smart-charge slots correctly; without it, the
+    classification falls back to the fixed clock window only.
+    """
     total_kwh = 0.0
     peak_kwh = 0.0
     offpeak_kwh = 0.0
@@ -236,7 +267,7 @@ def calculate_daily_summary(
         cost_pence += kwh * rate
 
         if fuel == "electricity":
-            if is_offpeak(r["interval_start"]):
+            if is_offpeak_interval(r["interval_start"], dispatches):
                 offpeak_kwh += kwh
             else:
                 peak_kwh += kwh
@@ -277,6 +308,38 @@ def store_daily_summaries(sb, summaries: dict[str, dict], fuel: str):
         ).execute()
 
     return len(rows)
+
+
+def store_dispatches(sb, dispatches: list[dict]) -> int:
+    """Persist completed EV dispatch slots (best-effort).
+
+    completedDispatches age out of the Octopus API within a day or two, so
+    storing them builds a durable record for auditing the off-peak split and
+    reclassifying days later. Never raises — a missing table or insert error
+    just means no audit row, not a failed sync.
+    """
+    # Dedup by start_at within the batch (keep last): Octopus can return the
+    # same slot twice, and Postgres rejects an upsert that touches one
+    # conflict target row more than once in a single command.
+    by_start: dict[str, dict] = {}
+    for d in dispatches:
+        if not d.get("start") or not d.get("end"):
+            continue
+        by_start[d["start"]] = {
+            "start_at": d["start"],
+            "end_at": d["end"],
+            "kwh": d.get("kwh") or 0,
+            "source": d.get("source"),
+        }
+    rows = list(by_start.values())
+    if not rows:
+        return 0
+    try:
+        sb.table("energy_dispatches").upsert(rows, on_conflict="start_at").execute()
+        return len(rows)
+    except Exception as e:
+        print(f"    dispatch store skipped ({e})")
+        return 0
 
 
 def get_last_sync_date(sb, fuel: str) -> date | None:
@@ -466,6 +529,27 @@ def sync_fuel(sb, fuel: str, from_date: date, to_date: date):
     # Fetch standing charges
     standing_charges = fetch_standing_charges(fuel)
 
+    # Fetch Octopus EV dispatch slots — ground truth for off-peak attribution.
+    # Intelligent Go dispatches the car outside 23:30-05:30 and bills those
+    # slots at the off-peak rate, so a clock-only split misattributes daytime
+    # charging as peak. completedDispatches only covers the last day or two, so
+    # this corrects the most-recent days the incremental sync re-summarises;
+    # older backfill days fall back to the fixed clock window. Best-effort —
+    # a dispatch fetch/store failure must never block the consumption sync.
+    dispatches = None
+    if fuel == "electricity":
+        try:
+            from .dispatches import get_dispatches
+            dispatches = get_dispatches()
+            completed = dispatches.get("completed", [])
+            print(f"    {len(completed)} completed dispatch slot(s)")
+            stored_d = store_dispatches(sb, completed)
+            if stored_d:
+                print(f"    Stored {stored_d} dispatch slot(s)")
+        except Exception as e:
+            print(f"    dispatch fetch failed ({e}) — clock-only off-peak split")
+            dispatches = None
+
     # Group readings by day and calculate summaries
     by_day: dict[str, list] = {}
     for r in readings:
@@ -492,7 +576,7 @@ def sync_fuel(sb, fuel: str, from_date: date, to_date: date):
             continue
         d = date.fromisoformat(day_str)
         sc = get_standing_charge_for_date(d, standing_charges)
-        summary = calculate_daily_summary(day_readings, fuel, rates, sc)
+        summary = calculate_daily_summary(day_readings, fuel, rates, sc, dispatches)
         daily_summaries[day_str] = summary
     if skipped_partial:
         print(f"    Skipped {skipped_partial} incomplete day(s) (awaiting full data)")
