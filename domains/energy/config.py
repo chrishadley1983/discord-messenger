@@ -68,6 +68,11 @@ GAS_M3_TO_KWH = 11.1
 # EV detection fallback: off-peak electricity above this = EV charge day
 EV_OFFPEAK_THRESHOLD_KWH = 5.0
 
+# A day above this total kWh that ISN'T dispatch-verified is flagged on the
+# Discord card — a likely EV-charge day whose daytime charging may be showing
+# as peak because Octopus dispatch data was unavailable.
+EV_TOTAL_HINT_KWH = 18.0
+
 # Telemetry: a day is only "complete" with this many half-hourly intervals
 COMPLETE_DAY_INTERVALS = 46  # 48 ideal; tolerate a couple of meter gaps
 
