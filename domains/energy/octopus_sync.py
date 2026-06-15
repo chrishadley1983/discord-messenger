@@ -8,11 +8,17 @@ First run backfills 90 days of history.
 import json
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import httpx
 from supabase import create_client
+
+try:
+    from zoneinfo import ZoneInfo
+    _LONDON = ZoneInfo("Europe/London")
+except Exception:  # zoneinfo/tzdata unavailable — fall back to raw wall-clock
+    _LONDON = None
 
 from .config import (
     COMPLETE_DAY_INTERVALS,
@@ -24,7 +30,7 @@ from .config import (
     GAS_PRODUCT, GAS_TARIFF,
     OFFPEAK_START_HOUR, OFFPEAK_START_MIN,
     OFFPEAK_END_HOUR, OFFPEAK_END_MIN,
-    GAS_M3_TO_KWH, EV_OFFPEAK_THRESHOLD_KWH,
+    GAS_M3_TO_KWH, EV_OFFPEAK_THRESHOLD_KWH, EV_TOTAL_HINT_KWH,
     DISCORD_ENERGY_WEBHOOK,
 )
 
@@ -101,38 +107,24 @@ def fetch_standing_charges(fuel: str) -> list[dict]:
 
 def is_offpeak(interval_start_iso: str) -> bool:
     """Check if a half-hour interval falls in the fixed Intelligent Go off-peak
-    window (23:30-05:30 local time).
+    window (23:30-05:30 UK local time).
 
-    Octopus returns consumption timestamps with a local offset, so ``dt.hour``
-    is the local wall-clock hour — this matches the local cheap window directly.
+    Converts to Europe/London explicitly so the window is correct regardless of
+    whether the timestamp carries a local offset (live Octopus REST API) or UTC
+    (re-read from energy_consumption, which Postgres returns as +00:00). A bare
+    ``dt.hour`` would silently misclassify the UTC case by the BST offset.
     """
     dt = datetime.fromisoformat(interval_start_iso.replace("Z", "+00:00"))
+    if _LONDON is not None:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.astimezone(_LONDON)
     h, m = dt.hour, dt.minute
     # Off-peak: 23:30 to 05:30 local
     if h > OFFPEAK_START_HOUR or (h == OFFPEAK_START_HOUR and m >= OFFPEAK_START_MIN):
         return True
     if h < OFFPEAK_END_HOUR or (h == OFFPEAK_END_HOUR and m < OFFPEAK_END_MIN):
         return True
-    return False
-
-
-def is_offpeak_interval(interval_start_iso: str, dispatches: dict | None = None) -> bool:
-    """Off-peak if inside the fixed Intelligent Go window OR an Octopus EV
-    dispatch slot.
-
-    Intelligent Octopus Go "bump charges" the car outside 23:30-05:30 (e.g. a
-    cheap daytime slot it dispatches) and still bills those half-hours at the
-    off-peak rate. A clock-only check therefore misattributes daytime EV
-    charging as peak — the cause of "EV (peak: 22.4, off-peak: 5.1)" on a day
-    the car actually charged cheaply during the day.
-    """
-    if is_offpeak(interval_start_iso):
-        return True
-    if dispatches:
-        from .dispatches import in_dispatch_window
-        dt = datetime.fromisoformat(interval_start_iso.replace("Z", "+00:00"))
-        if in_dispatch_window(dt, dispatches):
-            return True
     return False
 
 
@@ -255,6 +247,7 @@ def calculate_daily_summary(
     total_kwh = 0.0
     peak_kwh = 0.0
     offpeak_kwh = 0.0
+    dispatch_kwh = 0.0  # off-peak kWh attributed via an Octopus dispatch slot
     cost_pence = 0.0
 
     # Intelligent Go bills dispatched daytime EV slots at the off-peak unit
@@ -280,8 +273,18 @@ def calculate_daily_summary(
         rate = get_rate_for_interval(r["interval_start"], rates, fuel)
 
         if fuel == "electricity":
-            if is_offpeak_interval(r["interval_start"], dispatches):
+            clock_op = is_offpeak(r["interval_start"])
+            # Only consult dispatch data for slots OUTSIDE the clock window —
+            # that's where Intelligent Go daytime bump-charges land.
+            disp_op = False
+            if not clock_op and dispatches:
+                from .dispatches import in_dispatch_window
+                dt = datetime.fromisoformat(r["interval_start"].replace("Z", "+00:00"))
+                disp_op = in_dispatch_window(dt, dispatches)
+            if clock_op or disp_op:
                 offpeak_kwh += kwh
+                if disp_op:
+                    dispatch_kwh += kwh
                 if offpeak_rate is not None:
                     rate = offpeak_rate
             else:
@@ -291,10 +294,24 @@ def calculate_daily_summary(
 
     is_ev = fuel == "electricity" and offpeak_kwh > EV_OFFPEAK_THRESHOLD_KWH
 
+    # offpeak_source records how the split was derived, so a dispatch-verified
+    # day is distinguishable from a clock-only one (and from a day where the
+    # dispatch fetch was unavailable, which may be silently misclassified).
+    offpeak_source = None
+    if fuel == "electricity":
+        if dispatch_kwh > 0:
+            offpeak_source = "dispatch"
+        elif dispatches is None:
+            offpeak_source = "clock-fallback"
+        else:
+            offpeak_source = "clock"
+
     return {
         "total_kwh": round(total_kwh, 4),
         "peak_kwh": round(peak_kwh, 4) if fuel == "electricity" else 0,
         "offpeak_kwh": round(offpeak_kwh, 4) if fuel == "electricity" else 0,
+        "dispatch_kwh": round(dispatch_kwh, 4) if fuel == "electricity" else 0,
+        "offpeak_source": offpeak_source,
         "cost_pence": round(cost_pence, 2),
         "standing_charge_pence": round(standing_charge_pence, 2),
         "total_cost_pence": round(cost_pence + standing_charge_pence, 2),
@@ -312,11 +329,13 @@ def store_daily_summaries(sb, summaries: dict[str, dict], fuel: str):
             "total_kwh": summary["total_kwh"],
             "peak_kwh": summary["peak_kwh"],
             "offpeak_kwh": summary["offpeak_kwh"],
+            "dispatch_kwh": summary.get("dispatch_kwh", 0),
+            "offpeak_source": summary.get("offpeak_source"),
             "cost_pence": summary["cost_pence"],
             "standing_charge_pence": summary["standing_charge_pence"],
             "total_cost_pence": summary["total_cost_pence"],
             "is_ev_charge_day": summary["is_ev_charge_day"],
-            "updated_at": datetime.now(tz=__import__("datetime").timezone.utc).isoformat(),
+            "updated_at": datetime.now(tz=timezone.utc).isoformat(),
         })
 
     if rows:
@@ -357,6 +376,114 @@ def store_dispatches(sb, dispatches: list[dict]) -> int:
     except Exception as e:
         print(f"    dispatch store skipped ({e})")
         return 0
+
+
+def _local_day(interval_start_iso: str) -> str:
+    """Local (Europe/London) calendar day for a stored UTC interval_start.
+
+    energy_consumption.interval_start is timestamptz returned as UTC; the live
+    sync grouped on the raw local-offset string, so to reproduce the same daily
+    buckets we must convert to London local before taking the date.
+    """
+    dt = datetime.fromisoformat(interval_start_iso.replace("Z", "+00:00"))
+    if _LONDON is not None:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.astimezone(_LONDON)
+    return dt.date().isoformat()
+
+
+def reclassify_recent_days(sb, days_back: int = 3) -> int:
+    """Re-derive recent ELECTRICITY daily summaries from stored data + persisted
+    dispatches — no live Octopus API call.
+
+    The daily sync classifies a day with whatever dispatch slots were live at
+    sync time; this lets a day self-correct once its dispatch slots have been
+    persisted to energy_dispatches (they age out of the live API within ~1-2
+    days). Reads energy_consumption, energy_tariffs and energy_dispatches.
+    Best-effort, electricity only (the only fuel with peak/off-peak + EV
+    dispatching). Returns the number of days whose summary changed.
+    """
+    today = date.today()
+    start_day = today - timedelta(days=days_back)
+    # Pad the UTC fetch window by a day each side so London-local day edges
+    # (which straddle midnight UTC) are fully covered.
+    win_from = (start_day - timedelta(days=1)).isoformat() + "T00:00:00+00:00"
+    win_to = (today + timedelta(days=1)).isoformat() + "T00:00:00+00:00"
+
+    cons = (
+        sb.table("energy_consumption")
+        .select("interval_start,consumption_kwh")
+        .eq("fuel_type", "electricity")
+        .gte("interval_start", win_from)
+        .lt("interval_start", win_to)
+        .order("interval_start")
+        .execute()
+    ).data or []
+    if not cons:
+        return 0
+
+    rate_rows = (
+        sb.table("energy_tariffs")
+        .select("valid_from,valid_to,value_inc_vat")
+        .eq("fuel_type", "electricity")
+        .eq("rate_type", "unit")
+        .execute()
+    ).data or []
+    rates = [
+        {"valid_from": r["valid_from"], "valid_to": r.get("valid_to"),
+         "value_inc_vat": float(r["value_inc_vat"])}
+        for r in rate_rows if r.get("value_inc_vat") is not None
+    ]
+
+    disp_rows = (
+        sb.table("energy_dispatches")
+        .select("start_at,end_at,kwh,source")
+        .gte("end_at", win_from)
+        .lte("start_at", win_to)
+        .execute()
+    ).data or []
+    dispatches = {
+        "planned": [],
+        "completed": [
+            {"start": d["start_at"], "end": d["end_at"],
+             "kwh": float(d.get("kwh") or 0), "source": d.get("source")}
+            for d in disp_rows
+        ],
+    }
+
+    # Group stored readings by LOCAL day (mirrors the live sync's bucketing).
+    by_day: dict[str, list] = {}
+    for c in cons:
+        day_str = _local_day(c["interval_start"])
+        by_day.setdefault(day_str, []).append(
+            {"interval_start": c["interval_start"], "consumption": float(c["consumption_kwh"])}
+        )
+
+    updated = 0
+    for day_str, day_readings in sorted(by_day.items()):
+        d = date.fromisoformat(day_str)
+        if d < start_day or d >= today:  # skip out-of-window and today (incomplete)
+            continue
+        if len(day_readings) < COMPLETE_DAY_INTERVALS:
+            continue
+        existing = (
+            sb.table("energy_daily_summary")
+            .select("offpeak_kwh,offpeak_source,standing_charge_pence")
+            .eq("summary_date", day_str).eq("fuel_type", "electricity")
+            .limit(1).execute()
+        ).data
+        if not existing:
+            continue
+        ex = existing[0]
+        sc = float(ex.get("standing_charge_pence") or 0)
+        new = calculate_daily_summary(day_readings, "electricity", rates, sc, dispatches)
+        # Upsert only on a material change — otherwise it churns every sync.
+        if (abs(new["offpeak_kwh"] - float(ex.get("offpeak_kwh") or 0)) > 0.01
+                or new.get("offpeak_source") != ex.get("offpeak_source")):
+            store_daily_summaries(sb, {day_str: new}, "electricity")
+            updated += 1
+    return updated
 
 
 def get_last_sync_date(sb, fuel: str) -> date | None:
@@ -488,6 +615,17 @@ def post_discord_summary(sb, summaries: dict):
             line += f" (peak: {s['peak_kwh']:.1f}, off-peak: {s['offpeak_kwh']:.1f})"
         lines.append(line)
 
+    # Flag a likely EV-charge day whose split couldn't be dispatch-verified —
+    # its daytime charging may be showing as peak (Octopus dispatch data was
+    # unavailable). offpeak_source: dispatch | clock | clock-fallback.
+    elec = summaries.get("electricity")
+    if (elec and elec.get("total_kwh", 0) >= EV_TOTAL_HINT_KWH
+            and elec.get("offpeak_source") not in (None, "dispatch")):
+        lines.append(
+            "-# ⚠️ Off-peak split is clock-only (no Octopus dispatch data) "
+            "— any daytime EV charging may be counted as peak."
+        )
+
     # Monthly prediction
     prediction = get_monthly_prediction(sb)
     if prediction:
@@ -559,10 +697,14 @@ def sync_fuel(sb, fuel: str, from_date: date, to_date: date):
             from .dispatches import get_dispatches
             dispatches = get_dispatches()
             completed = dispatches.get("completed", [])
-            print(f"    {len(completed)} completed dispatch slot(s)")
-            stored_d = store_dispatches(sb, completed)
-            if stored_d:
-                print(f"    Stored {stored_d} dispatch slot(s)")
+            if completed:
+                print(f"    {len(completed)} completed dispatch slot(s)")
+                stored_d = store_dispatches(sb, completed)
+                if stored_d:
+                    print(f"    Stored {stored_d} dispatch slot(s)")
+            else:
+                print("    0 completed dispatch slots — off-peak split is "
+                      "clock-only for fresh days (no EV dispatch to attribute)")
         except Exception as e:
             print(f"    dispatch fetch failed ({e}) — clock-only off-peak split")
             dispatches = None
@@ -642,6 +784,16 @@ def main():
     if latest_summaries:
         post_discord_summary(sb, latest_summaries)
         print("\nPosted summary to Discord #energy")
+
+    # Self-heal recent stored days from persisted dispatches (slots that arrive
+    # after a day was first summarised, or were briefly unavailable at sync
+    # time). Reads stored data only; never blocks the sync.
+    try:
+        n = reclassify_recent_days(sb, days_back=3)
+        if n:
+            print(f"Reclassified {n} day(s) from persisted dispatches")
+    except Exception as e:
+        print(f"Reclassification skipped ({e})")
 
     print("\nDone.")
 
