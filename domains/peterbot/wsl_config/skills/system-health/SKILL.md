@@ -22,6 +22,8 @@ Daily operations report (06:50 UK) that checks ALL scheduled processes across bo
 
 Data injected by the scheduler before execution:
 - `data.system_health`: Full health summary from `GET http://172.19.64.1:8100/jobs/health`
+- `data.manifest_check`: Skill registry drift check (`{ok, problems[]}`). If `ok` is false, this is NOT all-green: include the problems under a "Skill registry drift" heading — drift means skills are invisible to Peter or scheduled jobs reference missing skills. Fix: `python scripts/generate_skill_manifest.py` (Windows side).
+- `data.seed_freshness`: `{sources: {label: {newest, age_days, stale}}, stale: []}` — age of the newest Second Brain item per ingestion source. If `stale` is non-empty, this is NOT all-green: report under a "Stale data sources" heading. Job stats alone can lie (a job can "succeed" while ingesting nothing — the WhatsApp scraper did exactly that for 3 months in 2026), so stale freshness alongside green job stats means an ingestion is silently broken and needs investigating.
 
 ## Data Source
 

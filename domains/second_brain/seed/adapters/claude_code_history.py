@@ -18,6 +18,16 @@ from ..runner import register_adapter
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 
+# First-user-message prefixes that mark scripted/machine sessions, not Chris.
+MACHINE_PROMPT_PREFIXES = (
+    "You are preparing a knowledge item",
+    "Extract ",
+    "Read context",
+    "Summarise the following",
+    "Summarize the following",
+)
+
+
 @register_adapter
 class ClaudeCodeHistoryAdapter(SeedAdapter):
     """Import knowledge from Claude Code local conversation history."""
@@ -83,7 +93,11 @@ class ClaudeCodeHistoryAdapter(SeedAdapter):
         items = []
         conversation_id = conv_file.stem
 
-        # Read JSONL lines
+        # Read JSONL lines. Claude Code transcripts nest the API message under
+        # a "message" key ({type, message: {role, content}, timestamp, ...});
+        # flatten to the {role, content, timestamp} shape the extractor uses.
+        # (The old flat schema parsed to zero items for every modern file —
+        # this adapter never imported anything until Jun 2026.)
         messages = []
         try:
             with open(conv_file, 'r', encoding='utf-8') as f:
@@ -93,14 +107,34 @@ class ClaudeCodeHistoryAdapter(SeedAdapter):
                         continue
                     try:
                         msg = json.loads(line)
-                        messages.append(msg)
                     except json.JSONDecodeError:
                         continue
+                    if msg.get("isSidechain"):
+                        continue  # subagent transcripts — not Chris's conversation
+                    inner = msg.get("message")
+                    if isinstance(inner, dict) and inner.get("role"):
+                        flat = dict(inner)
+                        flat.setdefault("timestamp", msg.get("timestamp"))
+                        messages.append(flat)
+                    elif msg.get("role"):  # old flat schema
+                        messages.append(msg)
         except Exception as e:
             logger.warning(f"Failed to read {conv_file}: {e}")
             return items
 
         if not messages:
+            return items
+
+        # Skip machine sessions: `claude -p` one-shots (extract-channel
+        # fallback, scripted prompts) have a single user turn and read as
+        # instructions, not conversation. Without this the adapter floods
+        # Second Brain with "You are preparing a knowledge item..." noise.
+        user_turns = [m for m in messages if m.get("role") in ("user", "human")
+                      and self._extract_text_content(m)]
+        if len(user_turns) < 2:
+            return items
+        first = self._extract_text_content(user_turns[0])
+        if any(first.startswith(p) for p in MACHINE_PROMPT_PREFIXES):
             return items
 
         # Extract knowledge-bearing exchanges
@@ -143,6 +177,11 @@ class ClaudeCodeHistoryAdapter(SeedAdapter):
             content = self._extract_text_content(msg)
 
             if not content or len(content) < 20:
+                continue
+
+            # Slash-command plumbing and hook output, not conversation
+            if content.lstrip().startswith(("<command-", "<local-command-", "Caveat:", "<system-",
+                                            "A session-scoped Stop hook")):
                 continue
 
             # Skip tool-only messages

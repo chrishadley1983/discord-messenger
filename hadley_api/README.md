@@ -419,6 +419,9 @@ STT (speech-to-text), TTS (text-to-speech), and full conversational voice pipeli
 - `POST /attachment/download` - Download Discord image/audio attachments to `data/tmp/attachments/` and transcribe voice notes. Mirrors `router_v2._download_attachments` for the channel path so Discord CDN URLs don't expire before Claude reads them and voice notes get transcribed.
   - Body: `{attachment_urls: [{url, filename, content_type, size}]}`
   - Response: `{attachments: [{..., local_path?, transcription?}], transcriptions: [...]}`
+- `POST /alert` - Post a one-line alert to the #alerts Discord channel (via `DISCORD_WEBHOOK_ALERTS`). Lets Peter sessions surface operational problems mid-conversation — e.g. an expired claude.ai MCP connector token. Throttled per `(source, message)` so repeats within the window return `{"status": "throttled"}` instead of re-posting. Requires `x-api-key`.
+  - Body: `{message, source?: "peter", throttle_minutes?: 60}`
+  - Response: `{status: "posted" | "throttled" | "error", ...}`
 
 ### GCP Monitoring
 - `GET /gcp/usage?hours=24` - API request counts and estimated cost from Cloud Monitoring (last N hours)
@@ -542,6 +545,18 @@ Tables:
 - `fitness_mobility_sessions` — mobility slots (morning/evening unique per day)
 - `fitness_weekly_checkins` — persisted Sunday snapshots
 
+## Accountability & Habit Tracker
+
+Goals/mood/journal under `/accountability/*` (all auth required). Key reads:
+- `GET /accountability/goals` — active goals + computed status (auto-sourced goals read from their source table)
+- `GET /accountability/summary` — all goals + mood + journal for the dashboard (batched queries)
+- `GET /accountability/report?period=week|month` — aggregated report data
+
+Private single-habit tracker (SENSITIVE — the habit is never named in any output):
+- `GET /accountability/habit` — live streak/score stats: `{day_number, current_streak, longest_streak, total_yes, total_no, total_days, last_result, percentage, week_results, week_number, logged_today, start_date}`
+- `POST /accountability/habit` — log a result. Body: `{result: "Y"|"N", date?: "YYYY-MM-DD"}` (defaults today; upserts one row per day)
+- Table `habit_log` (log_date PK, RLS on / service-role only). Consumed by the `habit-checkin` (9pm) and `habit-weekly` (Sun 8pm) skills via data fetchers; the 9pm job auto-skips on day 0 or if already logged.
+
 ## Environment Variables
 
 Uses the same `.env` as the main Discord bot:
@@ -557,6 +572,17 @@ Uses the same `.env` as the main Discord bot:
 - `GET /model/status` - Get current model provider status (claude/kimi, reason, timestamps)
 - `PUT /model/switch` - Switch provider: `{"provider": "claude"|"kimi", "reason": "manual"}`
 - `PUT /model/auto-switch` - Toggle auto-recovery: `{"enabled": true|false}`
+
+### Audible
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | /audible/finished | No | Finished audiobooks with Chris's ratings (query: since=ISO date, limit) |
+| GET | /audible/library-context | No | Recommender bundle: recent finished, top-rated, in-progress, favourite authors, stats |
+| GET | /audible/similar/{asin} | No | Catalogue titles similar to a book ("more like this") |
+| GET | /audible/search | No | Search the Audible catalogue (query: q, limit) |
+
+Auth is shared with the audible-mcp project's auth.json (domains/audible/client.py). Note: Audible's account-level recommendations endpoint is deprecated upstream — use /similar per book.
 
 ### Life Admin
 
@@ -580,6 +606,14 @@ Proactive life admin obligation tracking and alerting.
 ### System Health (Job Monitoring)
 
 - `GET /jobs/health?hours=24` - Unified job health across DM + HB. Returns per-system stats: total, success, errors, success_rate, failures[], per_job[]. DM data from SQLite job_history.db, HB data from Supabase job_execution_history via HB API proxy.
+
+### AI API-usage audit & reconciliation
+
+Shared `ai_api_usage` table (Supabase `modjoikyuhqzouxvieua`) records every raw Anthropic-API-key call across all projects; reconciled daily against Anthropic's Admin usage report. See `docs/AI_USAGE_AUDIT.md`.
+
+- `GET /usage/audit?hours=24` - Logged spend by project / feature / model (estimated cost).
+- `GET /usage/reconcile?days=7` - Latest Anthropic-truth-vs-logged rows + gaps (`console` rows = Workbench/manual usage, not a gap).
+- `POST /usage/reconcile/run?days=3` - Run reconciliation now (needs `ANTHROPIC_ADMIN_KEY`).
 
 ## Notes
 

@@ -48,7 +48,7 @@
       "how much have i spent"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Weekly API usage and cost summary",
     "channel": null
   },
@@ -61,7 +61,7 @@
     "conversational": true,
     "scheduled": true,
     "description": "Check API credit balances and alert if low",
-    "channel": null
+    "channel": "#api-costs"
   },
   "ballot-reminders": {
     "triggers": [
@@ -73,6 +73,21 @@
     "scheduled": true,
     "description": "Proactive alerts when ticket ballots open for England Cricket, England Football, Oval Invincibles",
     "channel": "#peterbot+WhatsApp:chris"
+  },
+  "book-recommender": {
+    "triggers": [
+      "what should I read next",
+      "what should I listen to next",
+      "book recommendation",
+      "recommend a book",
+      "recommend an audiobook",
+      "next audiobook",
+      "new books"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Personalised audiobook and book recommendations from Chris's Audible history and ratings",
+    "channel": "#peterbot"
   },
   "chrome-cdp": {
     "triggers": [
@@ -93,7 +108,7 @@
     ],
     "conversational": true,
     "scheduled": false,
-    "description": "Interact with Chrome browser via CDP \u2014 navigate pages, take screenshots, click elements, extract text, fill forms. Use when asked to check a website, scrape data, or automate browser tasks.",
+    "description": "Interact with Chrome browser via CDP — navigate pages, take screenshots, click elements, extract text, fill forms. Use when asked to check a website, scrape data, or automate browser tasks.",
     "channel": null
   },
   "commitment-nudge": {
@@ -126,7 +141,7 @@
     "conversational": true,
     "scheduled": true,
     "description": "Daily roll-up of Claude usage across router_v2 and channel sessions",
-    "channel": null
+    "channel": "#alerts"
   },
   "cricket-scores": {
     "triggers": [
@@ -138,14 +153,14 @@
     "conversational": true,
     "scheduled": true,
     "description": "Daily morning cricket score roundup from yesterday",
-    "channel": "#peterbot"
+    "channel": "#peterbot+WhatsApp:chris"
   },
-  "daily-instagram-prep": {
+  "daily-batch": {
     "triggers": [],
     "conversational": false,
     "scheduled": true,
-    "description": "Daily Instagram post preparation for Hadley Bricks. Sources 3 candidate images, applies the Instagram photo optimizer to each, posts the optimized images to Discord at 9pm for Chris to pick one to post the next day. Use when the skill is triggered by schedule or when the user says \"instagram prep\", \"prepare insta\", \"daily instagram\", or \"instagram tomorrow\".\n",
-    "channel": "#peterbot"
+    "description": "Generate the day's hydration check-ins and cooking reminders in one batch (cost optimisation)",
+    "channel": "#peter-heartbeat!quiet"
   },
   "daily-recipes": {
     "triggers": [
@@ -154,7 +169,7 @@
       "recipe recommendations"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Daily recipe recommendations matching health targets",
     "channel": null
   },
@@ -164,8 +179,132 @@
       "send daily thoughts"
     ],
     "conversational": false,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Sends end-of-day email digest of captured thoughts throughout the day",
+    "channel": null
+  },
+  "directions": {
+    "triggers": [
+      "directions to {place}",
+      "how do I get to {place}",
+      "route to {destination}",
+      "how long to {place}",
+      "best way to {place}",
+      "traffic",
+      "how's the traffic",
+      "is there traffic",
+      "school run traffic",
+      "how long to school",
+      "should I leave now"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Directions, route planning, and live traffic checks (merged from the old traffic-check skill)",
+    "channel": null
+  },
+  "drive-search": {
+    "triggers": [
+      "find document",
+      "find doc",
+      "search drive",
+      "where's the {document}",
+      "find the {topic} doc",
+      "show me {filename}",
+      "drive search {query}",
+      "save to drive",
+      "save this to drive",
+      "create a doc",
+      "create a document",
+      "make a doc",
+      "upload to drive",
+      "put this on drive",
+      "share {document} with {person}",
+      "move {document} to {folder}",
+      "rename {document}",
+      "trash {document}",
+      "delete {document}",
+      "recent files",
+      "what's on my drive",
+      "drive storage",
+      "how much storage",
+      "**Windows/Drive paths in a message** — e.g. `G:\\My Drive\\...\\<name>.<ext>`, any `[A-Z]:\\...` path, or `/mnt/g/...`. These are Chris's Google Drive on Windows. Peter runs in WSL and CANNOT read them directly. The peter-channel forwarder will usually pre-rewrite these into a `[Google Drive file: <filename>...]` hint — treat that hint as a drive-search trigger."
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Search, create, manage, and organise files in Google Drive",
+    "channel": null
+  },
+  "email-search": {
+    "triggers": [
+      "find email from {person}",
+      "email about {topic}",
+      "search emails for {query}",
+      "emails from {sender}",
+      "did {person} email me"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Search emails by sender, subject, or content",
+    "channel": null
+  },
+  "email-summary": {
+    "triggers": [
+      "emails",
+      "inbox",
+      "any emails",
+      "check email",
+      "email summary",
+      "what's in my inbox",
+      "unread messages"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Provide a summary of unread emails and inbox status",
+    "channel": "#peterbot"
+  },
+  "energy": {
+    "triggers": [
+      "energy",
+      "electricity",
+      "how much power",
+      "what's using power",
+      "energy usage today",
+      "is the oven on",
+      "ev charge",
+      "car charging"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Live home energy — current demand, today's usage/cost, appliance events, EV charging",
+    "channel": null
+  },
+  "ev-charging": {
+    "triggers": [
+      "car charging",
+      "is the car charging",
+      "charge status",
+      "how much charge",
+      "battery level",
+      "when will the car be ready"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Check car charging status and battery level",
+    "channel": null
+  },
+  "find-free-time": {
+    "triggers": [
+      "when am I free",
+      "find time for",
+      "free slots",
+      "available times",
+      "can I fit in a {duration} meeting",
+      "when's my next free {time period}",
+      "schedule a meeting with {person}"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Find available time slots in calendar for scheduling",
     "channel": null
   },
   "fitness-advisor": {
@@ -176,8 +315,8 @@
     ],
     "conversational": false,
     "scheduled": true,
-    "description": "Proactive fitness advisor \u2014 checks nutrition, recovery, and training signals and alerts if anything needs attention",
-    "channel": null
+    "description": "Proactive fitness advisor — checks nutrition, recovery, and training signals and alerts if anything needs attention",
+    "channel": "#food-log"
   },
   "fitness-dashboard": {
     "triggers": [
@@ -243,7 +382,7 @@
       "code changes"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Daily and weekly GitHub activity summary across all repos",
     "channel": "#peterbot"
   },
@@ -274,6 +413,28 @@
     "scheduled": false,
     "description": "Add shopping list to Sainsbury's trolley and book delivery slot",
     "channel": null
+  },
+  "habit-checkin": {
+    "triggers": [
+      "habit check",
+      "habit status",
+      "where am I",
+      "streak"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Private daily habit accountability check-in",
+    "channel": "#peter-chat"
+  },
+  "habit-weekly": {
+    "triggers": [
+      "habit week",
+      "weekly habit"
+    ],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Private weekly habit accountability summary",
+    "channel": "#peter-chat"
   },
   "hb-add-inventory": {
     "triggers": [
@@ -312,7 +473,7 @@
       "what should I buy"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Profitable LEGO buying opportunities from Vinted scanner",
     "channel": null
   },
@@ -325,7 +486,7 @@
       "bricks activity"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Daily listings and sales tracking for Hadley Bricks",
     "channel": null
   },
@@ -338,7 +499,7 @@
       "hadley bricks"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Daily business health summary for Hadley Bricks",
     "channel": null
   },
@@ -350,7 +511,7 @@
       "email purchase import"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Automated import of LEGO purchases from email confirmations (Vinted, eBay)",
     "channel": null
   },
@@ -430,7 +591,7 @@
       "what orders"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Unfulfilled orders summary for Hadley Bricks",
     "channel": null
   },
@@ -443,7 +604,7 @@
       "orders to ship"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Amazon and eBay picking lists for order fulfillment",
     "channel": null
   },
@@ -579,7 +740,7 @@
     "conversational": true,
     "scheduled": true,
     "description": "Morning health digest with sleep, weight, steps, HR and comparison to yesterday",
-    "channel": null
+    "channel": "#food-log"
   },
   "healthera-prescriptions": {
     "triggers": [
@@ -594,14 +755,14 @@
     "conversational": true,
     "scheduled": true,
     "description": "Monitor Healthera prescription emails, ask Chris which meds to order, confirm via browser, and WhatsApp when ready to collect",
-    "channel": null
+    "channel": "#peterbot"
   },
   "heartbeat": {
     "triggers": [],
     "conversational": false,
     "scheduled": true,
     "description": "Health check and to-do list processing",
-    "channel": null
+    "channel": "#peter-heartbeat!quiet"
   },
   "hydration": {
     "triggers": [
@@ -613,7 +774,7 @@
     "conversational": true,
     "scheduled": true,
     "description": "Post water intake and step progress with motivation",
-    "channel": null
+    "channel": "#food-log+WhatsApp:chris"
   },
   "instagram-concepts": {
     "triggers": [
@@ -621,7 +782,7 @@
       "post ideas"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Generate 5 Instagram post concepts for Hadley Bricks",
     "channel": null
   },
@@ -632,7 +793,7 @@
       "write captions"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Process images and write captions for approved Instagram concepts",
     "channel": null
   },
@@ -660,8 +821,8 @@
     ],
     "conversational": true,
     "scheduled": true,
-    "description": "Daily kids briefing \u2014 today's and tomorrow's activities, kit needed, school notices, spellings",
-    "channel": "#peterbot"
+    "description": "Daily kids briefing — today's and tomorrow's activities, kit needed, school notices, spellings",
+    "channel": "#peterbot+WhatsApp:group"
   },
   "kids-weekly": {
     "triggers": [
@@ -674,8 +835,8 @@
     ],
     "conversational": true,
     "scheduled": true,
-    "description": "Weekly kids summary \u2014 next week's plan (Sunday) or last week's review (on demand)",
-    "channel": "#peterbot"
+    "description": "Weekly kids summary — next week's plan (Sunday) or last week's review (on demand)",
+    "channel": "#peterbot+WhatsApp:group"
   },
   "knowledge-digest": {
     "triggers": [
@@ -684,7 +845,7 @@
       "second brain summary"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Weekly Second Brain knowledge digest",
     "channel": null
   },
@@ -731,7 +892,7 @@
     ],
     "conversational": true,
     "scheduled": true,
-    "description": "Weekly life admin digest with traffic-light dashboard \u2014 published to surge.sh",
+    "description": "Weekly life admin digest with traffic-light dashboard — published to surge.sh",
     "channel": "#peterbot"
   },
   "life-admin-email-scan": {
@@ -855,7 +1016,7 @@
     "conversational": true,
     "scheduled": true,
     "description": "Monthly health summary with long-term trends",
-    "channel": null
+    "channel": "#food-log"
   },
   "mood-log": {
     "triggers": [
@@ -880,7 +1041,18 @@
     "conversational": true,
     "scheduled": true,
     "description": "AI and Claude news morning briefing",
-    "channel": null
+    "channel": "#ai-briefings"
+  },
+  "morning-digest": {
+    "triggers": [
+      "morning digest",
+      "what's my morning look like",
+      "daily digest"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Consolidated 07:00 morning digest — day ahead, weather, inbox, todos, GitHub",
+    "channel": "#peterbot"
   },
   "morning-laughs": {
     "triggers": [
@@ -891,14 +1063,14 @@
     "conversational": true,
     "scheduled": true,
     "description": "Daily dad jokes and inspirational quote to start the day",
-    "channel": null
+    "channel": "#peterbot"
   },
   "morning-quality-report": {
     "triggers": [],
     "conversational": false,
     "scheduled": true,
     "description": "Daily parser quality and feedback summary",
-    "channel": "#peterbot"
+    "channel": "#peter-heartbeat"
   },
   "news": {
     "triggers": [
@@ -910,7 +1082,38 @@
     "conversational": true,
     "scheduled": true,
     "description": "Fetch and summarize news based on user request and preferences from memory",
+    "channel": "#news"
+  },
+  "notion-ideas": {
+    "triggers": [
+      "ideas backlog",
+      "my ideas",
+      "idea list",
+      "what ideas do I have",
+      "show ideas",
+      "browse ideas",
+      "idea:"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Browse and add to the \"Ideas Backlog\" database",
     "channel": null
+  },
+  "notion-todos": {
+    "triggers": [
+      "my todos",
+      "task list",
+      "what's on my plate",
+      "todo list",
+      "tasks",
+      "what do I need to do",
+      "pending tasks",
+      "outstanding items"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Show and manage tasks from \"Claude Managed To Dos\" database",
+    "channel": "#peterbot"
   },
   "nutrition-summary": {
     "triggers": [
@@ -922,14 +1125,14 @@
     "conversational": true,
     "scheduled": true,
     "description": "Daily nutrition wrap-up at 9pm",
-    "channel": null
+    "channel": "#food-log"
   },
   "orphan-embed": {
     "triggers": [],
     "conversational": false,
     "scheduled": true,
     "description": "Embed orphaned Second Brain items that have no chunks",
-    "channel": null
+    "channel": "#alerts"
   },
   "osaka-mint-check": {
     "triggers": [
@@ -937,7 +1140,7 @@
       "cherry blossom registration"
     ],
     "conversational": false,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Checks Osaka Mint Bureau cherry blossom reservation status",
     "channel": null
   },
@@ -955,7 +1158,7 @@
   "parser-improve": {
     "triggers": [],
     "conversational": false,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Nightly parser improvement cycle",
     "channel": "#peterbot"
   },
@@ -969,8 +1172,8 @@
     ],
     "conversational": true,
     "scheduled": true,
-    "description": "Morning football results \u2014 Premier League, Champions League, Dover Athletic",
-    "channel": "#peterbot"
+    "description": "Morning football results — Premier League, Champions League, Dover Athletic",
+    "channel": "#peterbot+WhatsApp:chris"
   },
   "pocket-money-weekly": {
     "triggers": [
@@ -980,7 +1183,7 @@
     ],
     "conversational": true,
     "scheduled": true,
-    "description": "Sunday pocket money calculation \u2014 present grid to Chris for approval, then credit balances",
+    "description": "Sunday pocket money calculation — present grid to Chris for approval, then credit balances",
     "channel": "#peterbot"
   },
   "practice-allocate": {
@@ -1023,7 +1226,17 @@
     "channel": "#peterbot"
   },
   "purchase": {
-    "triggers": [],
+    "triggers": [
+      "buy",
+      "purchase",
+      "order from amazon",
+      "order from ebay",
+      "order packing",
+      "get bubble wrap",
+      "buy packaging",
+      "buy packing",
+      "order supplies"
+    ],
     "conversational": true,
     "scheduled": false,
     "description": "Help find products and provide direct purchase links",
@@ -1060,6 +1273,22 @@
     "description": "Set, list, update, and cancel reminders via Hadley API",
     "channel": "#peterbot"
   },
+  "ring-status": {
+    "triggers": [
+      "ring doorbell",
+      "is anyone at the door",
+      "doorbell status",
+      "who rang the doorbell",
+      "any visitors",
+      "door activity",
+      "ring battery",
+      "doorbell battery"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Check Ring doorbell status and recent activity",
+    "channel": null
+  },
   "saturday-sport-preview": {
     "triggers": [
       "sport this week",
@@ -1073,6 +1302,35 @@
     "description": "Weekly sport preview for the coming week",
     "channel": "#peterbot+WhatsApp:chris"
   },
+  "schedule-today": {
+    "triggers": [
+      "what's on today",
+      "my schedule",
+      "today's calendar",
+      "what do I have today",
+      "any meetings today",
+      "what's my day look like"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Show today's calendar events and agenda",
+    "channel": "#peterbot"
+  },
+  "schedule-week": {
+    "triggers": [
+      "this week",
+      "week ahead",
+      "upcoming schedule",
+      "what's on this week",
+      "my week",
+      "next few days",
+      "coming up"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Show this week's calendar overview and upcoming events",
+    "channel": "#peterbot"
+  },
   "school-pickup": {
     "triggers": [
       "school pickup",
@@ -1082,7 +1340,7 @@
     "conversational": true,
     "scheduled": true,
     "description": "Afternoon school pickup traffic report with after-school clubs info",
-    "channel": null
+    "channel": "#traffic-reports+WhatsApp:group"
   },
   "school-run": {
     "triggers": [
@@ -1093,7 +1351,7 @@
     "conversational": true,
     "scheduled": true,
     "description": "Morning school run traffic report with weather and uniform requirements",
-    "channel": null
+    "channel": "#traffic-reports+WhatsApp:group"
   },
   "school-weekly-spellings": {
     "triggers": [
@@ -1103,9 +1361,9 @@
       "this weeks spellings"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Weekly spelling list post for Max and Emmie",
-    "channel": "#peter-chat"
+    "channel": "#peter-chat+WhatsApp:group"
   },
   "security-monitor": {
     "triggers": [
@@ -1117,7 +1375,7 @@
     ],
     "conversational": true,
     "scheduled": true,
-    "description": "Proactive security monitoring across Supabase, Google, and Vercel \u2014 flags issues and offers to help",
+    "description": "Proactive security monitoring across Supabase, Google, and Vercel — flags issues and offers to help",
     "channel": "#alerts"
   },
   "self-reflect": {
@@ -1125,7 +1383,7 @@
     "conversational": false,
     "scheduled": true,
     "description": "Review recent memories and activity to proactively identify useful tasks",
-    "channel": "#alerts"
+    "channel": "#alerts!quiet"
   },
   "shopping-list-pdf": {
     "triggers": [
@@ -1154,14 +1412,14 @@
     "conversational": true,
     "scheduled": true,
     "description": "Process Max's spelling photo, add to DB, and generate the spelling test page",
-    "channel": "#peterbot"
+    "channel": "#peterbot+WhatsApp:chris"
   },
   "spurs-live": {
     "triggers": [],
     "conversational": false,
     "scheduled": true,
     "description": "Auto-post live Spurs score updates during matches (every 10 min)",
-    "channel": "#peterbot"
+    "channel": "#peterbot+WhatsApp:chris!quiet"
   },
   "spurs-match": {
     "triggers": [
@@ -1170,7 +1428,7 @@
       "how are spurs doing"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Live Spurs match score updates during games",
     "channel": null
   },
@@ -1209,6 +1467,25 @@
     "description": "Daily operations report covering all scheduled jobs across Discord-Messenger and Hadley Bricks",
     "channel": "#alerts"
   },
+  "trip-prep": {
+    "triggers": [
+      "trip prep",
+      "am I ready for [destination]",
+      "trip to [place]",
+      "ready for my trip"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Consolidated trip preparation check - combines calendar, directions, and EV status for upcoming trips",
+    "channel": null
+  },
+  "tutor-email-parser": {
+    "triggers": [],
+    "conversational": false,
+    "scheduled": true,
+    "description": "Every Tuesday evening, parse the tutor's email to:",
+    "channel": "#peterbot"
+  },
   "vercel-usage": {
     "triggers": [
       "vercel usage",
@@ -1217,7 +1494,40 @@
     ],
     "conversational": true,
     "scheduled": true,
-    "description": "Daily Vercel usage check \u2014 track limits, trends, and flag risks before projects get paused",
+    "description": "Daily Vercel usage check — track limits, trends, and flag risks before projects get paused",
+    "channel": "#api-costs"
+  },
+  "vinted-collections": {
+    "triggers": [
+      "vinted collections",
+      "ready to collect",
+      "check vinted",
+      "vinted parcels",
+      "any parcels to collect"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "vinted collections",
+    "channel": null
+  },
+  "weather": {
+    "triggers": [
+      "weather",
+      "what's the weather",
+      "is it raining",
+      "how cold is it",
+      "temperature",
+      "do I need a jacket/umbrella",
+      "forecast",
+      "weather this week",
+      "weather tomorrow",
+      "what's the weather like on {day}",
+      "will it rain on Saturday",
+      "weekend weather"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Current conditions and multi-day forecast for Tonbridge (merged from the old weather + weather-forecast skills)",
     "channel": null
   },
   "weekly-cut-review": {
@@ -1229,7 +1539,7 @@
     ],
     "conversational": true,
     "scheduled": true,
-    "description": "Sunday review of the fat-loss programme \u2014 adherence, trend, next week's adjustment",
+    "description": "Sunday review of the fat-loss programme — adherence, trend, next week's adjustment",
     "channel": "#food-log"
   },
   "weekly-health": {
@@ -1241,14 +1551,7 @@
     "conversational": true,
     "scheduled": true,
     "description": "Weekly health summary with trends, grades, and insights",
-    "channel": null
-  },
-  "whatsapp-health": {
-    "triggers": [],
-    "conversational": false,
-    "scheduled": true,
-    "description": "Check Evolution API WhatsApp connection health",
-    "channel": null
+    "channel": "#food-log"
   },
   "youtube-digest": {
     "triggers": [
@@ -1259,6 +1562,6 @@
     "conversational": true,
     "scheduled": true,
     "description": "Daily YouTube video recommendations in key interest areas",
-    "channel": null
+    "channel": "#youtube"
   }
 }

@@ -1,5 +1,7 @@
 # Scheduled Jobs Reference
 
+> **Source of truth is `domains/peterbot/wsl_config/SCHEDULE.md`** — this reference can lag. Updated 2026-06-10 (morning-digest consolidation, daily-batch, keepalive/instagram-prep removals).
+
 ## Overview
 
 Peter runs 50+ scheduled jobs via APScheduler, defined in `domains/peterbot/wsl_config/SCHEDULE.md`. Jobs execute skills through Claude Code (Opus 4.6, 50 max turns) with pre-fetched data. The scheduler is initialised in `bot.py` via `PeterbotScheduler` and can be toggled with `USE_PETERBOT_SCHEDULER`.
@@ -80,12 +82,12 @@ Times are UK local. Jobs marked with a day name only run on that day.
 | 06:30 | `morning-laughs` | #peterbot | Daily joke/fun content |
 | 06:45 | `morning-quality-report` | #peter-heartbeat | Parser quality metrics review |
 | 06:50 | `system-health` | #alerts | Cross-system health check (DM + HB) |
+| 06:55 | `daily-batch` | #peter-heartbeat!quiet | Generates the day's hydration/cooking messages (no further LLM calls) |
 | 07:01 | `morning-briefing` | #ai-briefings | AI/tech morning briefing |
 | 07:02 | `news` | #news | General news digest |
 | 07:02 | `hydration` | #food-log+WhatsApp:chris | 1st of 15 daily hydration checks |
 | 07:25 | `kids-daily` | #peterbot+WhatsApp:group | Kids daily briefing (school, weather) |
 | 07:30 | `cooking-reminder` | #food-log | Morning cooking reminder |
-| 07:30 | `school-weekly-spellings` | #peter-chat+WhatsApp:group | **Mon only** |
 | 07:45 | `school-run` | #traffic-reports+WhatsApp:group | **Thu only** (early start) |
 | 07:55 | `health-digest` | #food-log | Garmin + Withings + nutrition digest |
 
@@ -93,14 +95,9 @@ Times are UK local. Jobs marked with a day name only run on that day.
 
 | Time | Skill | Channel | Notes |
 |------|-------|---------|-------|
-| 08:00 | `whatsapp-keepalive` | #peter-heartbeat!quiet | WhatsApp connection health check |
 | 08:00 | `spurs-matchday` | #peterbot+WhatsApp:chris | Match days only (conditional) |
 | 08:00 | `saturday-sport-preview` | #peterbot+WhatsApp:chris | **Sat only** |
-| 08:02 | `email-summary` | #peterbot | Gmail inbox summary |
 | 08:02 | `hydration` | #food-log+WhatsApp:chris | |
-| 08:04 | `schedule-today` | #peterbot | Today's calendar and jobs |
-| 08:06 | `notion-todos` | #peterbot | Pending Notion tasks |
-| 08:08 | `github-activity` | #peterbot | Daily GitHub activity summary |
 | 08:10 | `school-run` | #traffic-reports+WhatsApp:group | **Mon-Wed, Fri** |
 | 08:30 | `cricket-scores` | #peterbot+WhatsApp:chris | Cricket match updates |
 | 09:00 | `ballot-reminders` | #peterbot+WhatsApp:chris | Ticket ballot deadline alerts |
@@ -154,14 +151,12 @@ Times are UK local. Jobs marked with a day name only run on that day.
 | 19:00 | `spelling-test-generator` | #peterbot+WhatsApp:chris | **Fri only** |
 | 19:02 | `hydration` | #food-log+WhatsApp:chris | |
 | 19:30 | `paper-builder` | #peterbot | **Tue only** — 11+ practice papers |
-| 20:00 | `whatsapp-keepalive` | #peter-heartbeat!quiet | 2nd WhatsApp health check |
 | 20:02 | `hydration` | #food-log+WhatsApp:chris | |
 | 20:30 | `meal-rating` | #food-log | Rate today's meals |
 | 20:45 | `cooking-reminder` | #food-log | Evening cooking reminder |
 | 21:00 | `nutrition-summary` | #food-log | End-of-day nutrition totals |
 | 21:00 | `practice-allocate` | #peterbot | **Tue only** — allocate 11+ practice |
 | 21:02 | `hydration` | #food-log+WhatsApp:chris | Final hydration check |
-| 21:05 | `daily-instagram-prep` | #peterbot | Instagram content prep for Hadley Bricks |
 | 21:45 | `daily-thoughts` | #peterbot!quiet | Daily reflection/journal prompt |
 | 22:00 | `security-monitor` | #alerts | 5th (final) security check |
 | 23:00 | `self-reflect` | #alerts!quiet | 3rd daily reflection (quiet hours exempt) |
@@ -198,7 +193,6 @@ All post to `#food-log+WhatsApp:chris`. Each check reports current water intake 
 Exempt jobs (run during quiet hours):
 - `heartbeat` (#peter-heartbeat!quiet) -- every 30 min
 - `parser-improve` (#peter-heartbeat!quiet) -- 02:00
-- `whatsapp-keepalive` (#peter-heartbeat!quiet) -- 08:00, 20:00
 - `self-reflect` (#alerts!quiet) -- 12:00, 18:00, 23:00
 - `daily-thoughts` (#peterbot!quiet) -- 21:45
 - `spurs-live` (#peterbot+WhatsApp:chris!quiet) -- every 10 min
@@ -264,7 +258,6 @@ Pre-fetch functions in `data_fetchers.py` run **before** skill execution to prov
 | `hb-daily-activity` | `get_hb_daily_activity_data()` | Daily sales/dispatch activity |
 | `hb-arbitrage` | `get_hb_arbitrage_data()` | Arbitrage opportunity scanner |
 | `hb-pnl` | `get_hb_pnl_data()` | Profit and loss report |
-| `daily-instagram-prep` | `get_instagram_prep_data()` | Instagram content + images via APIs |
 
 #### System & Monitoring
 | Skill | Fetcher | Data Sources |
@@ -372,16 +365,16 @@ These skills have their output automatically saved to Second Brain after executi
 
 | Channel | Channel ID | Skills |
 |---------|-----------|--------|
-| **#peterbot** | (env var) | morning-laughs, kids-daily, email-summary, schedule-today, notion-todos, github-activity, cricket-scores, ballot-reminders, healthera-prescriptions, amazon-purchases, hb-full-sync-print, daily-instagram-prep, spurs-matchday, saturday-sport-preview, pl-results, claude-history, property-valuation, pocket-money-weekly, tutor-email-parser, paper-builder, practice-allocate, spelling-test-generator, daily-thoughts, schedule-week, github-weekly, kids-weekly, spurs-live |
+| **#peterbot** | (env var) | morning-laughs, kids-daily, morning-digest, cricket-scores, ballot-reminders, healthera-prescriptions, amazon-purchases, hb-full-sync-print, spurs-matchday, saturday-sport-preview, pl-results, claude-history, property-valuation, pocket-money-weekly, tutor-email-parser, paper-builder, practice-allocate, spelling-test-generator, daily-thoughts, schedule-week, github-weekly, kids-weekly, spurs-live |
 | **#food-log** | 1465294449038069912 | hydration, health-digest, nutrition-summary, cooking-reminder, meal-rating, weekly-health, monthly-health, recipe-discovery, price-scanner |
 | **#ai-briefings** | 1465277483866788037 | morning-briefing |
 | **#news** | 1465277483866788037 | news |
 | **#youtube** | 1465277483866788037 | youtube-digest |
 | **#alerts** | 1466019126194606286 | system-health, security-monitor, subscription-monitor, self-reflect |
 | **#api-costs** | 1465761699582972142 | balance-monitor |
-| **#peter-heartbeat** | 1467553740570755105 | heartbeat, morning-quality-report, parser-improve, whatsapp-keepalive |
+| **#peter-heartbeat** | 1467553740570755105 | heartbeat, morning-quality-report, parser-improve, daily-batch |
 | **#traffic-reports** | 1466522078462083325 | school-run, school-pickup |
-| **#peter-chat** | (separate) | school-weekly-spellings |
+| **#peter-chat** | (separate) | (spellings folded into kids-daily Mondays) |
 
 ---
 

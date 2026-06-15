@@ -43,6 +43,7 @@ Base URL: `http://172.19.64.1:8100` — full reference in `hadley_api/README.md`
 - `/ptasks` CRUD (`peter_queue` for bugs, `personal_todo` for todos, `idea` for ideas)
 - `/life-admin/obligations` / `/life-admin/alerts` / `/life-admin/dashboard`
 - `/accountability/goals` / `/accountability/mood` / `/accountability/journal`
+- `/audible/library-context` / `/audible/finished` / `/audible/similar/{asin}` / `/audible/search?q=` — Chris's LIVE Audible library (234+ finished books with his star ratings). For ANY book/audiobook question use these + the `book-recommender` skill — never guess from old conversations.
 
 Mutating endpoints require `x-api-key` header. 503 = `.env` needs reload.
 
@@ -72,6 +73,8 @@ For Peter-completed actions (booking, purchase), tag `peter-action`. Do NOT save
 8. Tell user you can't access it
 
 Never scrape dynamic JS sites (BBC Sport, ESPN) — web search instead.
+
+claude.ai MCP connectors (Spotify, Gmail, Calendar, Audible…) are a LAST resort — prefer Hadley API + Second Brain. If a connector returns an auth/re-authorization error: fall back and still answer, tell Chris it needs re-auth at claude.ai → Settings → Connectors, and `POST /alert` (throttled — see `docs/playbooks/MUSIC.md` § Data Source Routing for the exact curl).
 
 ---
 

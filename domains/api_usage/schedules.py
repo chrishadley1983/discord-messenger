@@ -166,6 +166,41 @@ async def daily_google_spend(bot, domain):
         logger.error(f"Failed to post daily Google spend: {e}")
 
 
+async def daily_ai_reconcile(bot, domain):
+    """Reconcile ai_api_usage vs Anthropic's Admin usage report; surface gaps.
+
+    The reconcile job itself alerts #alerts on a significant keyed gap; here we
+    post a short outcome line to #api-balances so the daily picture is visible.
+    Skips quietly if ANTHROPIC_ADMIN_KEY isn't configured yet.
+    """
+    import asyncio
+    from domains.api_usage.reconcile import reconcile
+
+    channel = bot.get_channel(CHANNEL_ID)
+    try:
+        result = await asyncio.to_thread(reconcile, 2)
+    except Exception as e:
+        logger.error(f"AI reconcile failed: {e}")
+        return
+
+    if not result.get("available"):
+        logger.info(f"AI reconcile skipped: {result.get('note')}")
+        return
+
+    gaps = result.get("gaps") or []
+    if channel:
+        if gaps:
+            lines = [f"⚠️ **AI-usage reconciliation — {len(gaps)} gap(s)** (un-instrumented Anthropic spend):"]
+            for g in gaps[:8]:
+                lines.append(f"  • {g['date']} `{g['model']}`: {g['gap_out']:,} output tok unlogged ({g['gap_pct']}%)")
+            await channel.send("\n".join(lines))
+        else:
+            await channel.send(
+                f"✅ AI-usage reconciled — {result['rows']} day×model rows, no keyed gap over threshold."
+            )
+    logger.info(f"AI reconcile: {result}")
+
+
 SCHEDULES = [
     ScheduledTask(
         name="weekly_summary",
@@ -180,6 +215,13 @@ SCHEDULES = [
         handler=daily_google_spend,
         hour=8,
         minute=0,
+        timezone="Europe/London"
+    ),
+    ScheduledTask(
+        name="daily_ai_reconcile",
+        handler=daily_ai_reconcile,
+        hour=7,
+        minute=30,  # prior-day usage has finalised (>5min lag); runs before the digest
         timezone="Europe/London"
     ),
 ]

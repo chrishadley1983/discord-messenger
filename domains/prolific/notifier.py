@@ -90,3 +90,33 @@ async def notify_new_study(study: Study) -> None:
             r.raise_for_status()
     except httpx.HTTPError as e:
         logger.error(f"Prolific webhook post failed for {study.study_id}: {e}")
+
+
+async def notify_session_expired() -> None:
+    """Ping Discord that the Prolific session has expired and needs re-login."""
+    if not DISCORD_WEBHOOK:
+        logger.warning("No DISCORD_WEBHOOK_PROLIFIC set; skipping session-expired alert")
+        return
+
+    payload = {
+        "username": "Prolific Sniper",
+        "embeds": [{
+            "title": "Prolific session expired",
+            "description": (
+                "The headless Chrome-Prolific session is hitting `/login` — "
+                "no studies will be detected until you re-authenticate.\n\n"
+                "Run on the bot host:\n"
+                "```powershell\n"
+                ".\\_prolific-relogin.ps1\n"
+                "```"
+            ),
+            "color": 0xEF4444,  # red
+            "footer": {"text": "Re-alerts every 3h until fixed"},
+        }],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(DISCORD_WEBHOOK, json=payload)
+            r.raise_for_status()
+    except httpx.HTTPError as e:
+        logger.error(f"Prolific session-expired webhook post failed: {e}")

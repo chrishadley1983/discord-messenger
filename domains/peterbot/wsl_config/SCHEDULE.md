@@ -10,22 +10,22 @@ Run `!reload-schedule` after editing to apply changes.
 | Job | Skill | Schedule | Channel | Enabled |
 |-----|-------|----------|---------|---------|
 | Orphan Embed | orphan-embed | 03:00 UK | #alerts | yes |
+| Daily Message Batch | daily-batch | 06:55 UK | #peter-heartbeat!quiet | yes |
 | Morning Laughs | morning-laughs | 06:30 UK | #peterbot | yes |
 | Morning Quality Report | morning-quality-report | 06:45 UK | #peter-heartbeat | yes |
 | System Health | system-health | 06:50 UK | #alerts | yes |
 | Life Admin Scan | life-admin-scan | 08:30 UK | #alerts+WhatsApp:chris | yes |
 | Life Admin Email Scan | life-admin-email-scan | 03:30 UK | #peter-heartbeat!quiet | yes |
 | Life Admin Dashboard | life-admin-dashboard | Sunday 09:15 UK | #peterbot | yes |
+| Morning Digest | morning-digest | 07:00 UK | #peterbot | yes |
 | Morning Briefing | morning-briefing | 07:01 UK | #ai-briefings | yes |
 | Morning News | news | 07:02 UK | #news | yes |
 | Kids Daily Briefing | kids-daily | 07:25 UK | #peterbot+WhatsApp:group | yes |
 | Morning Cooking Reminder | cooking-reminder | 07:30 UK | #food-log | yes |
 | Price Scanner | price-scanner | Mon 06:00 UK | #food-log | yes |
 | Morning Health Digest | health-digest | 07:55 UK | #food-log | yes |
-| Fitness Dashboard (Cut) | fitness-dashboard | 06:45 UK | #food-log | yes |
 | School Run (Mon-Wed,Fri) | school-run | Mon-Wed,Fri 08:10 UK | #traffic-reports+WhatsApp:group | yes |
 | School Run (Thu) | school-run | Thu 07:45 UK | #traffic-reports+WhatsApp:group | yes |
-| GitHub Activity (Daily) | github-activity | 08:08 UK | #peterbot | yes |
 | GitHub Activity (Weekly) | github-weekly | Sunday 18:05 UK | #peterbot | yes |
 | Kids Weekly (Next Week) | kids-weekly | Sunday 18:10 UK | #peterbot+WhatsApp:group | yes |
 | YouTube Digest | youtube-digest | 09:05 UK | #youtube | yes |
@@ -35,27 +35,22 @@ Run `!reload-schedule` after editing to apply changes.
 | Meal Rating | meal-rating | 20:30 UK | #food-log | yes |
 | Evening Cooking Reminder | cooking-reminder | 20:45 UK | #food-log | yes |
 | Daily Nutrition Summary | nutrition-summary | 21:00 UK | #food-log | yes |
-| Daily Instagram Prep | daily-instagram-prep | 21:05 UK | #peterbot | no |
 | Weekly Health Summary | weekly-health | Sunday 09:10 UK | #food-log | yes |
 | Weekly Cut Review | weekly-cut-review | Sunday 09:00 UK | #food-log | yes |
 | Fitness Advisor Check | fitness-advisor | 20:00 UK | #food-log | yes |
 | Midweek Cut Nudge | fitness-dashboard | Wed 19:00 UK | #food-log | yes |
 | Monthly Health Summary | monthly-health | 1st 09:15 UK | #food-log | yes |
 | Claude History Reminder | - | 1st 10:00 UK | #peterbot | yes |
-| WhatsApp Health Check | whatsapp-keepalive | 08:00,20:00 UK | #peter-heartbeat!quiet | yes |
 | Self-Reflect | self-reflect | 22:00 UK | #alerts!quiet | yes |
-| Email Summary | email-summary | 08:02 UK | #peterbot | yes |
-| Schedule Today | schedule-today | 08:04 UK | #peterbot | yes |
 | Schedule Week | schedule-week | Sunday 18:00 UK | #peterbot | yes |
-| Notion Todos | notion-todos | 08:06 UK | #peterbot | yes |
 | Balance Monitor | balance-monitor | 06:03,09:03,12:03,15:03,18:03,21:03 UK | #api-costs | yes |
 | Heartbeat | heartbeat | 00:01,02:01,04:01,06:01,08:01,10:01,12:01,14:01,16:01,18:01,20:01,22:01 UK | #peter-heartbeat!quiet | yes |
 | Healthera Prescriptions | healthera-prescriptions | 09:10 UK | #peterbot | yes |
 | HB Full Sync + Print | hb-full-sync-print | 09:35 UK | #peterbot | yes |
-| Weekly Spellings | school-weekly-spellings | Mon 07:30 UK | #peter-chat+WhatsApp:group | yes |
 | Subscription Monitor | subscription-monitor | Sunday 09:02 UK | #alerts+WhatsApp:chris | yes |
 | Recipe Discovery | recipe-discovery | Sunday 10:00 UK | #food-log | yes |
 | Property Valuation | property-valuation | 1st 10:15 UK | #peterbot | yes |
+| Book Recommendations | book-recommender | 1st 11:00 UK | #peterbot | yes |
 | Saturday Sport Preview | saturday-sport-preview | Sat 08:00 UK | #peterbot+WhatsApp:chris | yes |
 | Spurs Match Day | spurs-matchday | 08:00 UK | #peterbot+WhatsApp:chris | yes |
 | Cricket Scores | cricket-scores | 08:30 UK | #peterbot+WhatsApp:chris | yes |
@@ -74,6 +69,8 @@ Run `!reload-schedule` after editing to apply changes.
 | Monthly Accountability | accountability-monthly | 1st 10:30 UK | #food-log+WhatsApp:chris | yes |
 | Cost Digest | cost-digest | 22:55 UK | #alerts | yes |
 | Vercel Usage | vercel-usage | 06:45 UK | #api-costs | yes |
+| habit-checkin | habit-checkin | 21:00 UK | #peter-chat | yes |
+| habit-weekly | habit-weekly | Sunday 20:00 UK | #peter-chat | yes |
 
 ## Interval Jobs
 

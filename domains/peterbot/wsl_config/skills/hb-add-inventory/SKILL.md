@@ -37,26 +37,25 @@ Adds inventory items that DON'T have an associated purchase record:
 
 ## API Endpoints
 
-**Base URL**: `https://hadley-bricks-inventory-management.vercel.app`
+**Base URL**: `http://172.19.64.1:8100/hb`
 
 ### Step 1: Look up ASIN (optional)
 
 ```bash
-GET /api/service/inventory/lookup-asin?setNumber=75192
+GET /service/inventory/lookup-asin?setNumber=75192
 ```
 
 ### Step 2: Get Competitive Pricing (optional)
 
 ```bash
-GET /api/service/amazon/competitive-summary?asins=B0XXXXXX
+GET /service/amazon/competitive-summary?asins=B0XXXXXX
 ```
 
 ### Step 3: Create Inventory Item
 
 ```bash
-POST /api/inventory
+POST /inventory
 Content-Type: application/json
-x-api-key: ${HADLEY_BRICKS_API_KEY}
 
 {
   "set_number": "75192",
@@ -92,7 +91,7 @@ x-api-key: ${HADLEY_BRICKS_API_KEY}
 2. **Look up ASIN** (if listing planned)
 3. **Get pricing** (if listing planned)
 4. **Show confirmation**
-5. **Create inventory** via POST /api/inventory
+5. **Create inventory** via POST /inventory
 
 ## Output Format
 

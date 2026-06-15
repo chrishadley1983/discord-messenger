@@ -28,6 +28,7 @@ from .config import (
     NAV_TIMEOUT_MS,
     PAGE_RELOAD_INTERVAL_SECONDS,
     RENDER_WAIT_MS,
+    SESSION_EXPIRED_ALERT_INTERVAL_S,
     STUDIES_URL,
 )
 
@@ -164,6 +165,7 @@ _state: dict = {
     "page": None,
     "loaded_at": 0.0,
     "session_expired_logged": False,
+    "session_expired_alert_at": 0.0,
 }
 _state_lock = asyncio.Lock()
 
@@ -279,7 +281,16 @@ async def _fetch_studies_inner() -> list[Study]:
             if not _state.get("session_expired_logged"):
                 logger.warning("Prolific session expired — login page hit. Run: python -m domains.prolific.login")
                 _state["session_expired_logged"] = True
+            now = time.time()
+            if now - _state.get("session_expired_alert_at", 0.0) >= SESSION_EXPIRED_ALERT_INTERVAL_S:
+                _state["session_expired_alert_at"] = now
+                from .notifier import notify_session_expired
+                asyncio.create_task(notify_session_expired())
             return []
+
+        # Got to /studies cleanly — clear the alert throttle so the next
+        # expiry pings Discord immediately rather than waiting 3h.
+        _state["session_expired_alert_at"] = 0.0
 
         try:
             raw_cards = await asyncio.wait_for(

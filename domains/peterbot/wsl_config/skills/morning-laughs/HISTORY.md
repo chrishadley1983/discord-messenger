@@ -503,3 +503,108 @@
 - 2026-05-21: I've decided to sell my vacuum cleaner — it was just collecting dust.
 - 2026-05-21: Why did the ghost go to the bar? For the boos.
 - 2026-05-21: "You have power over your mind, not outside events. Realise this, and you will find strength." — Marcus Aurelius
+
+- 2026-05-22: What do you call a nervous javelin thrower? Shakespeare.
+- 2026-05-22: I used to be a firefighter, but I got burned out.
+- 2026-05-22: Why did the calendar go to therapy? It had too many dates.
+- 2026-05-22: "Shoot for the moon. Even if you miss, you'll land among the stars." — Les Brown
+
+- 2026-05-23: What do you call a man with a spoon on his head? Stu.
+- 2026-05-23: I used to be a locksmith, but the whole business was just too hard to crack.
+- 2026-05-23: Why did the printer go to therapy? It had too many issues.
+- 2026-05-23: "When you reach the end of your rope, tie a knot in it and hang on." — Franklin D. Roosevelt
+
+- 2026-05-24: What do you call two monkeys sharing an Amazon account? Prime mates.
+- 2026-05-24: I bought a dictionary and when I got home, all the pages were blank. I have no words for it.
+- 2026-05-24: What do you call a man who can't stop buying carpets? Rugged.
+- 2026-05-24: "The purpose of life is a life of purpose." — Robert Byrne
+
+- 2026-05-25: Did you hear about the mathematician who's afraid of negative numbers? He'll stop at nothing to avoid them.
+- 2026-05-25: How does a penguin build its house? Igloos it together.
+- 2026-05-25: What do you call an elf that sings? A wrapper.
+- 2026-05-25: "Nothing in life is to be feared, it is only to be understood." — Marie Curie
+
+- 2026-05-26: What do you call a man with a lighthouse on his head? Ray.
+- 2026-05-26: I used to be a diver, but I hit rock bottom.
+- 2026-05-26: Why did the egg go to school? To get egg-ucated.
+- 2026-05-26: "We are all faced with a series of great opportunities brilliantly disguised as impossible situations." — Charles R. Swindoll
+
+- 2026-05-27: Why did the pirate buy an eye patch? Because the price of ARR was too high!
+- 2026-05-27: I used to be a hairdresser, but I just couldn't cut it.
+- 2026-05-27: What do you call a man with a bucket on his head? Phil.
+- 2026-05-27: "Logic will get you from A to B. Imagination will take you everywhere." — Albert Einstein
+
+- 2026-05-28: Why is Peter Pan always flying? Because he Neverlands.
+- 2026-05-28: I just got a new pair of gloves, but they're not quite right.
+- 2026-05-28: What do you call a Spanish man who can't find his car? Carlos.
+- 2026-05-28: "In the depth of winter, I finally learned that within me there lay an invincible summer." — Albert Camus
+
+- 2026-05-29: What do you call a man with a kettle on his head? Earl.
+- 2026-05-29: I used to be a gravity researcher — but that career really fell through.
+- 2026-05-29: Why did the egg hide? Because it was a little chicken.
+- 2026-05-29: "Hard work beats talent when talent doesn't work hard." — Tim Notke
+
+- 2026-05-30: What do you call a hen who counts her eggs? A mathema-chicken.
+- 2026-05-30: What do you call a well-balanced horse? Stable.
+- 2026-05-30: Why don't hippos hide in trees? Because they're really good at it.
+- 2026-05-30: "If opportunity doesn't knock, build a door." — Milton Berle
+
+- 2026-05-31: Why can't you run through a campsite? You can only ran — it's past tents!
+- 2026-05-31: What do you call a dinosaur with an extensive vocabulary? A Thesaurus.
+- 2026-05-31: I used to hate jogging, but I've really warmed up to it.
+- 2026-05-31: "Creativity is intelligence having fun." — Albert Einstein
+
+- 2026-06-01: What do you call a Roman with a cold? Julius Sneezer.
+- 2026-06-01: I used to be a nurse, but I ran out of patients.
+- 2026-06-01: What do you call a man with a post box on his head? Lenny.
+- 2026-06-01: "Stay hungry, stay foolish." — Steve Jobs
+
+- 2026-06-02: What do you call a fake noodle? An impasta.
+- 2026-06-02: I tried to sue the airport for losing my luggage. I lost my case.
+- 2026-06-02: What do you call a man with a ladder on his head? Step-father.
+- 2026-06-02: "The only way to discover the limits of the possible is to go beyond them into the impossible." — Arthur C. Clarke
+
+- 2026-06-03: What's orange and sounds like a parrot? A carrot!
+- 2026-06-03: Why did the whale cross the ocean? To get to the other tide.
+- 2026-06-03: I used to be a glazier, but I just saw through people.
+- 2026-06-03: "If you're going through hell, keep going." — Winston Churchill
+
+- 2026-06-04: Why did the student eat his homework? Because the teacher told him it was a piece of cake.
+- 2026-06-04: I used to be a geologist, but I took everything for granite.
+- 2026-06-04: What do you call a dinosaur that asks lots of questions? A Why-nosaur.
+- 2026-06-04: "Keep your eyes on the stars, and your feet on the ground." — Theodore Roosevelt
+
+- 2026-06-05: What do you call a dog with no legs? Doesn't matter — it's not coming anyway.
+- 2026-06-05: I bought a boat because it was on sail.
+- 2026-06-05: What do you call a fast zombie? A zoombie.
+- 2026-06-05: "Not everything that counts can be counted, and not everything that can be counted counts." — Albert Einstein
+
+- 2026-06-06: What do you call a man with a fridge on his head? Cool.
+- 2026-06-06: I used to work at a soap factory, but I kept slipping up.
+- 2026-06-06: Why do fish swim in salt water? Because pepper makes them sneeze.
+- 2026-06-06: "The best revenge is massive success." — Frank Sinatra
+
+- 2026-06-07: What do you call a monkey in a minefield? A baboom!
+- 2026-06-07: I tried to start a business selling trampolines, but it had its ups and downs.
+- 2026-06-07: Why don't programmers like nature? Too many bugs and no documentation.
+- 2026-06-07: "It's not what happens to you, but how you react to it that matters." — Epictetus
+
+- 2026-06-08: Why did the banana fail its driving test? It kept peeling out.
+- 2026-06-08: I used to be a miner, but I couldn't see a future in it.
+- 2026-06-08: What do you call a cow that's just given birth? De-calf-inated.
+- 2026-06-08: "The best way to predict your future is to create it." — Peter Drucker
+
+- 2026-06-09: Why did the lion eat the tightrope walker? It wanted a well-balanced meal.
+- 2026-06-09: What do you call a sleepwalking nun? A roaming Catholic.
+- 2026-06-09: I used to be a butcher, but I backed into the meat grinder and got a little behind in my work.
+- 2026-06-09: "Success is getting what you want. Happiness is wanting what you get." — Dale Carnegie
+
+- 2026-06-10: What do you call a man with a hedge on his head? Ed.
+- 2026-06-10: I ordered a chicken and an egg from Amazon. I'll let you know.
+- 2026-06-10: What do you call a grumpy gardener? A snap-dragon.
+- 2026-06-10: "If you want to go fast, go alone. If you want to go far, go together." — African Proverb
+
+- 2026-06-11: What do you call an astronaut's favourite key on a keyboard? The space bar.
+- 2026-06-11: I'm writing a book about clocks. It's just a matter of time.
+- 2026-06-11: Why did the chicken visit the fortune teller? To find out if it had a future on the other side.
+- 2026-06-11: "Well done is better than well said." — Benjamin Franklin

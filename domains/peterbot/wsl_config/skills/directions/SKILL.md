@@ -1,7 +1,7 @@
 # Directions
 
 ## Purpose
-Get directions and route planning for ad-hoc journeys.
+Directions, route planning, and live traffic checks (merged from the old traffic-check skill).
 
 ## Triggers
 - "directions to {place}"
@@ -9,6 +9,23 @@ Get directions and route planning for ad-hoc journeys.
 - "route to {destination}"
 - "how long to {place}"
 - "best way to {place}"
+- "traffic", "how's the traffic", "is there traffic"
+- "school run traffic", "how long to school"
+- "should I leave now"
+
+## School Run Quick Check
+
+For school-traffic questions use `curl http://172.19.64.1:8100/traffic/school`:
+
+```
+🚗 **Traffic to School**
+⏱️ {duration_mins} mins (usually {typical_mins})
+{traffic_icon} {traffic_level} traffic
+
+Leave by {leave_time} to arrive on time.
+```
+
+Traffic indicators: 🟢 Light (at/below typical) · 🟡 Moderate (+1-5 mins) · 🔴 Heavy (+5-15 mins) · ⚠️ Severe (+15 mins). Compare to typical time, not just absolute, and include a departure recommendation.
 
 ## Schedule
 None (conversational only)

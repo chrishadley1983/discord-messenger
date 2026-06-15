@@ -180,8 +180,9 @@ async def _stock_costs(start: str, end: str) -> float:
         "select": "local_amount",
     }, paginate=True)
 
-    # Monzo local_amount is stored in pence (integer) — convert to pounds
-    return sum(abs(safe_float(t.get("local_amount"))) / 100 for t in txns)
+    # Monzo local_amount is stored in pence (integer) — spending is negative,
+    # refunds positive. Negate the signed sum so refunds net off the cost.
+    return -sum(safe_float(t.get("local_amount")) for t in txns) / 100
 
 
 async def _postage_packing_costs(start: str, end: str) -> dict:
@@ -194,9 +195,10 @@ async def _postage_packing_costs(start: str, end: str) -> dict:
         "select": "local_amount,local_category",
     }, paginate=True)
 
-    # Monzo local_amount is stored in pence (integer) — convert to pounds
-    postage = sum(abs(safe_float(t.get("local_amount"))) / 100 for t in txns if t.get("local_category") == "Postage")
-    packing = sum(abs(safe_float(t.get("local_amount"))) / 100 for t in txns if t.get("local_category") == "Packing Materials")
+    # Monzo local_amount is stored in pence (integer) — spending is negative,
+    # refunds positive. Negate the signed sum so refunds net off the cost.
+    postage = -sum(safe_float(t.get("local_amount")) for t in txns if t.get("local_category") == "Postage") / 100
+    packing = -sum(safe_float(t.get("local_amount")) for t in txns if t.get("local_category") == "Packing Materials") / 100
     return {"postage": postage, "packing": packing}
 
 
@@ -210,11 +212,12 @@ async def _other_costs(start: str, end: str) -> dict:
         "select": "local_amount,local_category",
     }, paginate=True)
 
-    # Monzo local_amount is stored in pence (integer) — convert to pounds
+    # Monzo local_amount is stored in pence (integer) — spending is negative,
+    # refunds positive. Negate the signed amount so refunds net off the cost.
     cats: dict[str, float] = {}
     for t in txns:
         cat = t.get("local_category", "Other")
-        cats[cat] = cats.get(cat, 0) + abs(safe_float(t.get("local_amount"))) / 100
+        cats[cat] = cats.get(cat, 0) - safe_float(t.get("local_amount")) / 100
     return cats
 
 

@@ -67,17 +67,10 @@ from domains.second_brain.passive import (
     process_passive_message,
 )
 
-# Import standalone jobs (legacy - kept for manual triggers during migration)
-from jobs import (
-    register_balance_monitor,
-    register_school_run,
-    register_nutrition_morning,
-    register_hydration_checkin,
-    register_weekly_health,
-    register_monthly_health,
-    register_withings_sync,
-    register_youtube_feed
-)
+# Legacy standalone-job registration was removed 2026-06 — all scheduled
+# output goes through SCHEDULE.md skills (USE_PETERBOT_SCHEDULER).
+# jobs/*.py modules remain only as helper libraries for data_fetchers and
+# as bot.py-registered infrastructure jobs (seeding, syncs — no Discord output).
 
 # Initialize bot
 intents = discord.Intents.default()
@@ -100,17 +93,47 @@ MESSAGE_DEDUP_SECONDS = 5
 # Health probe cache for channel smart-fallback. We probe the channel HTTP
 # /health endpoint and cache the result for HEALTH_CACHE_TTL seconds so we
 # don't add latency to every Discord message.
-HEALTH_CACHE_TTL = 30  # seconds
+# Asymmetric caching: a healthy result is trusted for HEALTH_CACHE_TTL so we
+# don't add latency to every message. An UNHEALTHY result is cached only
+# briefly (HEALTH_NEG_CACHE_TTL) — otherwise a single transient blip (e.g. a
+# routine discord.js gateway reconnect, which self-heals in ~1-2s) would wedge
+# every message for the full positive TTL into the legacy router_v2 path.
+HEALTH_CACHE_TTL = 30      # seconds — trust a healthy probe this long
+HEALTH_NEG_CACHE_TTL = 5   # seconds — re-probe quickly after a failure
+HEALTH_PROBE_TIMEOUT = 3   # seconds per attempt (was 2 — too tight under load)
 _peter_channel_health_cache: tuple[float, bool] = (0.0, True)  # (cached_at, healthy)
 
 
-async def _peter_channel_healthy() -> bool:
-    """Probe peter-channel /health with a short TTL cache.
+async def _probe_peter_channel_once() -> tuple[bool, str]:
+    """Single /health probe. Returns (healthy, reason) — reason set on failure."""
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "http://localhost:8104/health",
+                timeout=aiohttp.ClientTimeout(total=HEALTH_PROBE_TIMEOUT),
+            ) as resp:
+                if resp.status != 200:
+                    return False, f"status {resp.status}"
+                data = await resp.json()
+                discord_state = data.get("discord")
+                if discord_state == "connected":
+                    return True, ""
+                return False, f"discord={discord_state}"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
 
-    Returns True if the channel responded healthy within the last
-    HEALTH_CACHE_TTL seconds, or if we just probed and got a healthy response.
-    Returns False when the channel is unreachable / errored — caller should
-    fall back to router_v2.
+
+async def _peter_channel_healthy() -> bool:
+    """Probe peter-channel /health with asymmetric TTL caching + retry-once.
+
+    Returns True if the channel is reachable and Discord is connected.
+    Returns False when it's genuinely down — caller falls back to router_v2.
+
+    A single failed probe is retried once after a short delay before we declare
+    the channel unhealthy, so a momentary gateway reconnect doesn't trigger an
+    unnecessary fallback to the legacy CLI path. Failures are logged at WARNING
+    with the actual reason (previously debug, so the cause was never captured).
 
     Known limitation: /health reports Discord+MCP up-state only. A wedged
     Claude Code session inside the channel will still pass this probe.
@@ -120,25 +143,22 @@ async def _peter_channel_healthy() -> bool:
     global _peter_channel_health_cache
     cached_at, healthy = _peter_channel_health_cache
     now = time.monotonic()
-    if now - cached_at < HEALTH_CACHE_TTL:
+    ttl = HEALTH_CACHE_TTL if healthy else HEALTH_NEG_CACHE_TTL
+    if now - cached_at < ttl:
         return healthy
 
-    try:
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                "http://localhost:8104/health",
-                timeout=aiohttp.ClientTimeout(total=2),
-            ) as resp:
-                if resp.status != 200:
-                    raise RuntimeError(f"status {resp.status}")
-                data = await resp.json()
-                healthy = data.get("discord") == "connected"
-    except Exception as e:
-        logger.debug(f"peter-channel health probe failed: {e}")
-        healthy = False
+    healthy, reason = await _probe_peter_channel_once()
+    if not healthy:
+        # Retry once — transient gateway reconnects self-heal within ~1-2s.
+        await asyncio.sleep(0.75)
+        healthy, retry_reason = await _probe_peter_channel_once()
+        if not healthy:
+            logger.warning(
+                f"peter-channel /health unhealthy after retry "
+                f"(first: {reason}; retry: {retry_reason}) — will use router_v2"
+            )
 
-    _peter_channel_health_cache = (now, healthy)
+    _peter_channel_health_cache = (time.monotonic(), healthy)
     return healthy
 
 # Peterbot scheduler (Phase 7 - skill-based jobs)
@@ -148,35 +168,90 @@ peterbot_scheduler = None  # Initialized in on_ready
 _ready_initialized = False  # Guard against multiple on_ready calls
 
 
+# Channel watchdog: recycle alive-but-unhealthy sessions. A tmux session can
+# be up while its MCP server is dead (e.g. the 30s MCP init handshake timed
+# out), leaving the HTTP health port unbound — bot.py then silently falls back
+# to router_v2 forever. We track each (re)launch time and only recycle a
+# session once it's had time to bind, so the watchdog can't kill one mid
+# cold-start and spin a restart loop.
+_channel_last_relaunch: dict[str, float] = {}
+CHANNEL_RECYCLE_GRACE_SECONDS = 120
+
+
+def _channel_http_healthy(name: str, port: int) -> bool:
+    """Probe a channel's HTTP /health endpoint (Windows → WSL localhost forward).
+
+    Returns True only on HTTP 200. Used by the watchdog to detect sessions that
+    are alive in tmux but whose MCP server / HTTP server never came up.
+    """
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://localhost:{port}/health", timeout=3) as r:
+            return r.status == 200
+    except Exception as e:
+        logger.debug(f"Channel '{name}' health probe (:{port}) failed: {e}")
+        return False
+
+
 def _launch_channel_sessions():
-    """Launch persistent Claude Code channel sessions in WSL tmux.
+    """Launch (and heal) persistent Claude Code channel sessions in WSL tmux.
 
     Idempotent — called on startup and from the channel_watchdog APScheduler job.
-    If a tmux session exists it's skipped silently; only relaunches emit log lines
-    so a 1-minute watchdog doesn't spam the log.
+    A healthy existing session is skipped silently; only (re)launches emit log
+    lines so a 1-minute watchdog doesn't spam the log.
+
+    Two failure modes are handled:
+      1. Session missing entirely (WSL reboot, crash) → launch it.
+      2. Session alive but its HTTP health port is down past the cold-start
+         grace (MCP init handshake timed out) → kill and relaunch it. Without
+         this, an alive-but-dead channel never recovers and Peter runs on the
+         degraded router_v2 path indefinitely.
     """
     import subprocess
+    import time
 
     BASE = "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger"
+    # (name, launch_script, health_port) — health_port=None means we can only
+    # check tmux existence for that session (no HTTP health server to probe).
     sessions = [
-        ("peter-channel", f"{BASE}/peter-channel/launch.sh"),
-        ("whatsapp-channel", f"{BASE}/whatsapp-channel/launch.sh"),
-        ("jobs-channel", f"{BASE}/jobs-channel/launch.sh"),
+        ("peter-channel", f"{BASE}/peter-channel/launch.sh", 8104),
+        ("whatsapp-channel", f"{BASE}/whatsapp-channel/launch.sh", 8102),
+        ("jobs-channel", f"{BASE}/jobs-channel/launch.sh", 8103),
         # Added 2026-05 to move Sonnet/Haiku-tagged skills off claude -p
         # See docs/MIGRATE_OFF_CLAUDE_P.md
-        ("jobs-channel-sonnet", f"{BASE}/jobs-channel-sonnet/launch.sh"),
-        ("extract-channel", f"{BASE}/extract-channel/launch.sh"),
+        ("jobs-channel-sonnet", f"{BASE}/jobs-channel-sonnet/launch.sh", None),
+        ("extract-channel", f"{BASE}/extract-channel/launch.sh", None),
     ]
 
-    for name, script in sessions:
+    for name, script, health_port in sessions:
         try:
             # Check if session already exists
             check = subprocess.run(
                 ["wsl", "bash", "-c", f"tmux has-session -t {name} 2>/dev/null"],
                 capture_output=True, timeout=10,
             )
-            if check.returncode == 0:
-                continue  # Already running — stay silent to avoid log spam
+            session_exists = check.returncode == 0
+
+            if session_exists:
+                # Existence alone isn't health. If the channel has an HTTP port,
+                # probe it; recycle only if it's been unhealthy past the grace
+                # window (so we don't kill a session still cold-starting).
+                if health_port is None:
+                    continue  # nothing more we can verify — leave it alone
+                if _channel_http_healthy(name, health_port):
+                    continue  # genuinely healthy
+                launched_at = _channel_last_relaunch.get(name, 0.0)
+                if time.monotonic() - launched_at < CHANNEL_RECYCLE_GRACE_SECONDS:
+                    continue  # too young — give it time to bind :{port}
+                logger.warning(
+                    f"Channel '{name}' alive but :{health_port}/health down "
+                    f"past grace — recycling session"
+                )
+                subprocess.run(
+                    ["wsl", "bash", "-c", f"tmux kill-session -t {name} 2>/dev/null"],
+                    capture_output=True, timeout=10,
+                )
+                # fall through to relaunch below
 
             # Launch new tmux session with the channel's launch script
             subprocess.Popen(
@@ -184,7 +259,11 @@ def _launch_channel_sessions():
                  f'tmux new-session -d -s {name} -c $HOME/peterbot "bash \\"{script}\\""'],
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             )
-            logger.warning(f"Channel session '{name}' was down — relaunched")
+            _channel_last_relaunch[name] = time.monotonic()
+            logger.warning(
+                f"Channel session '{name}' was {'unhealthy' if session_exists else 'down'} "
+                f"— relaunched"
+            )
         except Exception as e:
             logger.warning(f"Failed to launch channel session '{name}': {e}")
 
@@ -330,16 +409,12 @@ async def on_ready():
         peterbot_scheduler.start_reload_watcher()
         peterbot_scheduler.start_nag_checker()
     else:
-        # Legacy: Register standalone jobs (remove after Phase 7b migration)
-        register_balance_monitor(scheduler, bot)
-        register_school_run(scheduler, bot)
-        register_withings_sync(scheduler)  # Sync weight data before morning message
-        register_nutrition_morning(scheduler, bot)
-        register_hydration_checkin(scheduler, bot)
-        register_weekly_health(scheduler, bot)
-        register_monthly_health(scheduler, bot)
-        register_youtube_feed(scheduler, bot)
-        logger.info("Using legacy job registration (Phase 7 scheduler disabled)")
+        # Legacy standalone registration was deleted 2026-06; SCHEDULE.md
+        # skills are the only supported path for scheduled Discord output.
+        logger.error(
+            "USE_PETERBOT_SCHEDULER is disabled but legacy job registration "
+            "no longer exists — no scheduled jobs will post"
+        )
 
     # Start scheduler
     scheduler.start()
@@ -371,6 +446,30 @@ async def on_ready():
     from domains.whatsapp_watchdog import register as _register_whatsapp_watchdog
     _register_whatsapp_watchdog(scheduler, minutes=2)
 
+    # Dead-man's switch — ping healthchecks.io every 5 min. All other
+    # monitoring runs on this machine; if the whole PC dies, healthchecks.io
+    # notices the silence and emails Chris from outside.
+    _hc_ping_url = os.environ.get("HEALTHCHECKS_PING_URL", "").strip()
+    if _hc_ping_url:
+        async def _deadman_ping():
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=10) as client:
+                    await client.get(_hc_ping_url)
+            except Exception as e:
+                logger.warning(f"Dead-man ping failed: {e}")
+
+        scheduler.add_job(
+            _deadman_ping,
+            "interval", minutes=5,
+            id="deadman_ping",
+            max_instances=1,
+            replace_existing=True,
+        )
+        logger.info("Dead-man's switch registered (healthchecks.io ping every 5 min)")
+    else:
+        logger.warning("HEALTHCHECKS_PING_URL not set — dead-man's switch disabled")
+
     # Channel cost tail — read Claude Code transcripts for the 3 channel
     # sessions and emit per-turn USD into data/channel_costs.jsonl.
     # Runs every 5 min, resumes from saved offsets. See domains/peterbot/channel_cost_tail.py.
@@ -389,12 +488,34 @@ async def on_ready():
     )
     logger.info("Channel cost tail registered (every 5 min)")
 
+    # Spotify playback poller — captures podcasts/audiobooks the
+    # recently-played API never returns. Quiet infra job, no Discord output.
+    # See domains/peterbot/spotify_playback_log.py.
+    from domains.peterbot.spotify_playback_log import register as _register_spotify_poll
+    _register_spotify_poll(scheduler, minutes=5)
+
+    # Octopus Home Mini live telemetry — 30s poll into energy_live +
+    # data/energy_telemetry.jsonl, with stall alerting baked in.
+    # See domains/energy/telemetry.py.
+    from domains.energy.telemetry import register as _register_energy_telemetry
+    _register_energy_telemetry(scheduler)
+
+    # Appliance event detection over the telemetry stream (kettle/oven/EV,
+    # sustained-load alerts). See domains/energy/events.py.
+    from domains.energy.events import register as _register_energy_events
+    _register_energy_events(scheduler)
+
+    # Extract-channel recycler — restart the stateless Haiku extraction
+    # session before its context fills and it wedges (which silently slowed
+    # everything that extracts ~20x). See domains/peterbot/extract_channel_recycle.py.
+    from domains.peterbot.extract_channel_recycle import register as _register_extract_recycle
+    _register_extract_recycle(scheduler, minutes=4)
+
     # Legacy jobs — wrap with execution tracking before registration
     # This records start/complete in job_history.db and alerts #alerts on failure
     import jobs.incremental_seed as _seed_mod
     import jobs.school_sync as _school_mod
     import jobs.energy_sync as _energy_mod
-    import jobs.whatsapp_sync as _wa_mod
 
     _seed_mod.incremental_seed_import = _tracked_job(
         "incremental_seed", _seed_mod.incremental_seed_import)
@@ -408,10 +529,6 @@ async def on_ready():
         "energy_weekly_digest", _energy_mod.energy_weekly_digest)
     _energy_mod.energy_monthly_billing = _tracked_job(
         "energy_monthly_billing", _energy_mod.energy_monthly_billing)
-    _wa_mod.whatsapp_web_scrape = _tracked_job(
-        "whatsapp_web_scrape", _wa_mod.whatsapp_web_scrape)
-    _wa_mod.whatsapp_export_scan = _tracked_job(
-        "whatsapp_export_scan", _wa_mod.whatsapp_export_scan)
 
     # Incremental seed import — daily at 1am UK, loads calendar/email/GitHub/Garmin
     _seed_mod.register_incremental_seed(scheduler, bot=bot)
@@ -425,9 +542,18 @@ async def on_ready():
     _energy_mod.register_energy_sync(scheduler, bot=bot)
     logger.info("Energy sync jobs registered (daily 10:00 AM + weekly Sunday 9:00 AM + monthly 1st 10:30 AM UK)")
 
-    # WhatsApp — daily export scan at 10am, weekly reminder Sunday 9am
-    _wa_mod.register_whatsapp_sync(scheduler, bot=bot)
-    logger.info("WhatsApp sync jobs registered (daily 10:00 AM + weekly Sunday 9:00 AM UK)")
+    # WhatsApp chat ingestion now runs as the whatsapp-evolution seed adapter
+    # inside incremental_seed (jobs/whatsapp_sync.py retired Jun 2026 — its
+    # scraper scripts were deleted in Mar 2026 and it silently no-opped since).
+
+    # Hadley Bricks crons — migrated off Vercel (Fluid CPU exhaustion, Jun
+    # 2026; see docs/plans/vercel-fluid-cpu-migration.md). Tracked so any
+    # failure alerts #alerts; coalesce covers the box-was-off-overnight case.
+    import jobs.hb_crons as _hb_crons_mod
+    for _hb_job_id in _hb_crons_mod.CRON_SPECS:
+        setattr(_hb_crons_mod, _hb_job_id,
+                _tracked_job(_hb_job_id, getattr(_hb_crons_mod, _hb_job_id)))
+    _hb_crons_mod.register_hb_crons(scheduler, bot=bot)
 
     # Japan trip — proactive WhatsApp alerts every 15 min (active Apr 3-19 only)
     from domains.peterbot.japan_alerts import check_and_send_alerts as _japan_alerts
@@ -845,6 +971,11 @@ async def on_message(message):
         logger.warning(
             f"peter-channel /health unhealthy — falling back to router_v2 for channel {message.channel.id}"
         )
+        try:
+            from domains.peterbot.fallback_stats import record_fallback
+            record_fallback("peter-channel", f"health probe failed (channel {message.channel.id})")
+        except Exception:
+            pass
     if message.channel.id in PETERBOT_CHANNEL_IDS:
         async with message.channel.typing():
             # Check if buffer needs populating from Discord history (e.g., after restart)

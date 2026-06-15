@@ -424,6 +424,70 @@ async def get_progress(goal_id: str, days: int = 30) -> list[dict]:
         return []
 
 
+async def get_progress_bulk(goal_ids: list[str], days: int = 30) -> dict[str, list[dict]]:
+    """Fetch progress for many goals in ONE query.
+
+    Returns {goal_id: [rows ordered date desc]}. Replaces N per-goal
+    get_progress() calls — each of which opened its own httpx client / TLS
+    handshake to Supabase — with a single batched PostgREST `in.()` query.
+    """
+    result: dict[str, list[dict]] = {gid: [] for gid in goal_ids}
+    if not goal_ids:
+        return result
+    cutoff = (_today() - timedelta(days=days)).isoformat()
+    ids = ",".join(goal_ids)
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                _url(PROGRESS_TABLE),
+                headers=_read_headers(),
+                params={
+                    "goal_id": f"in.({ids})",
+                    "date": f"gte.{cutoff}",
+                    "select": "*",
+                    "order": "date.desc",
+                },
+            )
+            if resp.status_code == 200:
+                for row in resp.json():
+                    result.setdefault(row["goal_id"], []).append(row)
+            else:
+                logger.error(f"Bulk progress failed: {resp.status_code}")
+    except Exception as e:
+        logger.error(f"Bulk progress error: {e}")
+    return result
+
+
+async def get_milestones_bulk(goal_ids: list[str]) -> dict[str, list[dict]]:
+    """Fetch milestones for many goals in ONE query.
+
+    Returns {goal_id: [rows ordered target_value asc]}.
+    """
+    result: dict[str, list[dict]] = {gid: [] for gid in goal_ids}
+    if not goal_ids:
+        return result
+    ids = ",".join(goal_ids)
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                _url(MILESTONES_TABLE),
+                headers=_read_headers(),
+                params={
+                    "goal_id": f"in.({ids})",
+                    "select": "*",
+                    "order": "target_value.asc",
+                },
+            )
+            if resp.status_code == 200:
+                for row in resp.json():
+                    result.setdefault(row["goal_id"], []).append(row)
+            else:
+                logger.error(f"Bulk milestones failed: {resp.status_code}")
+    except Exception as e:
+        logger.error(f"Bulk milestones error: {e}")
+    return result
+
+
 # ── Computed Status ──────────────────────────────────────────────────────
 
 
@@ -548,17 +612,17 @@ def _compute_hit_rate(
 
 async def get_daily_summary(target_date: str | None = None) -> dict:
     """All active goals with their computed status for today."""
-    import asyncio
     goals = await get_goals(status="active")
+    goal_ids = [g["id"] for g in goals]
 
-    # Parallel fetch progress + milestones for all goals
-    progress_tasks = [get_progress(g["id"], days=30) for g in goals]
-    milestone_tasks = [get_milestones(g["id"]) for g in goals]
-    all_progress = await asyncio.gather(*progress_tasks)
-    all_milestones = await asyncio.gather(*milestone_tasks)
+    # Two batched queries instead of 2N per-goal round-trips.
+    progress_by_goal = await get_progress_bulk(goal_ids, days=30)
+    milestones_by_goal = await get_milestones_bulk(goal_ids)
 
     result = []
-    for goal, progress, milestones in zip(goals, all_progress, all_milestones):
+    for goal in goals:
+        progress = progress_by_goal.get(goal["id"], [])
+        milestones = milestones_by_goal.get(goal["id"], [])
         status = compute_goal_status(goal, progress)
         result.append({**goal, "computed": status, "milestones": milestones})
 
@@ -569,14 +633,19 @@ async def get_report_data(period: str = "week") -> dict:
     """Aggregated report data for weekly or monthly reports."""
     goals = await get_goals(status="active")
     days = 7 if period == "week" else 30
+    goal_ids = [g["id"] for g in goals]
+
+    # Two batched queries instead of 2N per-goal round-trips.
+    progress_by_goal = await get_progress_bulk(goal_ids, days=days)
+    milestones_by_goal = await get_milestones_bulk(goal_ids)
 
     goal_reports = []
     total_on_track = []
 
     for goal in goals:
-        progress = await get_progress(goal["id"], days=days)
+        progress = progress_by_goal.get(goal["id"], [])
         status = compute_goal_status(goal, progress)
-        milestones = await get_milestones(goal["id"])
+        milestones = milestones_by_goal.get(goal["id"], [])
 
         # Find milestones reached this period
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)

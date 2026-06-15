@@ -18,6 +18,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -45,14 +46,52 @@ class ExtractResponse(BaseModel):
     error: Optional[str] = None
 
 
-async def _try_extract_channel(prompt: str) -> Optional[str]:
-    """POST to extract-channel; return text on success, None on failure.
+# Circuit breaker for the extract-channel. When the channel wedges (the
+# inject->reply path returns empty after the full timeout — observed 13 Jun
+# 2026 returning "" after 100s on every call), waiting EXTRACT_CHANNEL_TIMEOUT
+# per request makes EVERYTHING that extracts ~100x slower: school sync hit 17
+# min, Second Brain seeding crawled (Spotify import took 4.5h). After
+# _BREAKER_THRESHOLD consecutive channel failures we OPEN the breaker and go
+# straight to the CLI (~7s) for _BREAKER_COOLDOWN_S, then probe once to
+# auto-recover. Trade-off: the CLI fallback is `claude -p`, which from
+# 2026-06-15 bills as programmatic spend (NOT the subscription the
+# extract-channel runs on — see claude_extract() below and
+# docs/MIGRATE_OFF_CLAUDE_P.md). So an open breaker briefly shifts extract
+# traffic onto the metered path, bounded by _BREAKER_COOLDOWN_S. This is a
+# latency fix with a small, time-boxed metered-cost side effect — recycle the
+# wedged extract-channel session to close the breaker (and stop the spend)
+# sooner.
+_BREAKER_THRESHOLD = 3
+_BREAKER_COOLDOWN_S = 600.0
+_channel_fail_streak = 0
+_breaker_open_until = 0.0
 
-    None means caller should fall back to the CLI subprocess. The channel
-    runs on Haiku 4.5, so model/max_tokens overrides from the request are
-    ignored on this path (callers wanting a specific model should hit the
-    CLI directly or pass it via the prompt itself).
+
+def _breaker_is_open() -> bool:
+    return time.monotonic() < _breaker_open_until
+
+
+async def _try_extract_channel(prompt: str) -> Optional[str]:
+    """POST to extract-channel; return text on success, None to fall back.
+
+    Skips the channel entirely while the breaker is open. The channel runs
+    Haiku 4.5, so model/max_tokens overrides are ignored on this path.
     """
+    global _channel_fail_streak, _breaker_open_until
+
+    if _breaker_is_open():
+        return None  # breaker open — straight to CLI, no wasted wait
+
+    def _record_fail():
+        global _channel_fail_streak, _breaker_open_until
+        _channel_fail_streak += 1
+        if _channel_fail_streak >= _BREAKER_THRESHOLD:
+            _breaker_open_until = time.monotonic() + _BREAKER_COOLDOWN_S
+            logger.warning(
+                "extract-channel breaker OPEN for %ss after %d failures — "
+                "using CLI; recycle the extract-channel session to restore it",
+                int(_BREAKER_COOLDOWN_S), _channel_fail_streak)
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -62,14 +101,18 @@ async def _try_extract_channel(prompt: str) -> Optional[str]:
             )
         if resp.status_code != 200:
             logger.warning(f"extract-channel returned {resp.status_code}; falling back to CLI")
+            _record_fail()
             return None
         text = resp.json().get("response", "")
         if not text:
             logger.warning("extract-channel returned empty response; falling back to CLI")
+            _record_fail()
             return None
+        _channel_fail_streak = 0  # healthy reply resets the breaker
         return text
     except Exception as e:
         logger.warning(f"extract-channel unreachable ({e}); falling back to CLI")
+        _record_fail()
         return None
 
 

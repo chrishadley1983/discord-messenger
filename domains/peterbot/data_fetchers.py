@@ -6,7 +6,7 @@ Skills without a fetcher use web search during execution.
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -57,12 +57,97 @@ async def get_nutrition_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
+DAILY_BATCH_PATH = Path(__file__).resolve().parent / "wsl_config" / "data" / "daily_batch.json"
+
+
+class _SafeFormatDict(dict):
+    """format_map helper that leaves unknown {placeholders} untouched."""
+
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def _progress_bar(pct: float) -> str:
+    filled = max(0, min(10, round(pct / 10)))
+    return "▓" * filled + "░" * (10 - filled)
+
+
+def _load_daily_batch() -> Optional[dict]:
+    """Load today's pre-generated message batch, or None if missing/stale."""
+    try:
+        batch = json.loads(DAILY_BATCH_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    today = datetime.now(UK_TZ).strftime("%Y-%m-%d")
+    if batch.get("date") != today:
+        logger.info(f"Daily batch is stale ({batch.get('date')} != {today}), ignoring")
+        return None
+    return batch
+
+
+async def get_daily_batch_gen_data() -> dict[str, Any]:
+    """Pre-fetch for the daily-batch generator skill (06:55)."""
+    from domains.nutrition.config import get_live_targets
+
+    try:
+        targets = await get_live_targets()
+    except Exception as e:
+        logger.warning(f"Daily batch: live targets failed, using defaults: {e}")
+        from domains.nutrition.config import DAILY_TARGETS
+        targets = dict(DAILY_TARGETS)
+
+    cooking_morning, cooking_evening = await asyncio.gather(
+        _hadley_request("/meal-plan/reminders?timing=morning"),
+        _hadley_request("/meal-plan/reminders?timing=night_before"),
+    )
+
+    return {
+        "date": datetime.now(UK_TZ).strftime("%Y-%m-%d"),
+        "water_target": targets.get("water_ml"),
+        "steps_target": targets.get("steps"),
+        "cooking_morning": cooking_morning,
+        "cooking_evening": cooking_evening,
+    }
+
+
 async def get_hydration_data() -> dict[str, Any]:
     """Fetch hydration and steps data for hydration skill.
 
-    Returns:
-        Dict with water intake, steps, targets, and time info
+    If today's pre-generated batch has a message for this hour, return it as
+    a __direct__ post (live numbers substituted, no LLM call). Otherwise fall
+    back to the legacy LLM flow.
     """
+    batch = _load_daily_batch()
+    if batch:
+        hour_key = f"{datetime.now(UK_TZ).hour:02d}"
+        template = (batch.get("hydration") or {}).get(hour_key)
+        if template:
+            live = await _get_hydration_live_data()
+            if "error" not in live:
+                try:
+                    # format_map raises ValueError on an unmatched brace —
+                    # one stray '{' from the generator must only degrade
+                    # this hour's post, not crash the fetch.
+                    message = str(template).format_map(_SafeFormatDict(
+                        water_ml=f"{live['water_ml']:,}ml",
+                        water_target=f"{live['water_target']:,}ml",
+                        water_pct=round(live["water_pct"]),
+                        water_bar=_progress_bar(live["water_pct"]),
+                        steps=f"{live['steps']:,}",
+                        steps_target=f"{live['steps_target']:,}",
+                        steps_pct=round(live["steps_pct"]),
+                        steps_bar=_progress_bar(live["steps_pct"]),
+                    ))
+                    return {"__direct__": message}
+                except ValueError as e:
+                    logger.warning(f"Hydration batch template malformed ({e}); falling back to LLM")
+            else:
+                logger.warning("Hydration batch hit but live data failed; falling back to LLM")
+    return await _get_hydration_live_data()
+
+
+async def _get_hydration_live_data() -> dict[str, Any]:
+    """Live water/steps numbers (legacy LLM pre-fetch payload)."""
     from domains.nutrition.services import get_today_totals, get_steps
     from domains.nutrition.config import get_live_targets
 
@@ -2001,8 +2086,22 @@ async def get_meal_rating_data() -> dict[str, Any]:
 
 
 async def get_cooking_reminder_data() -> dict[str, Any]:
-    """Fetch cooking reminders. Returns evening or morning reminders based on time of day."""
+    """Fetch cooking reminders. Returns evening or morning reminders based on time of day.
+
+    Prefers today's pre-generated batch message (__direct__, no LLM call);
+    a null batch slot means no reminders today (__skip__). Falls back to the
+    legacy LLM flow when the batch is missing/stale.
+    """
     hour = datetime.now(UK_TZ).hour
+    slot = "morning" if hour < 12 else "evening"
+
+    batch = _load_daily_batch()
+    if batch and "cooking" in batch:
+        message = (batch.get("cooking") or {}).get(slot, "__absent__")
+        if message is None:
+            return {"__skip__": True, "reason": f"batch: no {slot} cooking reminders today"}
+        if message != "__absent__" and str(message).strip():
+            return {"__direct__": str(message)}
 
     if hour < 12:
         # Morning run — defrost reminders for today
@@ -2067,6 +2166,110 @@ async def get_email_summary_data() -> dict[str, Any]:
     if "error" not in result:
         logger.info(f"Email summary fetch: {result.get('unread_count', 0)} unread")
     return result
+
+
+async def get_book_recommender_data() -> dict[str, Any]:
+    """Pre-fetch for the book-recommender skill: taste profile from the
+    Audible library plus 'more like this' seeds for recent favourites."""
+    from domains.audible import client as ac
+
+    try:
+        library = await asyncio.to_thread(ac.get_library)
+    except Exception as e:
+        logger.error(f"Book recommender: Audible library fetch failed: {e}")
+        return {"error": str(e)}
+
+    finished = [b for b in library if b["is_finished"]]
+    owned_titles = sorted({b["title"] for b in library if b.get("title")})
+
+    author_counts: dict[str, int] = {}
+    for b in finished:
+        for a in b.get("authors") or []:
+            author_counts[a] = author_counts.get(a, 0) + 1
+
+    def _slim(b):
+        return {k: b.get(k) for k in (
+            "asin", "title", "authors", "series", "my_rating",
+            "average_rating", "purchase_date", "runtime_hours",
+        )}
+
+    recent = finished[:30]
+    top_rated = sorted(
+        (b for b in finished if b.get("my_rating")),
+        key=lambda b: (-float(b["my_rating"]), str(b.get("purchase_date") or "")),
+    )[:20]
+
+    # "More like this" seeds from the 3 most recent 4★+ books
+    seeds = [b for b in recent if float(b.get("my_rating") or 0) >= 4][:3]
+    similar: dict[str, list] = {}
+    for b in seeds:
+        try:
+            sims = await asyncio.to_thread(ac.get_similar, b["asin"], 8)
+            similar[b["title"]] = [
+                {k: s.get(k) for k in ("title", "authors", "average_rating", "publisher_summary")}
+                for s in sims
+            ]
+        except Exception as e:
+            logger.warning(f"Book recommender: sims failed for {b['title']}: {e}")
+
+    in_progress = [
+        b for b in library
+        if not b["is_finished"] and 1 < (b.get("percent_complete") or 0) < 100
+    ]
+
+    return {
+        "finished_count": len(finished),
+        "recent_finished": [_slim(b) for b in recent],
+        "top_rated": [_slim(b) for b in top_rated],
+        "in_progress": [_slim(b) for b in in_progress],
+        "favourite_authors": sorted(author_counts.items(), key=lambda x: -x[1])[:15],
+        "similar_to_recent_favourites": similar,
+        "owned_titles": owned_titles,
+    }
+
+
+async def get_morning_digest_data() -> dict[str, Any]:
+    """Composite pre-fetch for the consolidated morning digest (07:00).
+
+    One message replaces the old email-summary / schedule-today /
+    notion-todos / github-activity standalone jobs.
+    """
+    schedule, email, todos, github, weather, energy = await asyncio.gather(
+        get_schedule_today_data(),
+        get_email_summary_data(),
+        # ptasks personal_todo, not Notion — Notion was never configured
+        # (no NOTION_API_KEY anywhere); ptasks is Peter's actual todo system.
+        _hadley_request("/ptasks/list/personal_todo"),
+        get_github_daily_data(),
+        _hadley_request("/weather/current"),
+        # Latest complete day + EV flag (Home Mini era, Jun 2026)
+        _hadley_request("/energy/summary?days=3"),
+        return_exceptions=True,
+    )
+
+    def _safe(value: Any, label: str) -> Any:
+        if isinstance(value, Exception):
+            logger.warning(f"Morning digest: {label} fetch failed: {value}")
+            return {"error": str(value)}
+        return value
+
+    todos = _safe(todos, "todos")
+    if isinstance(todos, dict) and "tasks" in todos:
+        todos = todos["tasks"]
+    if isinstance(todos, list):
+        todos = [
+            t for t in todos
+            if t.get("status") not in ("done", "cancelled", "parked")
+        ]
+
+    return {
+        "schedule": _safe(schedule, "schedule"),
+        "email": _safe(email, "email"),
+        "todos": todos,
+        "github": _safe(github, "github"),
+        "weather": _safe(weather, "weather"),
+        "energy": _safe(energy, "energy"),
+    }
 
 
 async def get_schedule_today_data() -> dict[str, Any]:
@@ -3770,17 +3973,122 @@ async def get_system_health_data() -> dict[str, Any]:
     """
     import httpx
 
+    result: dict[str, Any] = {}
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get("http://localhost:8100/jobs/health")
             if resp.status_code == 200:
-                return {"system_health": resp.json()}
+                result["system_health"] = resp.json()
             else:
                 logger.warning(f"System health fetch returned {resp.status_code}")
-                return {"error": f"API returned {resp.status_code}"}
+                result["error"] = f"API returned {resp.status_code}"
     except Exception as e:
         logger.error(f"System health fetch error: {e}")
-        return {"error": str(e)}
+        result["error"] = str(e)
+
+    # Skill registry drift (dirs vs manifest.json vs SCHEDULE.md) — silent
+    # drift hides skills from Peter, so surface it in the daily ops report.
+    try:
+        from domains.peterbot.skill_manifest import check_consistency
+
+        result["manifest_check"] = await asyncio.to_thread(check_consistency)
+    except Exception as e:
+        logger.error(f"Manifest consistency check error: {e}")
+        result["manifest_check"] = {"ok": False, "problems": [f"check failed: {e}"]}
+
+    # Seed data freshness — job stats can lie ("success" while ingesting
+    # nothing: the WhatsApp scraper no-opped for 3 months with green stats),
+    # so assert the newest Second Brain item per source is recent enough.
+    result["seed_freshness"] = await _check_seed_freshness()
+
+    return result
+
+
+# Source-url prefix → max acceptable age in days for the newest item.
+# Cadences: WhatsApp emits weekly transcripts; Spotify daily summaries and
+# email import run nightly.
+SEED_FRESHNESS_RULES = [
+    ("whatsapp", "whatsapp://*", 10),
+    ("spotify-daily", "spotify://daily/*", 3),
+    ("email", "gmail://*", 3),
+    # Chris↔Peter conversation capture (channel-conversations adapter,
+    # channel:// items). Its predecessor (discord:// via router_v2) died
+    # silently in Apr 2026; Chris chats with Peter most days.
+    ("peter-conversations", "channel://*", 14),
+    # Garmin activities (workouts). Verified Jun 2026: adapter works — the
+    # newest activity in Garmin Connect itself was 3 May, so staleness here
+    # usually means Chris isn't recording activities, not a pipeline fault.
+    # Generous window to avoid nagging about real-world gaps.
+    ("garmin-activities", "https://connect.garmin.com/*", 30),
+]
+
+
+async def _check_seed_freshness() -> dict[str, Any]:
+    """Age of the newest knowledge item per seed source, flagging stale ones."""
+    import httpx
+    from config import SUPABASE_URL, SUPABASE_KEY
+
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    out: dict[str, Any] = {"sources": {}, "stale": []}
+    now = datetime.now(timezone.utc)
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            for label, pattern, max_age_days in SEED_FRESHNESS_RULES:
+                resp = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/knowledge_items",
+                    headers=headers,
+                    params={
+                        "select": "created_at",
+                        "source_url": f"like.{pattern}",
+                        "order": "created_at.desc",
+                        "limit": "1",
+                    },
+                )
+                rows = resp.json() if resp.status_code == 200 else []
+                if not rows:
+                    out["sources"][label] = {"newest": None, "stale": True}
+                    out["stale"].append(f"{label}: no items at all")
+                    continue
+                newest = datetime.fromisoformat(
+                    rows[0]["created_at"].replace("Z", "+00:00"))
+                age_days = round((now - newest).total_seconds() / 86400, 1)
+                is_stale = age_days > max_age_days
+                out["sources"][label] = {
+                    "newest": newest.date().isoformat(),
+                    "age_days": age_days,
+                    "max_age_days": max_age_days,
+                    "stale": is_stale,
+                }
+                if is_stale:
+                    out["stale"].append(
+                        f"{label}: newest item {age_days}d old (max {max_age_days}d)")
+
+            # Live energy telemetry (energy_live table, not knowledge_items):
+            # the Home Mini poller writes every 30s — >30 min old means the
+            # poller, the Mini, or Kraken is down.
+            resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/energy_live",
+                headers=headers,
+                params={"select": "minute_start", "order": "minute_start.desc", "limit": "1"},
+            )
+            rows = resp.json() if resp.status_code == 200 else []
+            if rows:
+                newest = datetime.fromisoformat(rows[0]["minute_start"].replace("Z", "+00:00"))
+                age_min = round((now - newest).total_seconds() / 60)
+                stale = age_min > 30
+                out["sources"]["energy-live"] = {
+                    "newest": rows[0]["minute_start"], "age_minutes": age_min, "stale": stale}
+                if stale:
+                    out["stale"].append(f"energy-live: telemetry {age_min} min old (max 30)")
+            else:
+                out["sources"]["energy-live"] = {"newest": None, "stale": True}
+                out["stale"].append("energy-live: no telemetry rows at all")
+    except Exception as e:
+        logger.error(f"Seed freshness check error: {e}")
+        out["error"] = str(e)
+
+    return out
 
 
 async def get_orphan_embed_data() -> dict[str, Any]:
@@ -4261,6 +4569,33 @@ async def get_accountability_monthly_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
+async def get_habit_checkin_data() -> dict[str, Any]:
+    """Live stats for the private daily habit check-in (replaces the old
+    hardcoded placeholder JSON). Skips the 9pm prompt on day 0, or if a
+    result was already logged today (don't double-ask)."""
+    try:
+        from domains.accountability.habit_service import get_habit_status
+        status = await get_habit_status()
+        if status.get("day_number", 0) < 1:
+            return {"__skip__": True, "reason": "habit day 0 — no check-in yet"}
+        if status.get("logged_today"):
+            return {"__skip__": True, "reason": "habit already logged today"}
+        return status
+    except Exception as e:
+        logger.error(f"Habit check-in data fetch error: {e}")
+        return {"error": str(e)}
+
+
+async def get_habit_weekly_data() -> dict[str, Any]:
+    """Live stats for the Sunday weekly habit review."""
+    try:
+        from domains.accountability.habit_service import get_habit_status
+        return await get_habit_status()
+    except Exception as e:
+        logger.error(f"Habit weekly data fetch error: {e}")
+        return {"error": str(e)}
+
+
 async def get_fitness_advisor_data() -> dict[str, Any]:
     """Pre-fetch fitness advisor data for the proactive advisor skill."""
     try:
@@ -4324,7 +4659,6 @@ SKILL_DATA_FETCHERS = {
     "school-run": get_school_run_data,
     "school-pickup": get_school_pickup_data,
     "morning-briefing": get_morning_briefing_data,
-    "whatsapp-health": get_whatsapp_health_data,
     "football-scores": get_football_scores_data,
     "pl-results": get_pl_results_data,
     "spurs-live": get_spurs_live_data,
@@ -4341,6 +4675,9 @@ SKILL_DATA_FETCHERS = {
     "price-scanner": get_price_scanner_data,
     # Phase 8a
     "email-summary": get_email_summary_data,
+    "morning-digest": get_morning_digest_data,
+    "book-recommender": get_book_recommender_data,
+    "kids-daily": get_school_data,
     "schedule-today": get_schedule_today_data,
     "schedule-week": get_schedule_week_data,
     "notion-todos": get_notion_todos_data,
@@ -4377,7 +4714,6 @@ SKILL_DATA_FETCHERS = {
     # Self-Reflect - memories, brain saves, job history
     "self-reflect": get_self_reflect_data,
     # Instagram - pre-source images via APIs
-    "daily-instagram-prep": get_instagram_prep_data,
     # School - spellings + events
     "school-weekly-spellings": get_school_data,
     # GitHub activity
@@ -4389,6 +4725,7 @@ SKILL_DATA_FETCHERS = {
     "amazon-purchases": get_amazon_purchases_data,
     # Cooking reminders
     "cooking-reminder": get_cooking_reminder_data,
+    "daily-batch": get_daily_batch_gen_data,
     # 11+ Mate
     "tutor-email-parser": get_tutor_email_data,
     "paper-builder": get_paper_builder_data,
@@ -4411,6 +4748,9 @@ SKILL_DATA_FETCHERS = {
     # Accountability Tracker
     "accountability-weekly": get_accountability_weekly_data,
     "accountability-monthly": get_accountability_monthly_data,
+    # Private habit tracker (sensitive — see habit_service.py)
+    "habit-checkin": get_habit_checkin_data,
+    "habit-weekly": get_habit_weekly_data,
     # Fitness advisor
     "fitness-advisor": get_fitness_advisor_data,
     # Cost digest — Claude usage rollup (router_v2 + channels)

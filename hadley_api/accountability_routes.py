@@ -86,7 +86,7 @@ async def list_goals(
     async def _get_goal_progress(g):
         if g.get("auto_source"):
             history = await fetch_source_history(g["auto_source"], days=30)
-            return [{"date": h["date"], "value": h["value"], "delta": None, "source": g["auto_source"]} for h in history]
+            return [{"date": h["date"], "value": h["value"], "delta": None, "source": g["auto_source"]} for h in (history or [])]
         return await get_progress(g["id"], days=30)
 
     all_progress = await asyncio.gather(*[_get_goal_progress(g) for g in goals])
@@ -138,7 +138,7 @@ async def get_goal_endpoint(
         # Convert to progress-like format for compute_goal_status compatibility
         progress = [
             {"date": h["date"], "value": h["value"], "delta": None, "source": goal["auto_source"]}
-            for h in source_history
+            for h in (source_history or [])
         ]
     else:
         progress = await get_progress(goal_id, days=days)
@@ -322,3 +322,31 @@ async def get_journal_history_endpoint(
     from domains.accountability.journal_service import get_journal_history
     history = await get_journal_history(days=days)
     return {"count": len(history), "history": history}
+
+
+# ── Habit Tracker (private, sensitive) ───────────────────────────────────
+
+
+class LogHabitRequest(BaseModel):
+    result: str  # "Y"/"N" (yes/no/y/n also accepted)
+    date: Optional[str] = None
+
+
+@router.get("/habit", dependencies=[Depends(require_auth)])
+async def get_habit_endpoint():
+    """Current habit streak/score stats. Never includes what the habit is."""
+    from domains.accountability.habit_service import get_habit_status
+    return await get_habit_status()
+
+
+@router.post("/habit", dependencies=[Depends(require_auth)])
+async def log_habit_endpoint(req: LogHabitRequest):
+    """Log today's (or a given date's) habit result (Y/N)."""
+    from domains.accountability.habit_service import log_habit
+    try:
+        entry = await log_habit(result=req.result, log_date=req.date)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    if entry:
+        return {"status": "logged", "entry": entry}
+    return JSONResponse({"error": "Failed to log habit"}, status_code=500)

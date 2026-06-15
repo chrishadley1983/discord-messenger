@@ -53,6 +53,13 @@ Peter: Pick ONE item, action it, then mark done or update status. Chris can add 
 
 - [ ] [PROACTIVE] eBay case #5376785137 — DEADLINE PASSED 7 APR. Chris was in Japan and couldn't respond in time. Research done: item confirmed dispatched from GSP centre 6 Mar (eBay email proof). GSP seller protection applies — Chris not liable for international leg. Draft response posted to #peterbot. Chris should check case status when back — eBay may have auto-resolved or escalated.
 
+- [ ] [ACTION] eBay buyer rys1_49 (Peter) messaged about LEGO Mindstorms 9719 (#178127891993) — requesting a photo of the RCX Brick. Buyer waiting for response. Chris needs to photograph the brick and reply via eBay messages.
+
+- [ ] [PROACTIVE] eBay unpaid purchases (4 Jun) — Two items need payment:
+  1. LEGO 40760 Fortnite Brickheadz Adventure Peely & Cuddle Team Leader — £10.80 (hadleybricks account)
+  2. LEGO Fortnite Peely Sparkplug's Camp Wolf Supply Llama 77075 — £4.21
+  Sellers may cancel if unpaid. Total: £15.01.
+
 ### Done
 
 Recent items archived to `HEARTBEAT_ARCHIVE.md`. Last cleanup: 2026-04-23.
