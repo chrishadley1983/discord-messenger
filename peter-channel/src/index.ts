@@ -315,6 +315,39 @@ function scrubWindowsMediaPaths(text: string): { text: string; scrubbed: string[
   return { text: cleaned, scrubbed };
 }
 
+// Format downloaded media attachments as a plain-text block, mirroring the
+// "## Attachments" section that Hadley API's /peter/build-context produces.
+// This block is ONLY appended when build-context fails/times out — otherwise
+// the image path lives solely inside the build-context response and a timeout
+// silently drops it, so Claude never learns an image was sent.
+function formatAttachmentBlock(attachments: Array<Record<string, unknown>>): string {
+  const media = attachments.filter((a) => {
+    const ct = String(a.content_type || "");
+    return ct.startsWith("image/") || ct.startsWith("audio/");
+  });
+  if (media.length === 0) return "";
+  const lines: string[] = ["## Attachments"];
+  let hasImage = false;
+  for (const a of media) {
+    const ct = String(a.content_type || "");
+    const filename = String(a.filename || "file");
+    const path = String(a.local_path || a.url || "");
+    if (ct.startsWith("image/")) {
+      hasImage = true;
+      lines.push(`- **Image:** \`${filename}\` - Use the Read tool on this path to view: ${path}`);
+    } else {
+      lines.push(`- **File:** \`${filename}\` (${ct}) - ${path}`);
+    }
+  }
+  if (hasImage) {
+    lines.push("");
+    lines.push(
+      "**IMPORTANT:** The user sent image(s). Use the Read tool with the path above to see the image content."
+    );
+  }
+  return "\n\n" + lines.join("\n");
+}
+
 discord.on(Events.MessageCreate, async (message) => {
   // Ignore bots (including ourselves)
   if (message.author.bot) return;
@@ -456,6 +489,7 @@ discord.on(Events.MessageCreate, async (message) => {
   // On failure (timeout / API down) we fall back to the raw content so the
   // channel still works — degraded, not dead.
   let prebuiltContext = content;
+  let contextBuilt = false;
   try {
     const resp = await fetch(`${HADLEY_API}/peter/build-context`, {
       method: "POST",
@@ -471,12 +505,17 @@ discord.on(Events.MessageCreate, async (message) => {
         include_surfacing: true,
         attachment_urls: downloadedAttachments.length > 0 ? downloadedAttachments : undefined,
       }),
-      signal: AbortSignal.timeout(3000),
+      // 6s, not 3s: build-context runs Second Brain surfacing (embed + vector
+      // search) which routinely brushed past 3s, triggering the fallback that
+      // used to drop attachment context. The fallback below now preserves it,
+      // but a slightly longer window also recovers the surfacing payload.
+      signal: AbortSignal.timeout(6000),
     });
     if (resp.ok) {
       const json = (await resp.json()) as { context?: string; blocks?: string[]; surfaced_count?: number };
       if (json.context) {
         prebuiltContext = json.context;
+        contextBuilt = true;
         log(`build-context: ${(json.blocks || []).join(",")} (surfaced=${json.surfaced_count || 0})`);
       }
     } else {
@@ -484,6 +523,18 @@ discord.on(Events.MessageCreate, async (message) => {
     }
   } catch (err) {
     log(`build-context fetch failed (${err}) — using raw content`);
+  }
+
+  // When build-context didn't run, its "## Attachments" block is missing.
+  // Append a fallback so image/voice attachments still reach Claude with a
+  // readable local path — previously these vanished on any build-context
+  // timeout, so Peter replied as if no attachment had been sent.
+  if (!contextBuilt) {
+    const attachmentBlock = formatAttachmentBlock(downloadedAttachments);
+    if (attachmentBlock) {
+      prebuiltContext += attachmentBlock;
+      log(`Appended fallback attachment block (${downloadedAttachments.length} media)`);
+    }
   }
 
   // Push into Claude Code session

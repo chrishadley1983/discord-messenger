@@ -48,15 +48,34 @@ def get_dispatches() -> dict:
     }
 
 
+def _parse_iso(iso: str | None) -> datetime | None:
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def in_dispatch_window(ts: datetime, dispatches: dict | None = None) -> bool:
-    """True if ts falls inside a planned/completed dispatch slot."""
+    """True if ts falls inside a planned/completed dispatch slot.
+
+    Compares as timezone-aware instants, not ISO strings. Octopus consumption
+    timestamps carry a local offset (e.g. +01:00 during BST) while dispatch
+    slots come back in UTC, so a raw string compare silently misfires by the
+    BST offset — "23:30+01:00" sorts after "22:30+00:00" despite being the
+    same instant.
+    """
     if dispatches is None:
         try:
             dispatches = get_dispatches()
         except Exception:
             return False
-    iso = ts.isoformat()
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
     for d in dispatches.get("planned", []) + dispatches.get("completed", []):
-        if d.get("start") and d.get("end") and d["start"] <= iso <= d["end"]:
+        start = _parse_iso(d.get("start"))
+        end = _parse_iso(d.get("end"))
+        if start and end and start <= ts <= end:
             return True
     return False
