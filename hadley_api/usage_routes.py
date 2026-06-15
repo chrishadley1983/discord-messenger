@@ -16,7 +16,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
 from hadley_api.auth import require_auth
 from logger import logger
@@ -126,3 +126,32 @@ async def usage_reconcile_run(days: int = Query(3, ge=1, le=31)):
 
     result = await asyncio.to_thread(reconcile, days)
     return result
+
+
+@router.post("/reconcile/csv", dependencies=[Depends(require_auth)])
+async def usage_reconcile_csv(request: Request, store: bool = Query(True)):
+    """Reconcile an Anthropic Console **cost CSV export** against logged usage.
+
+    POST the CSV file content as the raw request body. Works on any account tier
+    (no admin key needed) — the gap-detection path for individual/API-plan accounts
+    where the Admin API is unavailable. See domains/api_usage/reconcile_csv.py.
+    """
+    import asyncio
+    import os as _os
+    import tempfile
+
+    from domains.api_usage.reconcile_csv import reconcile_csv
+
+    body = await request.body()
+    if not body:
+        return {"error": "POST the Anthropic cost CSV content as the request body"}
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    try:
+        with _os.fdopen(fd, "wb") as f:
+            f.write(body)
+        return await asyncio.to_thread(reconcile_csv, path, store)
+    finally:
+        try:
+            _os.unlink(path)
+        except OSError:
+            pass
