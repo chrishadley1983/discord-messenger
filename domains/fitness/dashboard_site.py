@@ -95,6 +95,35 @@ async def _latest_bodyfat() -> dict | None:
     return None
 
 
+# Three ~10-min mobility routines, rotated by day. Hip/sciatica-biased to suit
+# Chris's niggle. Slugs all exist in fitness_exercises with demo videos.
+MOBILITY_ROUTINES = [  # each ~10 min (600s)
+    ("Hips & sciatica", [("couch-stretch", 120), ("pigeon-pose", 180),
+                         ("worlds-greatest-stretch", 120), ("glute-bridge", 90), ("childs-pose", 90)]),
+    ("Spine & posture", [("cat-cow", 90), ("thoracic-twist", 120), ("bird-dog", 120),
+                         ("worlds-greatest-stretch", 120), ("neck-rolls", 60), ("childs-pose", 90)]),
+    ("Full-body reset", [("neck-rolls", 45), ("cat-cow", 90), ("worlds-greatest-stretch", 120),
+                         ("couch-stretch", 120), ("pigeon-pose", 150), ("childs-pose", 75)]),
+]
+
+
+def _fmt_dur(secs: int) -> str:
+    return f"{secs // 60}:{secs % 60:02d} min" if secs >= 60 else f"{secs}s"
+
+
+def _mobility_rotation(library: dict, day_index: int) -> dict:
+    idx = day_index % len(MOBILITY_ROUTINES)
+    name, moves = MOBILITY_ROUTINES[idx]
+    out, total = [], 0
+    for slug, secs in moves:
+        lib = library.get(slug, {})
+        total += secs
+        out.append({"name": lib.get("name", slug), "detail": _fmt_dur(secs),
+                    "cue": lib.get("form_cue"), "video_id": _yt_id(lib.get("video_url"))})
+    return {"name": name, "total_min": round(total / 60), "moves": out,
+            "rotation": [r[0] for r in MOBILITY_ROUTINES], "rotation_today": idx}
+
+
 def _status_from_delta(delta_pct, good_up=True):
     if delta_pct is None:
         return "neutral"
@@ -302,6 +331,7 @@ async def _build_data() -> dict:
         "hero": hero, "metrics": metrics, "summary": summary,
         "trends": trends,
         "plan": {"today_index": today_index, "days": days},
+        "mobility": _mobility_rotation(library, today_index),
         "exercises": list(used_slugs.values()),
         "rationale": rationale,
     }

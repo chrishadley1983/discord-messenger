@@ -38,6 +38,12 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:12p
 .title{font-size:20px;font-weight:800;letter-spacing:-.3px}
 .title .sub{display:block;font-size:12px;color:var(--muted);font-weight:500;margin-top:2px}
 .stamp{font-size:11px;color:var(--dim);text-align:right;white-space:nowrap}
+.refreshbtn{width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--accent);font-size:18px;cursor:pointer;flex:0 0 auto;line-height:1}
+.refreshbtn:hover{border-color:var(--accent)}
+.refreshbtn.spin{animation:spin 1s linear infinite;color:var(--accent2)}
+@keyframes spin{to{transform:rotate(360deg)}}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(60px);max-width:90%;background:#0e141d;border:1px solid var(--line);color:var(--ink);padding:12px 16px;border-radius:12px;font-size:13px;box-shadow:var(--shadow);opacity:0;transition:.25s;z-index:60;text-align:center}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
 /* Tabs */
 .tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;margin-bottom:14px;-webkit-overflow-scrolling:touch}
@@ -134,7 +140,10 @@ canvas{width:100%!important;height:160px!important}
 <div class="wrap hidden" id="app">
   <header class="top">
     <div class="title">Reset Cut <span class="sub">75 kg &amp; 15% body fat by 23 Oct</span></div>
-    <div class="stamp" id="stamp"></div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button id="refresh" class="refreshbtn" title="Refresh from Garmin / Withings / Peter">&#8635;</button>
+      <div class="stamp" id="stamp"></div>
+    </div>
   </header>
   <div class="tabs" id="tabs"></div>
   <div id="panels"></div>
@@ -191,7 +200,7 @@ document.getElementById("gform").addEventListener("submit",async e=>{
 
 const TABS=[
   ["overview","Overview"],["summary","Coach"],["trends","Trends"],
-  ["plan","Plan"],["exercises","Exercises"],["why","Targets & Why"]
+  ["plan","Plan"],["mobility","Mobility"],["exercises","Exercises"],["why","Targets & Why"]
 ];
 
 function render(){
@@ -207,8 +216,22 @@ function render(){
     t.classList.add("active"); $("#p-"+t.dataset.t).classList.add("active");
     if(t.dataset.t==="trends") drawCharts();
   });
-  renderOverview(); renderSummary(); renderPlan(); renderExercises(); renderWhy();
+  renderOverview(); renderSummary(); renderPlan(); renderMobility(); renderExercises(); renderWhy();
   // trends drawn on first open (canvas needs to be visible)
+}
+
+function renderMobility(){
+  const p=$("#p-mobility"); if(!p) return; p.innerHTML="";
+  const m=DATA.mobility; if(!m){p.innerHTML='<div class="card">No mobility routine.</div>';return;}
+  const head=ce("div","card");
+  head.innerHTML='<h3 style="margin:0 0 2px">Today · '+esc(m.name)+'</h3>'+
+    '<div style="color:var(--muted);font-size:13px;margin-bottom:6px">~'+esc(m.total_min)+' min · once through, breathe into each. No bouncing.</div>';
+  p.appendChild(head);
+  (m.moves||[]).forEach(mv=>head.appendChild(exRow(mv)));
+  const rot=ce("div","card"); rot.style.marginTop="12px";
+  rot.innerHTML='<h3 style="margin:0 0 8px">The rotation · 10 min daily</h3>'+
+    (m.rotation||[]).map((r,i)=>'<div class="tgt"><span>'+esc(r)+'</span><b>'+(i===m.rotation_today?'Today':'')+'</b></div>').join("");
+  p.appendChild(rot);
 }
 
 function renderOverview(){
@@ -340,6 +363,32 @@ function renderWhy(){
   p.appendChild(rl);
   if(r.disclaimer){p.appendChild(ce("div","disc",esc(r.disclaimer)));}
 }
+
+// ---- Refresh: triggers a local rebuild from Garmin/Withings/Peter. Works on the
+// home network (page served over http from the API); on the public surge page the
+// HTTPS->HTTP call is blocked, so it degrades to a helpful message. ----
+const LOCAL_API="http://172.19.64.1:8100";
+function toast(msg,ms){let t=$("#toast");if(!t){t=ce("div");t.id="toast";document.body.appendChild(t);}t.textContent=msg;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),ms||6000);}
+async function doRefresh(){
+  const b=$("#refresh"); if(b.classList.contains("spin"))return; b.classList.add("spin");
+  toast("Refreshing from Garmin, Withings & Peter… (~1 min)",60000);
+  try{
+    const r=await fetch(LOCAL_API+"/fitness/dashboard/refresh",{method:"POST"});
+    if(!r.ok) throw new Error("bad");
+    const start=GENERATED_AT;
+    for(let i=0;i<40;i++){
+      await new Promise(s=>setTimeout(s,3000));
+      try{
+        const st=await (await fetch(LOCAL_API+"/fitness/dashboard/refresh/status")).json();
+        if(st && st.generated_at && st.generated_at!==start && !st.building){toast("Updated — reloading…",4000);setTimeout(()=>location.reload(),700);return;}
+      }catch(_){/* keep polling */}
+    }
+    toast("Still building — reload in a moment.",8000);
+  }catch(_){
+    toast("Live refresh runs on your home network — open http://172.19.64.1:8100/fitness/dashboard/page (this page auto-updates daily at 08:20).",10000);
+  }finally{ b.classList.remove("spin"); }
+}
+document.getElementById("refresh").addEventListener("click",doRefresh);
 </script>
 </body>
 </html>

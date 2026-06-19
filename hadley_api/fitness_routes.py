@@ -19,12 +19,15 @@ Endpoints powering the 13-week post-Japan fat-loss programme:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import tempfile
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel
 
 from hadley_api.auth import require_auth
@@ -386,3 +389,65 @@ async def save_weekly_checkin():
         return JSONResponse(status_code=400, content=review)
     saved = await fit.save_weekly_checkin(review)
     return {"review": review, "checkin": saved}
+
+
+# ── Reset-cut dashboard: local serve + on-demand refresh ────────────────
+# These power the dashboard's Refresh button. They're unauthenticated on
+# purpose: the API is local-only, and the public surge page is blocked from
+# calling them by browser mixed-content rules — so only a same-origin LAN
+# request (the locally-served page) actually reaches them. The `building`
+# flag prevents concurrent rebuilds.
+
+_DASH_HTML = Path(tempfile.gettempdir()) / "reset-cut-dashboard.html"
+_dash_state: dict = {"building": False, "generated_at": None}
+
+
+@router.get("/dashboard/page", response_class=HTMLResponse)
+async def dashboard_page():
+    """Serve the latest built dashboard HTML over the LAN (refresh works here)."""
+    if not _DASH_HTML.exists():
+        try:
+            from domains.fitness.dashboard_site import build_and_deploy
+            res = await build_and_deploy(deploy=False)
+            _dash_state["generated_at"] = res.get("generated_at")
+        except Exception as e:
+            return HTMLResponse(f"<h1>Dashboard not built yet</h1><p>{e}</p>", status_code=503)
+    return HTMLResponse(_DASH_HTML.read_text(encoding="utf-8"))
+
+
+@router.get("/dashboard/refresh/status")
+async def dashboard_refresh_status():
+    return _dash_state
+
+
+async def _do_dashboard_refresh():
+    _dash_state["building"] = True
+    try:
+        # Pull the freshest data from Withings + Garmin before rebuilding.
+        try:
+            from domains.nutrition.services.withings import get_weight
+            await get_weight()
+        except Exception as e:
+            logger.warning(f"Dashboard refresh: Withings pull failed: {e}")
+        try:
+            from domains.peterbot.data_fetchers import _sync_garmin_to_supabase
+            await _sync_garmin_to_supabase("dashboard-refresh")
+        except Exception as e:
+            logger.warning(f"Dashboard refresh: Garmin sync failed: {e}")
+        from domains.fitness.dashboard_site import build_and_deploy
+        res = await build_and_deploy(deploy=True)
+        _dash_state["generated_at"] = res.get("generated_at")
+        logger.info(f"Dashboard refreshed: {res.get('url')} @ {res.get('generated_at')} deployed={res.get('deployed')}")
+    except Exception as e:
+        logger.error(f"Dashboard refresh failed: {e}")
+    finally:
+        _dash_state["building"] = False
+
+
+@router.post("/dashboard/refresh")
+async def dashboard_refresh():
+    """Trigger a rebuild from Garmin/Withings/Peter, then redeploy. Non-blocking."""
+    if _dash_state["building"]:
+        return {"status": "already_building", **_dash_state}
+    asyncio.create_task(_do_dashboard_refresh())
+    return {"status": "started"}
