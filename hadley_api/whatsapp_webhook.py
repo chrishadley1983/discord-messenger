@@ -487,6 +487,25 @@ async def _buffer_outbound_message(msg: dict):
 
 async def _handle_message(body: dict):
     """Process an incoming message webhook — queue it for debounced delivery."""
+    # Only process messages from Peter's OWN WhatsApp instance.
+    # The `chris-whatsapp` Evolution instance is paired to Chris's number and
+    # exists solely to feed the Second Brain seed adapter with his chat history.
+    # It POSTs to this same webhook, so without this gate every message in
+    # Chris's WhatsApp — including private threads he has with other people —
+    # flows into Peter's live handler, and Peter auto-replies (from his own
+    # number) to anyone allowlisted. Drop anything that isn't ours.
+    # Fail CLOSED: only an explicit match on Peter's own instance is processed.
+    # Evolution always stamps the originating instance on messages.upsert, and
+    # legitimate Peter traffic always carries EVOLUTION_INSTANCE — so dropping
+    # empty/unknown is safe and removes any spoof/malformed bypass.
+    instance = body.get("instance", "")
+    if instance != EVOLUTION_INSTANCE:
+        logger.debug(
+            f"Ignoring messages.upsert from non-Peter instance '{instance or '(none)'}' "
+            f"(only '{EVOLUTION_INSTANCE}' is processed)"
+        )
+        return
+
     data = body.get("data", {})
     messages = data if isinstance(data, list) else [data]
 
@@ -837,7 +856,7 @@ async def _handle_voice_note(
         audio_bytes = await _download_audio(message_key)
 
     if not audio_bytes:
-        logger.error(f"Could not get audio for voice note {message_id}")
+        logger.error(f"Could not get audio for voice note {message_key.get('id', '?')}")
         return
 
     # Transcribe using voice engine
@@ -974,7 +993,9 @@ def _handle_connection_update(body: dict):
     """Log connection state changes."""
     data = body.get("data", {})
     state = data.get("state", "unknown")
-    logger.info(f"WhatsApp connection update: {state}")
+    instance = body.get("instance", "?")
+    logger.info(f"WhatsApp connection update [{instance}]: {state}")
 
-    if state == "close":
+    # Only Peter's own instance going down warrants the re-scan warning.
+    if state == "close" and instance == EVOLUTION_INSTANCE:
         logger.warning("WhatsApp disconnected — may need QR code re-scan")
