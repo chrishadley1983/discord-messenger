@@ -488,6 +488,26 @@ async def on_ready():
     )
     logger.info("Channel cost tail registered (every 5 min)")
 
+    # Reset-cut dashboard — rebuild the surge static site daily at 08:20 UK
+    # (after the 07:55 health digest + Mon 08:15 cut-kickoff) so the snapshot,
+    # metrics and local AI summary stay current. Quiet infra job, no Discord.
+    # See domains/fitness/dashboard_site.py.
+    from domains.fitness.dashboard_site import build_and_deploy as _build_dashboard
+
+    async def _dashboard_rebuild_job():
+        res = await _build_dashboard(deploy=True)
+        logger.info(f"Dashboard rebuilt: {res.get('url')} deployed={res.get('deployed')}")
+
+    _dashboard_rebuild_job = _tracked_job("dashboard_rebuild", _dashboard_rebuild_job)
+    scheduler.add_job(
+        _dashboard_rebuild_job,
+        "cron", hour=8, minute=20, timezone="Europe/London",
+        id="dashboard_rebuild",
+        max_instances=1,
+        replace_existing=True,
+    )
+    logger.info("Reset-cut dashboard rebuild registered (08:20 UK daily)")
+
     # Spotify playback poller — captures podcasts/audiobooks the
     # recently-played API never returns. Quiet infra job, no Discord output.
     # See domains/peterbot/spotify_playback_log.py.
