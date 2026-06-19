@@ -37,7 +37,7 @@ Peter: Pick ONE item, action it, then mark done or update status. Chris can add 
 
 ### Monitoring
 
-(Nothing being monitored)
+(Nothing to monitor)
 
 ### Awaiting Chris
 

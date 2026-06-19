@@ -608,3 +608,43 @@
 - 2026-06-11: I'm writing a book about clocks. It's just a matter of time.
 - 2026-06-11: Why did the chicken visit the fortune teller? To find out if it had a future on the other side.
 - 2026-06-11: "Well done is better than well said." — Benjamin Franklin
+
+- 2026-06-12: What do you call a line of dolls waiting for a haircut? A Barbie-queue.
+- 2026-06-12: I told my wife I had a job in a bowling alley. She said "Ten-pin?" I said, "No, permanent."
+- 2026-06-12: What's brown and sticky? A stick.
+- 2026-06-12: "We do not remember days, we remember moments." — Cesare Pavese
+
+- 2026-06-13: Why did the burglar take a shower? He wanted to make a clean getaway.
+- 2026-06-13: What do you call a horse that lives next door? A neigh-bour.
+- 2026-06-13: I used to be a cobbler, but I had to give it the boot.
+- 2026-06-13: "The greatest wealth is to live content with little." — Plato
+
+- 2026-06-14: Why did the coach go to the bank? To get his quarterback.
+- 2026-06-14: What do you call a type of music for balloons? Pop.
+- 2026-06-14: I used to be a road worker, but I kept going around the bend.
+- 2026-06-14: "Be yourself; everyone else is already taken." — Oscar Wilde
+
+- 2026-06-15: Why did the physics teacher break up with the biology teacher? There was no chemistry.
+- 2026-06-15: Why did the Oreo go to the dentist? Because it lost its filling.
+- 2026-06-15: What do you call two guys who steal a calendar? They each got six months.
+- 2026-06-15: "Character is doing the right thing when nobody's looking." — J.C. Watts
+
+- 2026-06-16: What do you call a group of musical whales? An orca-stra.
+- 2026-06-16: Why did the accountant stare at the orange juice carton? Because it said "concentrate".
+- 2026-06-16: What do you call a sleeping crocodile? A croco-doze.
+- 2026-06-16: "To live a creative life, we must lose our fear of being wrong." — Joseph Chilton Pearce
+
+- 2026-06-17: What do you call a tree that fits in your hand? A palm tree.
+- 2026-06-17: I went to buy some camouflage trousers but I couldn't find any.
+- 2026-06-17: Why do bees hum? Because they don't know the words!
+- 2026-06-17: "Be so good they can't ignore you." — Steve Martin
+
+- 2026-06-18: What do you call a spider working in IT? A web developer.
+- 2026-06-18: I used to repair fog machines for a living. It was a very misty career.
+- 2026-06-18: What do you call a polite dinosaur? A Please-iosaur.
+- 2026-06-18: "What you do speaks so loudly that I cannot hear what you say." — Ralph Waldo Emerson
+
+- 2026-06-19: What do you call a sleeping lawyer? A briefcase.
+- 2026-06-19: I used to be an actor, but I couldn't get the part. So I wrote my own script.
+- 2026-06-19: What do you call a chicken running a race? Poultry in motion.
+- 2026-06-19: "The pessimist sees difficulty in every opportunity. The optimist sees opportunity in every difficulty." — Winston Churchill

@@ -37,7 +37,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Evening Cooking Reminder | cooking-reminder | 20:45 UK | #food-log | yes |
 | Daily Nutrition Summary | nutrition-summary | 21:00 UK | #food-log | yes |
 | Weekly Health Summary | weekly-health | Sunday 09:10 UK | #food-log | yes |
-| Weekly Cut Review | weekly-cut-review | Sunday 09:00 UK | #food-log | yes |
+| Weekly Cut Review | weekly-cut-review | Sunday 09:00 UK | #food-log | no |
 | Fitness Advisor Check | fitness-advisor | 20:00 UK | #food-log | yes |
 | Midweek Cut Nudge | fitness-dashboard | Wed 19:00 UK | #food-log | yes |
 | Monthly Health Summary | monthly-health | 1st 09:15 UK | #food-log | yes |

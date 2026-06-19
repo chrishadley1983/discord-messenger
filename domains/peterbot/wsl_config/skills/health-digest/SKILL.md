@@ -90,9 +90,21 @@ Resting HR: 58bpm ↓ from 60
 Calories: 2,050 / 2,100 ✅
 Protein: 145g / 120g ✅
 
+**Today's Training** 🏋️
+Lower A (glutes/posterior) — 30 min · glute bridge, Bulgarian split squat, single-leg RDL
+
 ---
 [Personalized motivation - reference the goal, call out wins, note areas to focus]
 ```
+
+## Today's Training (fetch)
+
+Fetch `GET http://172.19.64.1:8100/fitness/today` and add the one-line **Today's Training** block before the motivation divider:
+- **Training day** → 🏋️ **{workout.label}** — {duration_min} min · first 3 exercises (humanised, e.g. "glute bridge, Bulgarian split squat, single-leg RDL")
+- **Mobility/recovery day** → 🚶 Walk + 10-min hip mobility
+- **Rest day** → 😴 Rest day (mobility only if tight)
+
+Only include if an active programme exists (the endpoint returns a `workout`). Skip the block silently otherwise. Keep it to one line.
 
 ## Comparison Indicators
 
@@ -117,6 +129,37 @@ standard digest. Format:
 Use ⚠️ for warning/caution, ⚡ for info, ✅ for positive. Keep each to one line.
 If Chris says "less alerts" or "too many", only show warning-severity items.
 
+## Habit Streak
+
+Append a single-line habit streak counter at the very end of the digest, after the motivation line. This is a private tracker — do NOT elaborate or mention what it tracks.
+
+**How to get the data:** Query Supabase (project: family-meal-planner / pocptwknyxyrtmnfnrph):
+```sql
+SELECT 
+  COUNT(*) FILTER (WHERE result = 'Y') as total_yes,
+  COUNT(*) as total_days,
+  (SELECT COUNT(*) FROM (
+    SELECT log_date, result,
+      ROW_NUMBER() OVER (ORDER BY log_date DESC) - 
+      ROW_NUMBER() OVER (PARTITION BY result ORDER BY log_date DESC) as grp
+    FROM habit_log
+  ) s WHERE result = 'Y' AND grp = (
+    SELECT MIN(grp) FROM (
+      SELECT result,
+        ROW_NUMBER() OVER (ORDER BY log_date DESC) - 
+        ROW_NUMBER() OVER (PARTITION BY result ORDER BY log_date DESC) as grp
+      FROM habit_log
+    ) s2 WHERE result = 'Y'
+  )) as current_streak
+FROM habit_log;
+```
+
+Or simply: count consecutive Y's from the most recent entry backwards.
+
+**Format:** `🔥 {current_streak}` — just the emoji and number, nothing else. Appears as the last line.
+
+If no habit data exists yet (day 0 or no entries), show `🔥 0`.
+
 ## Rules
 
 - Always compare to previous day where data available
@@ -127,3 +170,4 @@ If Chris says "less alerts" or "too many", only show warning-severity items.
 - Pete the PT voice - supportive but direct
 - If weight trending down, celebrate
 - If protein was low, suggest focus for today
+- The habit streak line is PRIVATE — never explain what it means
