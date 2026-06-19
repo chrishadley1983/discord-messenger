@@ -175,8 +175,13 @@ async def get_weight(retry: bool = True) -> dict:
 
             logger.info(f"Retrieved Withings weight: {result['weight_kg']}kg")
 
-            # Store reading in database
-            await _store_weight_reading(result["weight_kg"], latest["date"])
+            # Persist EVERY weigh-in in the window, not just the latest. A
+            # latest-only store silently drops readings taken after the morning
+            # sync (e.g. a late-morning weigh-in that a newer reading then
+            # supersedes before the next sync) — which bites hardest when
+            # weigh-ins are irregular. The (user_id, measured_at) unique
+            # constraint makes the window upsert idempotent and self-healing.
+            await _store_weight_readings(measures)
 
             return result
     except Exception as e:
@@ -184,35 +189,54 @@ async def get_weight(retry: bool = True) -> dict:
         return {"error": str(e), "weight_kg": None, "date": None}
 
 
-async def _store_weight_reading(weight_kg: float, timestamp: int):
-    """Store weight reading in database for historical tracking."""
-    try:
-        if not SUPABASE_URL or not SUPABASE_KEY:
-            return
+async def _store_weight_readings(measuregrps: list[dict]) -> int:
+    """Store every weigh-in in the measurement window (idempotent upsert).
 
-        measured_at = datetime.fromtimestamp(timestamp).isoformat()
+    Re-storing readings we already have is a no-op thanks to the
+    (user_id, measured_at) unique constraint, so the whole window can be
+    persisted on every call. Returns the number of rows posted.
+    """
+    try:
+        if not SUPABASE_URL or not SUPABASE_KEY or not measuregrps:
+            return 0
+
+        rows = []
+        for g in measuregrps:
+            try:
+                m = g["measures"][0]
+                weight_kg = round(m["value"] * (10 ** m["unit"]), 1)
+                rows.append({
+                    "user_id": "chris",
+                    "weight_kg": weight_kg,
+                    "measured_at": datetime.fromtimestamp(g["date"]).isoformat(),
+                    "source": "withings",
+                })
+            except (KeyError, IndexError, TypeError):
+                continue
+
+        if not rows:
+            return 0
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{SUPABASE_URL}/rest/v1/weight_readings",
+                f"{SUPABASE_URL}/rest/v1/weight_readings?on_conflict=user_id,measured_at",
                 headers={
                     "apikey": SUPABASE_KEY,
                     "Authorization": f"Bearer {SUPABASE_KEY}",
                     "Content-Type": "application/json",
-                    "Prefer": "resolution=ignore-duplicates"
+                    "Prefer": "resolution=ignore-duplicates,return=minimal",
                 },
-                json={
-                    "user_id": "chris",
-                    "weight_kg": weight_kg,
-                    "measured_at": measured_at,
-                    "source": "withings"
-                },
-                timeout=10
+                json=rows,
+                timeout=15,
             )
-            if response.status_code in (200, 201):
-                logger.info(f"Stored weight reading: {weight_kg}kg")
+            if response.status_code in (200, 201, 204):
+                logger.info(f"Stored Withings window: {len(rows)} readings upserted")
+                return len(rows)
+            logger.warning(f"Weight readings upsert returned {response.status_code}: {response.text[:200]}")
+            return 0
     except Exception as e:
-        logger.warning(f"Failed to store weight reading: {e}")
+        logger.warning(f"Failed to store weight readings: {e}")
+        return 0
 
 
 async def get_weight_history(days: int = 30) -> list:
