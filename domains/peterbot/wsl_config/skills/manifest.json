@@ -155,6 +155,18 @@
     "description": "Daily morning cricket score roundup from yesterday",
     "channel": "#peterbot+WhatsApp:chris"
   },
+  "cut-kickoff": {
+    "triggers": [
+      "cut kickoff",
+      "start my cut",
+      "monday weigh in",
+      "weigh in checkpoint"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Monday weigh-in trigger — Day-1 kickoff then weekly checkpoint for the reset cut",
+    "channel": "#food-log"
+  },
   "daily-batch": {
     "triggers": [],
     "conversational": false,
@@ -1538,7 +1550,7 @@
       "how's my cut going"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Sunday review of the fat-loss programme — adherence, trend, next week's adjustment",
     "channel": "#food-log"
   },

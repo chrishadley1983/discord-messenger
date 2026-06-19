@@ -687,6 +687,21 @@ async def invoke_claude_cli(
             logger.warning(f"Credit exhaustion detected in stderr: {stderr_text[:100]}")
             return CREDIT_EXHAUSTED_SENTINEL
 
+        # Distinguish "the turn never ran" from "the turn did real work but the
+        # final result event was lost". When tools were used / multiple turns
+        # elapsed, the work likely happened (e.g. files edited, a deploy run) —
+        # showing a bare "encountered an issue" is misleading and alarming.
+        did_work = (meta.num_turns or 0) > 1 or bool(meta.tools_used)
+        if did_work:
+            logger.error(
+                f"CLI did work ({meta.num_turns} turns, tools={meta.tools_used}) "
+                f"but produced no final result text — result event likely lost"
+            )
+            return (
+                "I worked through that but lost the final summary on the way back. "
+                "The actions may have completed — ask me to confirm before retrying."
+            )
+
         return "⚠️ Claude encountered an issue. Please try again."
 
     return meta.result_text

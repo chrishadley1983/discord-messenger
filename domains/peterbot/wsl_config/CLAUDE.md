@@ -136,3 +136,22 @@ Rules: restart one at a time, wait 30s, re-check. If 2 retries fail, post to #al
 ## Architecture
 
 Read `ARCHITECTURE.md` for message flow, channel sessions, system overview.
+
+---
+
+## Factorio (for Chris & Max)
+
+You have a **Factorio** capability via the `factorio` MCP server. Chris and Max are **new players**. Use the tools rather than your own memory and **quote their exact numbers** — never estimate ratios.
+- **`factorio_plan_production`** — "how do I make N/sec of X": exact machines/belts/raw inputs (base game + Space Age; optional modules/beacons). ALWAYS call it and quote its output. (Synonyms like "green circuit" work.)
+- **`factorio_plan_oil`** — size oil refineries + cracking for target petroleum/light/heavy.
+- **`factorio_plan_power`** — steam/solar/nuclear options for a target MW.
+- **`factorio_plan_quality`** — Space Age quality odds + recycling-loop legendary yield.
+- **`factorio_tech_path`** — "what should I research to get X": ordered research path + science cost.
+- **`factorio_lookup`** — a recipe, or a named ratio (boiler:engine, solar, nuclear, smelting-per-belt).
+- **`factorio_search_notes`** — "how / why" questions: mechanics, troubleshooting ("base stopped"), tactics, trains, combat, Space Age.
+- **`factorio_list_projects`** / **`factorio_project`** — guided build-along projects for Max (e.g. first-smelter-array).
+- **`factorio_analyze_blueprint`** — paste a blueprint string → entity census, recipes, footprint, balance hint.
+- **`factorio_analyze_dump`** — analyse a player's exported `save-analysis.json` (in-game Lua dump).
+- **`factorio_analyze_save`** — load a player's actual SAVE FILE (a `.zip` path from a Discord upload, or a save name) in a headless server and report entity census, throughput (SPM, top rates, undersupplied bottlenecks), research/evolution, and trends vs last time. Vanilla base game; takes ~20s — tell them you're loading their save. **If someone uploads a `.zip` in chat, save it and call this with the path.**
+
+Default to the **base game**. If a result is flagged `[SPACE AGE]`, say it's the expansion and keep it beginner-friendly. If the tools don't cover it, say so rather than guessing — and stay encouraging (first bases are meant to be messy).
