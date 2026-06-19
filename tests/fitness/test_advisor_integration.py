@@ -335,55 +335,31 @@ class TestFitnessAdviceEndpoint:
 
 
 class TestGarminHrvSync:
-    @pytest.mark.asyncio
-    async def test_sync_includes_hrv_fields(self):
-        """Verify _sync_garmin_to_supabase persists HRV + stress fields."""
-        import importlib
-
-        with patch("httpx.AsyncClient") as mock_cls:
-            mock_client = AsyncMock()
-            mock_resp = Mock(status_code=201, text="ok")
-            mock_client.post = AsyncMock(return_value=mock_resp)
-            mock_cls.return_value.__aenter__.return_value = mock_client
-
-            # Import after mocking to ensure config module loads
-            with (
-                patch.dict(os.environ, {"SUPABASE_URL": "https://test.co", "SUPABASE_KEY": "k"}),
-            ):
-                # Re-import to pick up env vars
-                import config as cfg_mod
-                with (
-                    patch.object(cfg_mod, "SUPABASE_URL", "https://test.co", create=True),
-                    patch.object(cfg_mod, "SUPABASE_KEY", "k", create=True),
-                ):
-                    from domains.peterbot.data_fetchers import _sync_garmin_to_supabase
-
-                    data = {
-                        "steps": {"steps": 14000, "goal": 15000},
-                        "sleep": {"total_hours": 7.5, "quality_score": 80},
-                        "heart_rate": {"resting": 58},
-                        "hrv": {"weekly_avg": 45, "last_night": 42, "status": "BALANCED"},
-                        "stress": {"average": 30},
-                    }
-
-                    await _sync_garmin_to_supabase("2026-05-01", data)
-
-                    assert mock_client.post.called
-                    call_args = mock_client.post.call_args
-                    record = call_args.kwargs.get("json") or call_args[1].get("json")
-
-                    assert record["hrv_weekly_avg"] == 45
-                    assert record["hrv_last_night"] == 42
-                    assert record["hrv_status"] == "BALANCED"
-                    assert record["avg_stress"] == 30
-                    assert record["steps"] == 14000
-                    assert record["sleep_hours"] == 7.5
-                    assert record["resting_hr"] == 58
+    """The sync no longer trusts a single-date `data` dict (which was usually
+    empty for overnight metrics at digest time). It pulls a trailing window
+    via daily_summary_records() — keyed to each metric's true calendar date —
+    and bulk-upserts on (user_id,date) so late-syncing nights self-heal."""
 
     @pytest.mark.asyncio
-    async def test_sync_without_hrv_data(self):
-        """HRV/stress fields should be absent when Garmin didn't return them."""
-        with patch("httpx.AsyncClient") as mock_cls:
+    async def test_sync_bulk_upserts_records(self):
+        """_sync_garmin_to_supabase posts whatever daily_summary_records returns."""
+        records = [
+            {
+                "user_id": "chris", "date": "2026-05-01", "source": "garmin",
+                "sleep_hours": 7.5, "sleep_score": 80, "resting_hr": 58,
+                "hrv_weekly_avg": 45, "hrv_last_night": 42, "hrv_status": "BALANCED",
+                "avg_stress": 30, "steps": 14000, "steps_goal": 15000,
+            },
+            {
+                "user_id": "chris", "date": "2026-04-30", "source": "garmin",
+                "sleep_hours": 6.0, "resting_hr": 62, "steps": 10000, "steps_goal": 15000,
+            },
+        ]
+
+        with patch("httpx.AsyncClient") as mock_cls, patch(
+            "domains.nutrition.services.garmin.daily_summary_records",
+            AsyncMock(return_value=records),
+        ):
             mock_client = AsyncMock()
             mock_resp = Mock(status_code=201, text="ok")
             mock_client.post = AsyncMock(return_value=mock_resp)
@@ -397,22 +373,42 @@ class TestGarminHrvSync:
                 ):
                     from domains.peterbot.data_fetchers import _sync_garmin_to_supabase
 
-                    data = {
-                        "steps": {"steps": 10000, "goal": 15000},
-                        "sleep": {"total_hours": 6.0},
-                        "heart_rate": {"resting": 62},
-                        "hrv": {},
-                        "stress": {},
-                    }
+                    await _sync_garmin_to_supabase("2026-05-01")
 
-                    await _sync_garmin_to_supabase("2026-05-01", data)
-
+                    assert mock_client.post.called
                     call_args = mock_client.post.call_args
-                    record = call_args.kwargs.get("json") or call_args[1].get("json")
+                    posted = call_args.kwargs.get("json") or call_args[1].get("json")
 
-                    assert "hrv_weekly_avg" not in record
-                    assert "avg_stress" not in record
-                    assert record["steps"] == 10000
+                    # Bulk upsert: the full list of per-date records is posted.
+                    assert posted == records
+                    # Idempotent upsert keyed on (user_id,date).
+                    url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
+                    assert "on_conflict=user_id,date" in url
+                    headers = call_args.kwargs.get("headers", {})
+                    assert "merge-duplicates" in headers.get("Prefer", "")
+
+    @pytest.mark.asyncio
+    async def test_sync_noop_when_no_records(self):
+        """No POST when the trailing window has no data to write."""
+        with patch("httpx.AsyncClient") as mock_cls, patch(
+            "domains.nutrition.services.garmin.daily_summary_records",
+            AsyncMock(return_value=[]),
+        ):
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock()
+            mock_cls.return_value.__aenter__.return_value = mock_client
+
+            with patch.dict(os.environ, {"SUPABASE_URL": "https://test.co", "SUPABASE_KEY": "k"}):
+                import config as cfg_mod
+                with (
+                    patch.object(cfg_mod, "SUPABASE_URL", "https://test.co", create=True),
+                    patch.object(cfg_mod, "SUPABASE_KEY", "k", create=True),
+                ):
+                    from domains.peterbot.data_fetchers import _sync_garmin_to_supabase
+
+                    await _sync_garmin_to_supabase("2026-05-01")
+
+                    assert not mock_client.post.called
 
 
 # ── E2E scenario tests ──────────────────────────────────────────────

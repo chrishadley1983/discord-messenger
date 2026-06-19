@@ -273,77 +273,56 @@ async def get_health_digest_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
-async def _sync_garmin_to_supabase(date_str: str, data: dict) -> None:
-    """Sync fetched Garmin data to garmin_daily_summary table.
+async def _sync_garmin_to_supabase(date_str: str, data: dict | None = None) -> None:
+    """Sync recent Garmin data to garmin_daily_summary table.
 
-    Called after the morning health digest fetches live data.
-    Upserts yesterday's steps, sleep, and HR into Supabase so the
-    weekly/monthly summaries have data to read.
+    Overnight metrics (sleep, RHR, HRV) for a night arrive late — often after
+    the morning digest runs — so a single-date sync keyed to "today" silently
+    dropped most nights. Instead we re-pull a short trailing window each
+    morning and upsert (on user_id,date), keyed to each metric's *true*
+    calendar date. A night that hadn't synced yesterday gets filled in today,
+    so nothing is lost. Idempotent — safe to run repeatedly.
+
+    `date_str`/`data` are retained for call-site compatibility but no longer
+    drive what gets written.
     """
     import httpx
     from config import SUPABASE_URL, SUPABASE_KEY
+    from domains.nutrition.services.garmin import daily_summary_records
 
     try:
-        steps = data.get("steps") or {}
-        sleep = data.get("sleep") or {}
-        hr = data.get("heart_rate") or {}
-        hrv = data.get("hrv") or {}
-        stress = data.get("stress") or {}
-
-        # Only sync if we have at least some data
-        step_count = steps.get("steps")
-        sleep_hours = sleep.get("total_hours")
-        resting_hr = hr.get("resting")
-
-        if step_count is None and sleep_hours is None and resting_hr is None:
-            logger.info(f"Garmin sync: no data to sync for {date_str}")
+        records = await daily_summary_records(days=3)
+        if not records:
+            logger.info("Garmin sync: no data to sync for trailing window")
             return
-
-        record = {
-            "user_id": "chris",
-            "date": date_str,
-            "source": "garmin",
-        }
-        if step_count is not None:
-            record["steps"] = step_count
-            record["steps_goal"] = steps.get("goal", 15000)
-        if sleep_hours is not None:
-            record["sleep_hours"] = sleep_hours
-        if sleep.get("quality_score") is not None:
-            record["sleep_score"] = sleep["quality_score"]
-        if resting_hr is not None:
-            record["resting_hr"] = resting_hr
-        if hrv.get("weekly_avg") is not None:
-            record["hrv_weekly_avg"] = hrv["weekly_avg"]
-        if hrv.get("last_night") is not None:
-            record["hrv_last_night"] = hrv["last_night"]
-        if hrv.get("status") is not None:
-            record["hrv_status"] = hrv["status"]
-        if stress.get("average") is not None:
-            record["avg_stress"] = stress["average"]
 
         headers = {
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",
             "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates"
+            "Prefer": "resolution=merge-duplicates",
         }
 
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{SUPABASE_URL}/rest/v1/garmin_daily_summary?on_conflict=user_id,date",
                 headers=headers,
-                json=record,
-                timeout=15
+                json=records,  # bulk upsert
+                timeout=30,
             )
 
-        if resp.status_code in (200, 201):
-            logger.info(f"Garmin sync: upserted {date_str} — steps={step_count}, sleep={sleep_hours}h, rhr={resting_hr}")
+        if resp.status_code in (200, 201, 204):
+            summary = ", ".join(
+                f"{r['date']}(sleep={r.get('sleep_hours')}h rhr={r.get('resting_hr')} "
+                f"hrv={r.get('hrv_last_night')} steps={r.get('steps')})"
+                for r in records
+            )
+            logger.info(f"Garmin sync: upserted {len(records)} rows — {summary}")
         else:
             logger.warning(f"Garmin sync: upsert returned {resp.status_code}: {resp.text}")
 
     except Exception as e:
-        logger.error(f"Garmin sync failed for {date_str}: {e}")
+        logger.error(f"Garmin sync failed: {e}")
 
 
 async def get_weekly_health_data() -> dict[str, Any]:
