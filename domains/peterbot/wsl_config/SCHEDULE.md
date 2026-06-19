@@ -24,6 +24,7 @@ Run `!reload-schedule` after editing to apply changes.
 | Morning Cooking Reminder | cooking-reminder | 07:30 UK | #food-log | yes |
 | Price Scanner | price-scanner | Mon 06:00 UK | #food-log | yes |
 | Morning Health Digest | health-digest | 07:55 UK | #food-log | yes |
+| Cut Kickoff / Weigh-in | cut-kickoff | Mon 08:15 UK | #food-log | yes |
 | School Run (Mon-Wed,Fri) | school-run | Mon-Wed,Fri 08:10 UK | #traffic-reports+WhatsApp:group | yes |
 | School Run (Thu) | school-run | Thu 07:45 UK | #traffic-reports+WhatsApp:group | yes |
 | GitHub Activity (Weekly) | github-weekly | Sunday 18:05 UK | #peterbot | yes |

@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from domains.fitness.trend import compute_trend, TrendResult
-from domains.fitness.tdee import compute_tdee, TdeeResult
+from domains.fitness.tdee import compute_tdee, TdeeResult, DEFAULT_PROTEIN_G_PER_KG
 from domains.fitness.programme_generator import (
     generate_week,
     generate_programme,
@@ -180,7 +180,8 @@ def compute_current_targets(
     height_cm: int = CHRIS_HEIGHT_CM,
     age_years: int = CHRIS_AGE_YEARS,
     sex: str = CHRIS_SEX,
-    deficit_kcal: int = 550,
+    deficit_kcal: int | None = None,
+    protein_g_per_kg: float | None = None,
 ) -> TdeeResult:
     """Recompute TDEE / calorie / protein targets from latest weight.
 
@@ -200,13 +201,27 @@ def compute_current_targets(
     Returns:
         TdeeResult with live BMR, TDEE, target_calories, target_protein_g.
     """
+    # Deficit and protein default to the programme's own settings (so a
+    # deliberately aggressive plan isn't overridden by the generic 550/1.67
+    # defaults), falling back to those defaults when the programme doesn't
+    # specify. This keeps the weight-adaptive targets aligned with the plan
+    # while still auto-adjusting down as BMR drops with weight loss.
+    resolved_deficit = (
+        deficit_kcal if deficit_kcal is not None
+        else int(programme.get("deficit_kcal") or 550)
+    )
+    resolved_protein = (
+        protein_g_per_kg if protein_g_per_kg is not None
+        else float(programme.get("protein_g_per_kg") or DEFAULT_PROTEIN_G_PER_KG)
+    )
     return compute_tdee(
         weight_kg=current_weight_kg,
         height_cm=height_cm,
         age_years=age_years,
         avg_steps=avg_steps,
         sex=sex,
-        deficit_kcal=deficit_kcal,
+        deficit_kcal=resolved_deficit,
+        protein_g_per_kg=resolved_protein,
     )
 
 
@@ -238,7 +253,7 @@ async def recalibrate_programme(
     current_weight_kg: float,
     avg_steps: float,
     *,
-    deficit_kcal: int = 550,
+    deficit_kcal: int | None = None,
 ) -> dict:
     """Recompute targets from the latest weight and persist them.
 
