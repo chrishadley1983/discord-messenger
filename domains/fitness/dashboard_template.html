@@ -160,6 +160,10 @@ const ENC = {
   iters: __ITERS__
 };
 const GENERATED_AT = "__GENERATED_AT__";
+// null on the public (encrypted, HTTPS) surge page; full data object on the
+// LAN-served page (http on a private IP = not a secure context, so WebCrypto
+// is unavailable there — we ship the data in the clear behind the home network).
+const PLAIN = __PLAIN_DATA__;
 
 function b64ToBytes(b64){const bin=atob(b64);const a=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);return a;}
 
@@ -182,6 +186,7 @@ let DATA=null, charts=[];
 document.getElementById("gform").addEventListener("submit",async e=>{
   e.preventDefault();
   const err=$("#gerr"); err.textContent="";
+  if(!window.crypto||!window.crypto.subtle){err.textContent="This URL isn't secure (needs HTTPS or localhost). Use the surge link.";return;}
   const btn=$("#gbtn"); btn.textContent="Unlocking…"; btn.disabled=true;
   try{
     DATA=await decrypt($("#pc").value.trim());
@@ -195,8 +200,11 @@ document.getElementById("gform").addEventListener("submit",async e=>{
   }
 });
 
-// auto-unlock within session
-(async()=>{const saved=sessionStorage.getItem("rc_pc");if(saved){try{DATA=await decrypt(saved);$("#gate").classList.add("hidden");$("#app").classList.remove("hidden");render();}catch(_){}}})();
+// LAN page ships data in the clear — no gate / no WebCrypto needed. Public page uses the encrypted gate.
+// render() is deferred (queueMicrotask) because it references `const TABS`, declared
+// later in this script — calling it synchronously here hits the temporal dead zone.
+if(PLAIN){DATA=PLAIN;$("#gate").classList.add("hidden");$("#app").classList.remove("hidden");queueMicrotask(render);}
+else{(async()=>{const saved=sessionStorage.getItem("rc_pc");if(saved){try{DATA=await decrypt(saved);$("#gate").classList.add("hidden");$("#app").classList.remove("hidden");render();}catch(_){}}})();}
 
 const TABS=[
   ["overview","Overview"],["summary","Coach"],["trends","Trends"],

@@ -33,6 +33,9 @@ JOBS_CHANNEL_URL = "http://127.0.0.1:8103/job"
 PBKDF2_ITERS = 150_000
 DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 TEMPLATE = Path(__file__).with_name("dashboard_template.html")
+# Fixed, shared path (NOT tempdir) so the bot/build process and the HadleyAPI
+# service — separate processes with different %TEMP% — read/write the same file.
+LOCAL_HTML = Path(__file__).resolve().parents[2] / "data" / "reset-cut-dashboard.html"
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
@@ -348,14 +351,27 @@ def _encrypt(obj: dict, passcode: str) -> dict:
     return {"payload": b(ct), "salt": b(salt), "iv": b(iv)}
 
 
-def _render(enc: dict, generated_at: str) -> str:
+def _inject(payload="", salt="", iv="", plain="null", generated_at="") -> str:
     html = TEMPLATE.read_text(encoding="utf-8")
     return (html
-            .replace("__PAYLOAD__", enc["payload"])
-            .replace("__SALT__", enc["salt"])
-            .replace("__IV__", enc["iv"])
+            .replace("__PAYLOAD__", payload)
+            .replace("__SALT__", salt)
+            .replace("__IV__", iv)
             .replace("__ITERS__", str(PBKDF2_ITERS))
+            .replace("__PLAIN_DATA__", plain)
             .replace("__GENERATED_AT__", generated_at))
+
+
+def _render(enc: dict, generated_at: str) -> str:
+    """Encrypted build for the public surge URL (passcode gate)."""
+    return _inject(payload=enc["payload"], salt=enc["salt"], iv=enc["iv"],
+                   plain="null", generated_at=generated_at)
+
+
+def _render_plain(data: dict, generated_at: str) -> str:
+    """Plaintext build for the LAN-served page (no WebCrypto / no gate)."""
+    blob = json.dumps(data, default=str).replace("</", "<\\/")  # avoid </script> break-out
+    return _inject(plain=blob, generated_at=generated_at)
 
 
 def _deploy(html: str, domain: str) -> bool:
@@ -394,15 +410,17 @@ async def build_and_deploy(deploy: bool = True) -> dict:
     if not passcode:
         raise RuntimeError("DASHBOARD_PASSCODE not set")
     data = await _build_data()
-    enc = _encrypt(data, passcode)
-    html = _render(enc, data["generated_at"])
-    result = {"domain": domain, "url": f"https://{domain}", "bytes": len(html),
+    enc_html = _render(_encrypt(data, passcode), data["generated_at"])   # public surge (gated)
+    plain_html = _render_plain(data, data["generated_at"])               # LAN page (no gate)
+    result = {"domain": domain, "url": f"https://{domain}", "bytes": len(enc_html),
               "generated_at": data["generated_at"], "deployed": False}
-    out_path = Path(tempfile.gettempdir()) / "reset-cut-dashboard.html"
-    out_path.write_text(html, encoding="utf-8")
-    result["local"] = str(out_path)
+    # The LAN endpoint (GET /fitness/dashboard/page) serves this plaintext file —
+    # works on any home-network device without WebCrypto, and the refresh works there.
+    LOCAL_HTML.parent.mkdir(parents=True, exist_ok=True)
+    LOCAL_HTML.write_text(plain_html, encoding="utf-8")
+    result["local"] = str(LOCAL_HTML)
     if deploy:
-        result["deployed"] = _deploy(html, domain)
+        result["deployed"] = _deploy(enc_html, domain)
     return result
 
 

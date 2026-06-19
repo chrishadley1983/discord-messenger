@@ -398,7 +398,9 @@ async def save_weekly_checkin():
 # request (the locally-served page) actually reaches them. The `building`
 # flag prevents concurrent rebuilds.
 
-_DASH_HTML = Path(tempfile.gettempdir()) / "reset-cut-dashboard.html"
+# Shared path (matches domains/fitness/dashboard_site.LOCAL_HTML) so the build
+# process and this API service read/write the same file regardless of %TEMP%.
+_DASH_HTML = Path(__file__).resolve().parents[1] / "data" / "reset-cut-dashboard.html"
 _dash_state: dict = {"building": False, "generated_at": None}
 
 
