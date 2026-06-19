@@ -98,6 +98,58 @@ _5X_SCHEDULE = [
 ]
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# 4x/week UPPER-LOWER SPLIT — base prescription (week 1)
+# ═══════════════════════════════════════════════════════════════════════
+# Bodyweight + bands + <5kg only. Mon/Tue/Thu/Fri train; Wed active
+# recovery; Sat walk; Sun rest. ~30-min sessions (5-6 moves). Posterior
+# chain / glute / core bias to be sciatica- and hip-friendly: no running,
+# no loaded spinal flexion. Progression is rep/tempo driven (see _progress).
+_BASE_4X_UPPER_LOWER: dict[str, tuple[str, list[tuple[str, int, int | None, int | None]]]] = {
+    "lower_a": ("Lower A (glutes / posterior — hip-friendly)", [
+        # (slug, sets, base_reps, base_hold_s)
+        ("glute-bridge", 3, 15, None),
+        ("single-leg-glute-bridge", 3, 10, None),
+        ("bulgarian-split-squat", 3, 10, None),
+        ("bw-good-morning", 3, 12, None),
+        ("single-leg-rdl", 3, 8, None),
+        ("side-plank", 3, None, 30),
+    ]),
+    "upper_a": ("Upper A (push)", [
+        ("push-up", 3, 12, None),
+        ("pike-push-up", 3, 8, None),
+        ("chair-dip", 3, 10, None),
+        ("diamond-push-up", 2, 8, None),
+        ("plank", 2, None, 45),
+    ]),
+    "lower_b": ("Lower B (quads / single-leg)", [
+        ("bw-squat", 3, 15, None),
+        ("reverse-lunge", 3, 10, None),
+        ("step-up", 3, 10, None),
+        ("wall-sit", 2, None, 45),
+        ("calf-raise", 2, 20, None),
+        ("dead-bug", 3, 10, None),
+    ]),
+    "upper_b": ("Upper B (pull / core)", [
+        ("inverted-row", 3, 8, None),
+        ("reverse-snow-angel", 3, 12, None),
+        ("superman-hold", 3, None, 20),
+        ("hollow-hold", 3, None, 20),
+        ("bird-dog", 3, 10, None),
+    ]),
+}
+
+# Day of week mapping for 4x_upper_lower
+_4X_UL_SCHEDULE = [
+    (0, "lower_a"),      # Mon
+    (1, "upper_a"),      # Tue
+    # Wed handled specially (active recovery)
+    (3, "lower_b"),      # Thu
+    (4, "upper_b"),      # Fri
+    # Sat/Sun handled specially (walk / rest)
+]
+
+
 def _progress(base_reps: int | None, base_hold: int | None, week_no: int) -> tuple[int | None, int | None]:
     """Apply weekly progression to base values.
 
@@ -114,15 +166,16 @@ def _progress(base_reps: int | None, base_hold: int | None, week_no: int) -> tup
     return (None, None)
 
 
-def generate_week(split: SplitType, week_no: int) -> list[PrescribedSession]:
-    """Return the 7-day prescription for `week_no` (1-indexed)."""
-    if split != "5x_short":
-        raise NotImplementedError(f"Split '{split}' not yet implemented")
-
+def _build_training_days(
+    base: dict[str, tuple[str, list[tuple[str, int, int | None, int | None]]]],
+    schedule: list[tuple[int, str]],
+    week_no: int,
+    duration_min: int,
+) -> list[PrescribedSession]:
+    """Build the training-day sessions for a split, applying progression."""
     sessions: list[PrescribedSession] = []
-
-    for dow, session_key in _5X_SCHEDULE:
-        label, exercises = _BASE_5X_SHORT[session_key]
+    for dow, session_key in schedule:
+        label, exercises = base[session_key]
         prescribed: list[PrescribedSet] = []
         for slug, sets, base_reps, base_hold in exercises:
             reps, hold = _progress(base_reps, base_hold, week_no)
@@ -136,30 +189,54 @@ def generate_week(split: SplitType, week_no: int) -> list[PrescribedSession]:
             day_of_week=dow,
             session_type=session_key,
             label=label,
-            duration_min=20,
+            duration_min=duration_min,
             exercises=prescribed,
         ))
+    return sessions
 
-    # Sat: active recovery
-    sessions.append(PrescribedSession(
-        day_of_week=5,
+
+def _mobility_day(dow: int, notes: str) -> PrescribedSession:
+    return PrescribedSession(
+        day_of_week=dow,
         session_type="mobility",
-        label="Mobility + long walk",
-        duration_min=60,
+        label="Mobility + walk",
+        duration_min=30,
         is_rest=False,
-        notes="10-min mobility routine + 45-60 min walk (target 15k+ steps)",
-    ))
-    # Sun: full rest
-    sessions.append(PrescribedSession(
-        day_of_week=6,
+        notes=notes,
+    )
+
+
+def _rest_day(dow: int) -> PrescribedSession:
+    return PrescribedSession(
+        day_of_week=dow,
         session_type="rest",
         label="Rest day",
         duration_min=0,
         is_rest=True,
-        notes="Full rest. Mobility only if you feel tight.",
-    ))
+        notes="Full rest. 10-min mobility only if you feel tight.",
+    )
 
-    return sessions
+
+def generate_week(split: SplitType, week_no: int) -> list[PrescribedSession]:
+    """Return the 7-day prescription for `week_no` (1-indexed)."""
+    if split == "5x_short":
+        sessions = _build_training_days(_BASE_5X_SHORT, _5X_SCHEDULE, week_no, 20)
+        sessions.append(_mobility_day(5, "10-min mobility routine + 45-60 min walk (target 15k+ steps)"))
+        sessions.append(_rest_day(6))
+        return sessions
+
+    if split == "4x_upper_lower":
+        sessions = _build_training_days(_BASE_4X_UPPER_LOWER, _4X_UL_SCHEDULE, week_no, 30)
+        # Wed: active recovery between the two halves
+        sessions.append(_mobility_day(2, "Active recovery: 10-min hip/sciatica mobility + zone-2 walk"))
+        # Sat: walk-focused mobility
+        sessions.append(_mobility_day(5, "10-min mobility + long walk (target 15k+ steps)"))
+        # Sun: rest
+        sessions.append(_rest_day(6))
+        sessions.sort(key=lambda s: s.day_of_week)
+        return sessions
+
+    raise NotImplementedError(f"Split '{split}' not yet implemented")
 
 
 def generate_programme(split: SplitType, weeks: int = 13) -> list[list[PrescribedSession]]:

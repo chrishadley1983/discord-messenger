@@ -77,7 +77,8 @@ class RecalibrateRequest(BaseModel):
     # All optional — if unset, endpoint uses latest trend weight and 7d step avg
     current_weight_kg: Optional[float] = None
     avg_steps: Optional[float] = None
-    deficit_kcal: int = 550
+    # None -> use the programme's own deficit (falls back to 550 if unset)
+    deficit_kcal: Optional[int] = None
 
 
 # ── Read endpoints ──────────────────────────────────────────────────────
