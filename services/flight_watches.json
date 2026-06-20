@@ -1,0 +1,42 @@
+{
+  "_comment": "Reusable flight watches for the daily flight-prices alert. Add new objects to 'watches' to track more routes/variations — they all roll into one daily #alerts post. Primary data source is the Google Flights scrape (services/flight_scrape.cjs); SerpApi is the automatic fallback. 'select' criteria are applied after scraping to pick the single best flight per watch.",
+  "cdp": "http://localhost:9222",
+  "currency": "GBP",
+  "watches": [
+    {
+      "id": "value-1stop-thu",
+      "label": "Best value 1-stop — Thu eve, short layover",
+      "origin": "LHR",
+      "destination": "HND",
+      "outbound": "2027-03-25",
+      "return": "2027-04-11",
+      "adults": 2,
+      "children": [8, 10],
+      "maxStops": 1,
+      "select": {
+        "out_depart_from": "16:00",
+        "out_depart_to": "23:59",
+        "max_layover_min": 300,
+        "require_stops": 1,
+        "sort": "price"
+      }
+    },
+    {
+      "id": "direct-thu-sun",
+      "label": "Best direct — Thu night out / Sun morning back",
+      "origin": "LHR",
+      "destination": "HND",
+      "outbound": "2027-03-25",
+      "return": "2027-04-11",
+      "adults": 2,
+      "children": [8, 10],
+      "maxStops": 0,
+      "select": {
+        "out_depart_from": "17:00",
+        "out_depart_to": "23:59",
+        "require_stops": 0,
+        "sort": "price"
+      }
+    }
+  ]
+}

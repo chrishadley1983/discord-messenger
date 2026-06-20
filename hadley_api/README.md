@@ -615,6 +615,21 @@ Shared `ai_api_usage` table (Supabase `modjoikyuhqzouxvieua`) records every raw 
 - `GET /usage/reconcile?days=7` - Latest Anthropic-truth-vs-logged rows + gaps (`console` rows = Workbench/manual usage, not a gap).
 - `POST /usage/reconcile/run?days=3` - Run reconciliation now (needs `ANTHROPIC_ADMIN_KEY`).
 
+## Flights (`/flights`)
+
+Flight price watch for the family Japan trip. **Primary source is a live Google Flights
+scrape** via the CDP Chrome (`services/flight_scrape.cjs`) — no API quota; **SerpApi is the
+automatic fallback**. Watches (routes/dates/filters) are configured in
+`services/flight_watches.json`; add to that file to track more — they roll into one daily
+`#alerts` post (the `flight-prices` skill, 07:15 UK).
+
+- `GET  /flights/routes` / `POST /flights/routes` / `DELETE /flights/routes/{id}` — manage stored routes.
+- `GET  /flights/prices` / `GET /flights/history` / `GET /flights/deals` / `GET /flights/summary` — read SQLite history.
+- `POST /flights/check-now` — on-demand. No body → runs the configured watches via the scrape
+  (scrape-first, SerpApi fallback). With `{"outbound","return_date"}` → SerpApi quick check on
+  that pair (needs `SERPAPI_KEY`).
+- `POST /flights/scan-month` — SerpApi month sweep for cheapest dates (needs `SERPAPI_KEY`).
+
 ## Notes
 
 - All Google APIs have full CRUD access (read, create, update, delete)
