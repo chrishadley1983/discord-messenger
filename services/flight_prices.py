@@ -641,7 +641,7 @@ class FlightPriceMonitor:
 #
 # Primary source: Google Flights scrape via the CDP Chrome (services/flight_scrape.cjs)
 # Fallback:       SerpApi (per watch) when a scrape yields nothing.
-# Config:         data/flight_watches.json  (add watches there to track more routes)
+# Config:         services/flight_watches.json  (add watches there to track more routes)
 # ---------------------------------------------------------------------------
 
 def load_watches(path: Path = WATCHES_PATH) -> dict:
