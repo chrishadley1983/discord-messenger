@@ -112,47 +112,43 @@ async def remove_route(route_id: int):
 
 @router.post("/check-now", dependencies=[Depends(require_auth)])
 async def check_now(req: CheckNowRequest = CheckNowRequest()):
-    """Trigger an on-demand price scan.
+    """Trigger an on-demand flight check.
 
-    If outbound and return_date are provided, checks that specific date pair.
-    Otherwise, scans the next 3 weekend departures.
+    Default: run the configured daily watches via the Google Flights scrape
+    (scrape-first, SerpApi fallback) — identical to the daily alert.
+    If `outbound` and `return_date` are given, run a SerpApi quick check on that
+    specific date pair (needs SERPAPI_KEY).
     """
-    import asyncio
-    monitor = _get_monitor()
-
-    if not monitor.api_key:
-        raise HTTPException(503, "SERPAPI_KEY not configured")
-
+    # Specific date pair → SerpApi quick check
     if req.outbound and req.return_date:
+        monitor = _get_monitor()
+        if not monitor.api_key:
+            raise HTTPException(503, "SERPAPI_KEY not configured for date-pair checks")
         results = await monitor.check_all_routes(date_pairs=[(req.outbound, req.return_date)])
-    else:
-        from services.flight_prices import generate_date_pairs
-        pairs = generate_date_pairs("weekends", window_days=90, trip_lengths=[10, 14])
-        # Take first 3 unique departure dates
-        seen = set()
-        sample = []
-        for out, ret in pairs:
-            if out not in seen and len(seen) < 3:
-                seen.add(out)
-            if out in seen:
-                sample.append((out, ret))
-        results = await monitor.check_all_routes(date_pairs=sample)
+        summary = {}
+        for label, data in results.items():
+            summary[label] = [
+                {
+                    "outbound": r["outbound"],
+                    "return": r["return"],
+                    "price_pp": r["cheapest"]["price_pp"],
+                    "price_total": r["cheapest"]["price_total"],
+                    "airline": r["cheapest"]["airline"],
+                }
+                for r in data["results"]
+            ]
+        return {"status": "completed", "mode": "serpapi-datepair", "results": summary}
 
-    # Flatten for response
-    summary = {}
-    for label, data in results.items():
-        summary[label] = [
-            {
-                "outbound": r["outbound"],
-                "return": r["return"],
-                "price_pp": r["cheapest"]["price_pp"],
-                "price_total": r["cheapest"]["price_total"],
-                "airline": r["cheapest"]["airline"],
-            }
-            for r in data["results"]
-        ]
-
-    return {"status": "completed", "results": summary}
+    # Default → scrape-first daily watches (data/flight_watches.json)
+    from services.flight_prices import run_daily_watches
+    data = await run_daily_watches()
+    return {
+        "status": "completed",
+        "mode": "watches",
+        "scrape_ok": data.get("scrape_ok"),
+        "fallback_used": data.get("fallback_used"),
+        "watches": data.get("watches", []),
+    }
 
 
 class MonthScanRequest(BaseModel):

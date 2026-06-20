@@ -4432,80 +4432,26 @@ async def get_commitment_nudge_data() -> dict[str, Any]:
 
 
 async def get_flight_prices_data() -> dict[str, Any]:
-    """Fetch flight price data for flight-prices skill.
+    """Fetch flight price data for the flight-prices skill.
 
-    Runs a quick check on the cheapest dates found so far,
-    plus scans new date pairs if budget allows.
+    Primary source: Google Flights scrape (services/flight_scrape.cjs) via the
+    dedicated CDP Chrome — no API quota. SerpApi is the automatic per-watch
+    fallback. Watches (routes/dates/filters) live in data/flight_watches.json;
+    add to that file to track more — they all roll into this one daily alert.
     """
     try:
-        from services.flight_prices import FlightPriceMonitor
+        from services.flight_prices import run_daily_watches
 
-        monitor = FlightPriceMonitor()
-
-        if not monitor.api_key:
-            return {"error": "SERPAPI_KEY not set", "__skip__": True, "reason": "No API key configured"}
-
-        # Run a scan of the next 3 cheapest weekend departures (uses 3 API calls)
-        from services.flight_prices import generate_date_pairs
-        pairs = generate_date_pairs("weekends", window_days=180, trip_lengths=[10, 14])
-
-        # Pick a sample: next 3 upcoming departure dates (6 calls total — 3 dates x 2 trip lengths)
-        # Group by outbound date, take first 3 unique dates
-        seen_dates = set()
-        sample_pairs = []
-        for out, ret in pairs:
-            if out not in seen_dates and len(seen_dates) < 3:
-                seen_dates.add(out)
-            if out in seen_dates:
-                sample_pairs.append((out, ret))
-
-        results = await monitor.check_all_routes(date_pairs=sample_pairs)
-
-        # Get overall cheapest from DB
-        cheapest = monitor.get_cheapest(days_back=30, limit=5)
-        deals = monitor.detect_deals()
-        summary = monitor.get_summary(days_back=7)
+        data = await run_daily_watches()
+        watches = data.get("watches", [])
 
         return {
-            "scan_results": {
-                label: {
-                    "results": [
-                        {
-                            "outbound": r["outbound"],
-                            "return": r["return"],
-                            "price_pp": r["cheapest"]["price_pp"],
-                            "price_total": r["cheapest"]["price_total"],
-                            "airline": r["cheapest"]["airline"],
-                            "duration_min": r["cheapest"]["duration_min"],
-                            "insights": r["insights"],
-                        }
-                        for r in data["results"]
-                    ]
-                }
-                for label, data in results.items()
-            },
-            "cheapest_overall": [
-                {
-                    "label": c["label"],
-                    "outbound": c["outbound_date"],
-                    "return": c["return_date"],
-                    "price_pp": c["price_pp"],
-                    "price_total": c["price_total"],
-                    "airline": c["airline"],
-                }
-                for c in cheapest
-            ],
-            "deals": [
-                {
-                    "label": d["label"],
-                    "outbound": d["outbound_date"],
-                    "price_pp": d["price_pp"],
-                    "deal_type": d.get("deal_type"),
-                    "drop_pct": d.get("drop_pct"),
-                }
-                for d in deals
-            ],
-            "summary": summary,
+            "watches": watches,
+            "scrape_ok": data.get("scrape_ok"),
+            "fallback_used": data.get("fallback_used"),
+            "source_primary": data.get("source_primary"),
+            "scrape_error": data.get("scrape_error"),
+            "generated_at": data.get("generated_at"),
             "timestamp": datetime.now(UK_TZ).isoformat(),
         }
 

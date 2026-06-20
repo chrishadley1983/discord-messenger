@@ -13,7 +13,10 @@ Usage:
 
 import asyncio
 import json
+import os
 import sqlite3
+import subprocess
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,7 +28,10 @@ import httpx
 from logger import logger
 
 UK_TZ = ZoneInfo("Europe/London")
-DB_PATH = Path(__file__).parent.parent / "data" / "flight_prices.db"
+REPO_ROOT = Path(__file__).parent.parent
+DB_PATH = REPO_ROOT / "data" / "flight_prices.db"
+WATCHES_PATH = REPO_ROOT / "services" / "flight_watches.json"
+SCRAPER_SCRIPT = REPO_ROOT / "services" / "flight_scrape.cjs"
 SERPAPI_BASE = "https://serpapi.com/search"
 
 # Default config — override via .env or API
@@ -628,3 +634,292 @@ class FlightPriceMonitor:
         with get_db() as conn:
             conn.execute("UPDATE routes SET active = 0 WHERE id = ?", (route_id,))
             conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Scrape-first daily watches
+#
+# Primary source: Google Flights scrape via the CDP Chrome (services/flight_scrape.cjs)
+# Fallback:       SerpApi (per watch) when a scrape yields nothing.
+# Config:         data/flight_watches.json  (add watches there to track more routes)
+# ---------------------------------------------------------------------------
+
+def load_watches(path: Path = WATCHES_PATH) -> dict:
+    """Load the watches config. Returns {} if missing/invalid."""
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.error(f"Could not load flight watches config: {e}")
+        return {}
+
+
+def ensure_chrome_cdp(port: int = 9222, launch: bool = True, wait_secs: int = 15) -> bool:
+    """Ensure a CDP Chrome is listening on `port`. Launch the dedicated profile if not.
+
+    Follows the project's hard-won CDP rules (memory): subprocess.Popen + a
+    NON-default --user-data-dir, else Chrome 136+ silently ignores the port.
+    """
+    url = f"http://localhost:{port}/json/version"
+    try:
+        if httpx.get(url, timeout=3).status_code == 200:
+            return True
+    except Exception:
+        pass
+    if not launch:
+        return False
+
+    chrome = os.getenv("CHROME_BIN", r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+    if not Path(chrome).exists():
+        alt = r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+        if Path(alt).exists():
+            chrome = alt
+    profile = os.getenv("CHROME_CDP_PROFILE",
+                        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome-Vinted"))
+    args = [
+        chrome,
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={profile}",
+        "--remote-debugging-address=127.0.0.1",
+        "--headless=new",
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+    try:
+        subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        logger.warning(f"Could not launch CDP Chrome: {e}")
+        return False
+    for _ in range(wait_secs):
+        try:
+            if httpx.get(url, timeout=2).status_code == 200:
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+    return False
+
+
+def scrape_watches(cfg: dict, timeout: int = 240) -> list[dict]:
+    """Run the Node Google Flights scraper for all watches. Returns its results list.
+
+    Raises on hard failure so the caller can fall back to SerpApi.
+    """
+    searches = []
+    for w in cfg.get("watches", []):
+        searches.append({
+            "id": w["id"], "label": w["label"],
+            "origin": w["origin"], "destination": w["destination"],
+            "outbound": w["outbound"], "return": w["return"],
+            "adults": w.get("adults", 1), "children": w.get("children", []),
+            "maxStops": w.get("maxStops"),
+        })
+    scraper_input = {"cdp": cfg.get("cdp", "http://localhost:9222"), "searches": searches}
+
+    tmp_dir = REPO_ROOT / "data" / "tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    cfg_path = tmp_dir / "scrape_input.json"
+    cfg_path.write_text(json.dumps(scraper_input), encoding="utf-8")
+
+    node = os.getenv("NODE_BIN", "node")
+    env = {**os.environ, "NODE_PATH": str(REPO_ROOT / "node_modules")}
+    proc = subprocess.run(
+        [node, str(SCRAPER_SCRIPT), str(cfg_path)],
+        cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=timeout, env=env,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"scraper exit {proc.returncode}: {proc.stderr[-400:]}")
+    out = json.loads(proc.stdout)
+    if not out.get("ok"):
+        raise RuntimeError(f"scraper not ok: {out.get('error')}")
+    return out.get("results", [])
+
+
+def pick_best(flights: list[dict], select: dict, pax: int) -> Optional[dict]:
+    """Apply a watch's `select` criteria and return the single best flight (normalised)."""
+    select = select or {}
+    req_stops = select.get("require_stops")
+    dfrom = select.get("out_depart_from")
+    dto = select.get("out_depart_to")
+    max_lay = select.get("max_layover_min")
+
+    def matches(f, strict=True):
+        if not f.get("price"):
+            return False
+        if req_stops is not None and f.get("stops") != req_stops:
+            return False
+        if strict:
+            dt = f.get("departTime")
+            if dfrom and dt and dt < dfrom:
+                return False
+            if dto and dt and dt > dto:
+                return False
+            if max_lay is not None:
+                lm = f.get("layoverMin")
+                if lm is not None and lm > max_lay:
+                    return False
+                if (f.get("stops") or 0) >= 1 and lm is None:
+                    return False
+        return True
+
+    off_criteria = False
+    cands = [f for f in flights if matches(f, strict=True)]
+    if not cands:
+        cands = [f for f in flights if matches(f, strict=False)]
+        off_criteria = True
+    if not cands:
+        return None
+
+    key = "durationMin" if select.get("sort") == "duration" else "price"
+    cands.sort(key=lambda x: (x.get(key) or 9_999_999))
+    b = cands[0]
+    total = b["price"]
+    return {
+        "price_total": total,
+        "price_pp": round(total / max(pax, 1)),
+        "airlines": b.get("airlines"),
+        "depart_time": b.get("departTime"),
+        "arrive_time": b.get("arriveTime"),
+        "plus_days": b.get("plusDays"),
+        "duration_min": b.get("durationMin"),
+        "stops": b.get("stops"),
+        "nonstop": b.get("nonstop"),
+        "layover_min": b.get("layoverMin"),
+        "layover_airports": [a.get("airport") for a in (b.get("layovers") or [])],
+        "off_criteria": off_criteria,
+    }
+
+
+async def _serpapi_best(monitor: "FlightPriceMonitor", w: dict) -> tuple[Optional[dict], Optional[str]]:
+    """SerpApi fallback for one watch. Returns (best, 'serpapi') or (None, None)."""
+    if not monitor.api_key:
+        return None, None
+    pax = w.get("adults", 1) + len(w.get("children") or [])
+    # SerpApi stops: 1=nonstop, 2=<=1 stop, 3=<=2 stops, 0=any
+    serp_stops = {0: 1, 1: 2, 2: 3}.get(w.get("maxStops"), 0)
+    try:
+        data = await search_flights(
+            api_key=monitor.api_key,
+            departure_id=w["origin"], arrival_id=w["destination"],
+            outbound_date=w["outbound"], return_date=w["return"],
+            adults=pax, travel_class=1, stops=serp_stops, currency="GBP",
+        )
+        flights = parse_flight_results(data, pax)
+        if not flights:
+            return None, None
+        cheapest = flights[0]
+        return {
+            "price_total": cheapest["price_total"],
+            "price_pp": round(cheapest["price_total"] / max(pax, 1)),
+            "airlines": cheapest.get("airline"),
+            "depart_time": cheapest.get("departure_time"),
+            "arrive_time": cheapest.get("arrival_time"),
+            "plus_days": None,
+            "duration_min": cheapest.get("duration_min"),
+            "stops": w.get("maxStops"),
+            "nonstop": w.get("maxStops") == 0,
+            "layover_min": None,
+            "layover_airports": [],
+            "off_criteria": True,  # serpapi can't honour time/layover filters
+        }, "serpapi"
+    except Exception as e:
+        logger.warning(f"SerpApi fallback failed for {w['id']}: {e}")
+        return None, None
+
+
+def _record_check(monitor: "FlightPriceMonitor", w: dict, best: dict, source: str) -> dict:
+    """Persist a check to SQLite and return history stats for this watch's date pair."""
+    pax = w.get("adults", 1) + len(w.get("children") or [])
+    route_id = monitor.add_route(
+        w["origin"], w["destination"], w["label"],
+        passengers=pax, cabin=1, stops=w.get("maxStops") or 0,
+    )
+    now = datetime.now(UK_TZ).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO price_checks
+               (route_id, outbound_date, return_date, price_total, price_pp,
+                airline, duration_min, departure_time, arrival_time, source, raw_json, checked_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (route_id, w["outbound"], w["return"], best["price_total"], best["price_pp"],
+             best.get("airlines"), best.get("duration_min"), best.get("depart_time"),
+             best.get("arrive_time"), source, json.dumps(best), now),
+        )
+        conn.commit()
+        rows = conn.execute(
+            """SELECT price_pp FROM price_checks
+               WHERE route_id = ? AND outbound_date = ? AND return_date = ?
+               ORDER BY checked_at DESC""",
+            (route_id, w["outbound"], w["return"]),
+        ).fetchall()
+    pps = [r["price_pp"] for r in rows if r["price_pp"] is not None]
+    return {
+        "lowest_pp": min(pps) if pps else None,
+        "checks": len(pps),
+        "prev_pp": pps[1] if len(pps) > 1 else None,
+    }
+
+
+async def run_daily_watches(config_path: Path = WATCHES_PATH) -> dict:
+    """Run all configured watches (scrape-first, SerpApi fallback) and return readouts.
+
+    Output:
+        {
+          "watches": [ {id, label, outbound, return, pax, best, source, insight,
+                        cheapest_banner, history, error?} ],
+          "generated_at", "source_primary", "fallback_used", "scrape_ok"
+        }
+    """
+    cfg = load_watches(config_path)
+    out: dict[str, Any] = {
+        "watches": [], "generated_at": datetime.now(UK_TZ).isoformat(),
+        "source_primary": "scrape", "fallback_used": False, "scrape_ok": False,
+    }
+    if not cfg.get("watches"):
+        out["error"] = "No watches configured"
+        return out
+
+    scrape_by_id: dict[str, dict] = {}
+    try:
+        await asyncio.to_thread(ensure_chrome_cdp)
+        results = await asyncio.to_thread(scrape_watches, cfg)
+        scrape_by_id = {r["id"]: r for r in results}
+        out["scrape_ok"] = True
+    except Exception as e:
+        logger.warning(f"Flight scrape failed, will use SerpApi fallback: {e}")
+        out["scrape_error"] = str(e)
+
+    monitor = FlightPriceMonitor()
+
+    for w in cfg["watches"]:
+        pax = w.get("adults", 1) + len(w.get("children") or [])
+        entry: dict[str, Any] = {
+            "id": w["id"], "label": w["label"],
+            "outbound": w["outbound"], "return": w["return"], "pax": pax,
+            "best": None, "source": None, "insight": None,
+            "cheapest_banner": None, "history": None,
+        }
+        sr = scrape_by_id.get(w["id"])
+        best, source = None, None
+        if sr and sr.get("flights"):
+            best = pick_best(sr["flights"], w.get("select", {}), pax)
+            if best:
+                source = "scrape"
+                entry["insight"] = sr.get("insight")
+                entry["cheapest_banner"] = sr.get("cheapestBanner")
+        if not best:
+            best, source = await _serpapi_best(monitor, w)
+            if best:
+                out["fallback_used"] = True
+
+        if best:
+            entry["best"] = best
+            entry["source"] = source
+            try:
+                entry["history"] = _record_check(monitor, w, best, source)
+            except Exception as e:
+                logger.warning(f"Could not record flight check for {w['id']}: {e}")
+        else:
+            entry["error"] = "No data (scrape + SerpApi both failed)"
+        out["watches"].append(entry)
+
+    return out
