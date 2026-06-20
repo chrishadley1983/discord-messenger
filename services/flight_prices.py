@@ -826,6 +826,26 @@ async def _serpapi_best(monitor: "FlightPriceMonitor", w: dict) -> tuple[Optiona
         return None, None
 
 
+def compute_history(rows: list[dict]) -> dict:
+    """Build history stats (lowest_pp, checks, prev_pp) from price_check rows.
+
+    `rows` is newest-first, each with `price_pp` and `source`. We **prefer
+    scrape-sourced readings**: a one-off SerpApi fallback fare is the cheapest
+    *unfiltered* itinerary (often a grim long-layover red-eye), so letting it
+    into "lowest seen"/movement would mislead. Only fall back to all rows when
+    there are no scrape readings at all.
+    """
+    valid = [r for r in rows if r.get("price_pp") is not None]
+    scrape_pps = [r["price_pp"] for r in valid if r.get("source") == "scrape"]
+    pps = scrape_pps if scrape_pps else [r["price_pp"] for r in valid]
+    return {
+        "lowest_pp": min(pps) if pps else None,
+        "checks": len(pps),
+        "prev_pp": pps[1] if len(pps) > 1 else None,
+        "basis": "scrape" if scrape_pps else ("all" if pps else "none"),
+    }
+
+
 def _record_check(monitor: "FlightPriceMonitor", w: dict, best: dict, source: str) -> dict:
     """Persist a check to SQLite and return history stats for this watch's date pair."""
     pax = w.get("adults", 1) + len(w.get("children") or [])
@@ -846,17 +866,12 @@ def _record_check(monitor: "FlightPriceMonitor", w: dict, best: dict, source: st
         )
         conn.commit()
         rows = conn.execute(
-            """SELECT price_pp FROM price_checks
+            """SELECT price_pp, source FROM price_checks
                WHERE route_id = ? AND outbound_date = ? AND return_date = ?
                ORDER BY checked_at DESC""",
             (route_id, w["outbound"], w["return"]),
         ).fetchall()
-    pps = [r["price_pp"] for r in rows if r["price_pp"] is not None]
-    return {
-        "lowest_pp": min(pps) if pps else None,
-        "checks": len(pps),
-        "prev_pp": pps[1] if len(pps) > 1 else None,
-    }
+    return compute_history([dict(r) for r in rows])
 
 
 async def run_daily_watches(config_path: Path = WATCHES_PATH) -> dict:
