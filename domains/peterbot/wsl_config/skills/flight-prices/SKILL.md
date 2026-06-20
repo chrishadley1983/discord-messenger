@@ -56,7 +56,7 @@ Easter 2027 · 4 of us · out Thu 25 Mar · back Sun 11 Apr
 
 **① Best value (1-stop)** — {airlines}
 £{price_total} total · £{price_pp}pp
-dep {depart_time} Thu → arr {arrive_time} (+{plus_days}d) · {duration} · {layover_min} layover via {layover_airports}
+dep {depart_time} Thu → arr {arrive_time} (+{plus_days}d) · {duration} · {layover_min} layover[ via {layover_airports}]
 {movement line}
 
 **② Best direct (nonstop)** — {airlines}
@@ -81,6 +81,7 @@ _Source: live Google Flights{ · SerpApi fallback used} · check: google.com/tra
 - If a watch has `error`, show `⚠️ {label}: couldn't fetch today` instead of a price.
 - If `data.fallback_used` is true, note `SerpApi fallback used` in the source line.
 - If `data.scrape_ok` is false AND there's no data at all, post: `⚠️ Flight watch couldn't fetch today ({scrape_error}).` so the breakage is visible.
+- Layover: only append `via {layover_airports}` when it's non-empty — never render "via None"/"via []". Nonstop fares have no layover segment at all.
 - Keep under 2000 chars for Discord. Don't fabricate booking deep links — point to `google.com/travel/flights`.
 - Context for Chris (brief, only when a real dip happens): peak-Easter fares don't reliably fall closer to departure, so a clear drop is worth grabbing rather than waiting.
 
