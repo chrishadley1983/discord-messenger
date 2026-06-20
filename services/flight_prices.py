@@ -487,6 +487,7 @@ class FlightPriceMonitor:
                 FROM price_checks pc
                 JOIN routes r ON r.id = pc.route_id
                 WHERE pc.checked_at > datetime('now', ?)
+                  AND r.active = 1
             """
             params: list = [f"-{days_back} days"]
 
@@ -531,7 +532,8 @@ class FlightPriceMonitor:
                        r.label
                 FROM price_checks pc
                 JOIN routes r ON r.id = pc.route_id
-                WHERE pc.id IN (
+                WHERE r.active = 1
+                  AND pc.id IN (
                     SELECT id FROM price_checks sub
                     WHERE sub.route_id = pc.route_id
                       AND sub.outbound_date = pc.outbound_date
@@ -587,6 +589,7 @@ class FlightPriceMonitor:
                 """SELECT pc.*, r.label FROM price_checks pc
                    JOIN routes r ON r.id = pc.route_id
                    WHERE pc.checked_at > datetime('now', ?)
+                     AND r.active = 1
                    ORDER BY pc.price_pp ASC LIMIT 1""",
                 (f"-{days_back} days",),
             ).fetchone()
