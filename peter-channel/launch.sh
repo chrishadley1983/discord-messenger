@@ -7,6 +7,10 @@
 # Prefer the user-space native Claude Code install (2.1.170+, dynamic
 # workflows) over the stale root-owned npm one at /usr/bin/claude.
 export PATH="$HOME/.local/bin:$PATH"
+# Static, non-rotating Claude Code OAuth token (see scripts/claude-oauth-env.sh):
+# shared by all WSL sessions so the rotating-refresh-token race can't log them
+# out. No-op until provisioned via scripts/set-claude-oauth-token.sh.
+source "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/scripts/claude-oauth-env.sh"
 # The MCP init handshake must finish within this window or Claude Code drops the
 # channel (→ :8104 never binds → bot.py falls back to router_v2). Cold tsx
 # transpile + discord.js import measures ~21s and crossed the 30s default on
