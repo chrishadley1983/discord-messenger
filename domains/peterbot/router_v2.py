@@ -51,6 +51,16 @@ else:
 # Directory for WSL-side PID files (used to kill orphaned processes)
 WSL_PID_DIR = "/tmp/peterbot_pids"
 
+# Shared WSL include that exports the static, non-rotating CLAUDE_CODE_OAUTH_TOKEN
+# (when provisioned). Sourcing it here keeps the router_v2 fallback on the same
+# token as the channel sessions, so the shared-credentials refresh-token race
+# can't log it out. No-op until the token file is created; sourcing failures are
+# swallowed so a missing include never breaks the fallback. See
+# scripts/claude-oauth-env.sh and the 2026-06-20 token-rotation incident.
+OAUTH_ENV_SH = (
+    "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/scripts/claude-oauth-env.sh"
+)
+
 # Temp directory for downloaded attachments (images, files)
 ATTACHMENT_TEMP_DIR = Path(__file__).parent.parent.parent / "data" / "tmp" / "attachments"
 
@@ -353,6 +363,7 @@ def _build_cli_command(
     use_model = model or CLI_MODEL
     config_export = f"export CLAUDE_CONFIG_DIR='{config_dir}' && " if config_dir else ""
     claude_cmd = (
+        f"source '{OAUTH_ENV_SH}' 2>/dev/null || true; "
         f"mkdir -p {WSL_PID_DIR} && "
         f"echo $$ > {pid_file} && "
         f"cd {CLI_WORKING_DIR} && "

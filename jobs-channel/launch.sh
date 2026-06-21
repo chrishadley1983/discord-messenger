@@ -7,6 +7,10 @@
 # Prefer the user-space native Claude Code install (2.1.170+, dynamic
 # workflows) over the stale root-owned npm one at /usr/bin/claude.
 export PATH="$HOME/.local/bin:$PATH"
+# Static, non-rotating Claude Code OAuth token (see scripts/claude-oauth-env.sh):
+# shared by all WSL sessions so the rotating-refresh-token race can't log them
+# out. No-op until provisioned via scripts/set-claude-oauth-token.sh.
+source "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/scripts/claude-oauth-env.sh"
 set -euo pipefail
 
 CHANNEL_DIR="/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/jobs-channel"
