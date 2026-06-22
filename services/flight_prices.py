@@ -656,7 +656,7 @@ def load_watches(path: Path = WATCHES_PATH) -> dict:
         return {}
 
 
-def ensure_chrome_cdp(port: int = 9222, launch: bool = True, wait_secs: int = 15) -> bool:
+def ensure_chrome_cdp(port: int = 9222, launch: bool = True, wait_secs: int = 30) -> bool:
     """Ensure a CDP Chrome is listening on `port`. Launch the dedicated profile if not.
 
     Follows the project's hard-won CDP rules (memory): subprocess.Popen + a
@@ -700,6 +700,36 @@ def ensure_chrome_cdp(port: int = 9222, launch: bool = True, wait_secs: int = 15
             pass
         time.sleep(1)
     return False
+
+
+def restart_cdp_chrome(port: int = 9222) -> bool:
+    """Kill a wedged CDP Chrome and relaunch a fresh one. Returns readiness.
+
+    A long-lived shared CDP Chrome can wedge such that the debugging *port*
+    still answers ``/json/version`` but Playwright's ``connectOverCDP`` hangs
+    (2026-06-22: leaked Google-Flights tabs from timeout-killed runs degraded
+    the instance until every scrape timed out). ``ensure_chrome_cdp`` treats a
+    200 as healthy and won't relaunch, so recovery needs an explicit kill.
+    Targets only the ``--remote-debugging-port`` instance so Chris's normal
+    Chrome is untouched; the profile's cookies persist on disk, so Vinted/other
+    automation simply reconnects to the fresh instance.
+    """
+    try:
+        ps = (
+            "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+            f"Where-Object {{ $_.CommandLine -match 'remote-debugging-port={port}' }} | "
+            "ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }"
+        )
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps],
+            capture_output=True, text=True, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        time.sleep(2)
+        logger.info(f"restart_cdp_chrome: killed debugging-port={port} Chrome, relaunching")
+    except Exception as e:
+        logger.warning(f"restart_cdp_chrome kill step failed: {e}")
+    return ensure_chrome_cdp(port=port, launch=True)
 
 
 def scrape_watches(cfg: dict, timeout: int = 240) -> list[dict]:
@@ -897,14 +927,37 @@ async def run_daily_watches(config_path: Path = WATCHES_PATH) -> dict:
         return out
 
     scrape_by_id: dict[str, dict] = {}
-    try:
-        await asyncio.to_thread(ensure_chrome_cdp)
-        results = await asyncio.to_thread(scrape_watches, cfg)
-        scrape_by_id = {r["id"]: r for r in results}
-        out["scrape_ok"] = True
-    except Exception as e:
-        logger.warning(f"Flight scrape failed, will use SerpApi fallback: {e}")
-        out["scrape_error"] = str(e)
+    # Scrape-first with a cold-start retry. The dedicated CDP Chrome can take
+    # >15s to bind the debugging port on a cold profile, and the daily flight
+    # job often fires before it's ready — that race forced the SerpApi fallback
+    # on 2026-06-22. ensure_chrome_cdp's result was previously ignored; now we
+    # require readiness and retry once (re-ensuring Chrome) before giving up, so
+    # a slow cold start no longer silently downgrades the data source.
+    last_err: Optional[Exception] = None
+    for attempt in (1, 2):
+        try:
+            if attempt == 1:
+                ready = await asyncio.to_thread(ensure_chrome_cdp)
+            else:
+                # Attempt 1 failed. The port may answer /json/version while the
+                # instance is wedged (connectOverCDP hangs), so a plain re-ensure
+                # won't help — force a fresh Chrome before retrying.
+                logger.warning("Flight scrape: relaunching CDP Chrome before retry")
+                ready = await asyncio.to_thread(restart_cdp_chrome)
+            if not ready:
+                raise RuntimeError("CDP Chrome not ready on :9222 after wait")
+            results = await asyncio.to_thread(scrape_watches, cfg)
+            scrape_by_id = {r["id"]: r for r in results}
+            out["scrape_ok"] = True
+            break
+        except Exception as e:
+            last_err = e
+            logger.warning(f"Flight scrape attempt {attempt} failed: {e}")
+            if attempt == 1:
+                await asyncio.sleep(2)  # brief settle before the relaunch retry
+    if not out["scrape_ok"]:
+        logger.warning(f"Flight scrape failed after retries, using SerpApi fallback: {last_err}")
+        out["scrape_error"] = str(last_err)
 
     monitor = FlightPriceMonitor()
 

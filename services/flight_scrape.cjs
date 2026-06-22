@@ -251,6 +251,22 @@ async function runSearch(ctx, s) {
     process.exit(1);
   }
   const ctx = browser.contexts()[0] || (await browser.newContext());
+  // Self-heal: close stale Google Flights tabs left by a previous run that was
+  // killed mid-scrape (the Python wrapper's 240s timeout kills node before
+  // runSearch's `finally page.close()` can fire). Left unchecked these pile up
+  // in the shared CDP Chrome until connectOverCDP itself times out and every
+  // scrape silently falls back to SerpApi (2026-06-22). Closing them each run
+  // keeps the instance clean and never touches non-flight tabs (Vinted etc.).
+  try {
+    for (const p of ctx.pages()) {
+      let u = '';
+      try { u = p.url(); } catch (e) {}
+      if (/google\.[^/]*\/travel\/flights/i.test(u)) {
+        await p.close().catch(() => {});
+        log('closed stale flights tab:', u.slice(0, 60));
+      }
+    }
+  } catch (e) { log('stale-tab cleanup failed:', e.message); }
   const results = [];
   for (const s of cfg.searches) {
     results.push(await runSearch(ctx, s));
