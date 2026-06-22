@@ -9,10 +9,12 @@ Rebuilt daily (see bot.py) so the static snapshot stays current.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -99,6 +101,113 @@ async def _latest_bodyfat() -> dict | None:
     return None
 
 
+async def _video_ok(vid: str, client: httpx.AsyncClient):
+    """True/False if a YouTube video is available+embeddable; None on a transient error."""
+    try:
+        r = await client.get("https://www.youtube.com/oembed",
+                             params={"format": "json", "url": f"https://www.youtube.com/watch?v={vid}"})
+        return r.status_code == 200
+    except Exception:
+        return None
+
+
+async def _yt_search_ids(query: str, client: httpx.AsyncClient) -> list[str]:
+    """Scrape YouTube search results for candidate video ids, in result order."""
+    try:
+        r = await client.get("https://www.youtube.com/results",
+                             params={"search_query": query, "hl": "en", "gl": "US"})
+        ids, seen = [], set()
+        for m in re.findall(r'"videoId":"([0-9A-Za-z_-]{11})"', r.text):
+            if m not in seen:
+                seen.add(m)
+                ids.append(m)
+        return ids[:12]
+    except Exception:
+        return []
+
+
+async def _find_working_video(name: str, slug: str, client: httpx.AsyncClient):
+    """Search YouTube for the exercise and loop through results until one is
+    available. Tries a few query phrasings before giving up."""
+    base = re.sub(r"\(.*?\)", "", name or slug).strip()
+    extra = " bodyweight" if ("(BW)" in (name or "") or slug.startswith("bw-")) else ""
+    for q in (f"{base} exercise how to{extra}", f"how to {base}{extra}", f"{base}{extra} proper form"):
+        for vid in await _yt_search_ids(q, client):
+            if await _video_ok(vid, client) is True:
+                return vid
+    return None
+
+
+async def _persist_video_url(slug: str, url, client: httpx.AsyncClient) -> None:
+    """Write a healed (or cleared) video_url back to fitness_exercises so it sticks."""
+    if not (SUPABASE_URL and SUPABASE_KEY):
+        return
+    try:
+        await client.patch(f"{SUPABASE_URL}/rest/v1/fitness_exercises",
+                          params={"slug": f"eq.{slug}"},
+                          headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
+                                   "Content-Type": "application/json"},
+                          json={"video_url": url})
+    except Exception as e:
+        logger.warning(f"Dashboard: failed to persist video for {slug}: {e}")
+
+
+async def _heal_dead_videos(library: dict) -> None:
+    """Make sure every exercise demo video actually plays. Each video_url is checked
+    via YouTube oEmbed (cached 7-day in data/yt_availability.json). If one is dead,
+    search YouTube for the exercise and loop through results until an available video
+    is found, then use it AND persist it back to fitness_exercises so the fix sticks.
+    If nothing playable is found, hide the embed (null video_url) rather than render a
+    broken 'Video unavailable' box. Transient network errors fail open (keep the video)."""
+    cache_path = LOCAL_HTML.parent / "yt_availability.json"
+    try:
+        cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
+    except Exception:
+        cache = {}
+    now = datetime.now().timestamp()
+    ttl = 7 * 86400
+
+    async with httpx.AsyncClient(
+        timeout=12, follow_redirects=True,
+        headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en", "Cookie": "CONSENT=YES+cb"},
+    ) as c:
+        async def ok(vid):
+            ent = cache.get(vid)
+            if ent and (now - ent.get("ts", 0)) <= ttl:
+                return ent["ok"]
+            res = await _video_ok(vid, c)
+            if res is None:
+                return True  # transient — fail open, don't cache
+            cache[vid] = {"ok": res, "ts": now}
+            return res
+
+        healed, hidden = [], []
+        for slug, row in library.items():
+            vid = _yt_id(row.get("video_url"))
+            if not vid or await ok(vid):
+                continue
+            # dead → search + loop until a working replacement is found
+            new = await _find_working_video(row.get("name", slug), slug, c)
+            if new:
+                url = f"https://www.youtube.com/watch?v={new}"
+                row["video_url"] = url
+                cache[new] = {"ok": True, "ts": now}
+                await _persist_video_url(slug, url, c)
+                healed.append(f"{slug}->{new}")
+            else:
+                row["video_url"] = None
+                hidden.append(slug)
+
+    try:
+        cache_path.write_text(json.dumps(cache))
+    except Exception:
+        pass
+    if healed:
+        logger.info(f"Dashboard: healed {len(healed)} dead exercise video(s): {', '.join(healed)}")
+    if hidden:
+        logger.info(f"Dashboard: hid {len(hidden)} unfixable exercise video(s): {', '.join(hidden)}")
+
+
 # Three ~10-min mobility routines, rotated by day. Hip/sciatica-biased to suit
 # Chris's niggle. Slugs all exist in fitness_exercises with demo videos.
 MOBILITY_ROUTINES = [  # each ~10 min (600s)
@@ -179,6 +288,7 @@ async def _build_data() -> dict:
     trends = await fit.fetch_trends_series(90)
     bodyfat = await _latest_bodyfat()
     library = {r["slug"]: r for r in await fit.get_all_exercises()}
+    await _heal_dead_videos(library)  # check each demo plays; search+heal dead ones, else hide
 
     w = dash.get("weight", {})
     nut = dash.get("nutrition", {})
