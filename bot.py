@@ -268,6 +268,35 @@ def _launch_channel_sessions():
             logger.warning(f"Failed to launch channel session '{name}': {e}")
 
 
+def _channel_auth_watchdog():
+    """Heal expired/corrupt WSL Claude OAuth — the blind spot _launch_channel_sessions
+    and the HTTP-health watchdog both miss.
+
+    All WSL channel sessions share one OAuth file; when its refresh token gets
+    blanked (refresh-token rotation race) and the access token expires, every
+    session 401s while its HTTP /health stays green, so jobs return "empty
+    response" (incident 2026-06-20). This re-syncs the always-logged-in Windows
+    token into WSL and restarts only the locked-out sessions. Any session it
+    restarts is stamped into _channel_last_relaunch so the health-port watchdog
+    grants it the cold-start grace instead of immediately recycling it.
+    """
+    import time as _time
+
+    try:
+        from domains.peterbot.channel_auth import heal_channel_auth
+    except Exception as e:
+        logger.warning(f"channel_auth import failed: {e}")
+        return
+    try:
+        heal_channel_auth(
+            mark_relaunched=lambda name: _channel_last_relaunch.__setitem__(
+                name, _time.monotonic()
+            )
+        )
+    except Exception as e:
+        logger.warning(f"channel_auth watchdog tick failed: {e}")
+
+
 def _create_logged_task(coro, name: str = None):
     """Create an asyncio task with exception logging.
 
@@ -438,6 +467,20 @@ async def on_ready():
         replace_existing=True,
     )
     logger.info("Channel watchdog registered (every 1 min)")
+
+    # Channel auth watchdog — heal expired/corrupt WSL Claude OAuth. The channel
+    # watchdog above only checks HTTP /health, which stays green while the Claude
+    # CLI inside the tmux is 401'd (shared-credentials refresh race). Without this
+    # an auth failure silently fails every scheduled job until someone notices.
+    scheduler.add_job(
+        _channel_auth_watchdog,
+        "interval",
+        minutes=1,
+        id="channel_auth_watchdog",
+        max_instances=1,
+        replace_existing=True,
+    )
+    logger.info("Channel auth watchdog registered (every 1 min)")
 
     # WhatsApp watchdog — restart Evolution API container if it hangs (event
     # loop stalls but container stays 'Up'; no Docker healthcheck exists).
