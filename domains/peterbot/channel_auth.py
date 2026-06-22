@@ -208,6 +208,47 @@ def _restart_session(name: str) -> bool:
         return False
 
 
+def force_restart_channel(name: str, mark_relaunched=None) -> bool:
+    """Reactively restart one wedged channel session (cooldown-guarded).
+
+    The pane-401 / corrupt-file detection in :func:`heal_channel_auth` cannot
+    see a channel that is *wedged* — a stuck or silently-401'd Claude turn that
+    keeps the HTTP server green and prints no ``/login`` marker, yet returns an
+    empty response for every job (the 2026-06-22 incident: three LLM jobs each
+    burned the full 20-min ``JOB_TIMEOUT_SECONDS`` before failing). The
+    scheduler calls this the moment a channel job comes back empty twice, so the
+    *next* scheduled job runs on a fresh session instead of every job hanging.
+
+    Best-effort: returns False (never raises) on unknown name or cooldown so it
+    is safe to fire-and-forget from the hot job path. Shares ``_last_restart_ts``
+    with the proactive watchdog so the two never thrash the same session.
+    """
+    if name not in CHANNELS:
+        logger.warning(f"channel_auth: refusing to restart unknown channel '{name}'")
+        return False
+    now = time.time()
+    with _lock:
+        if now - _last_restart_ts.get(name, 0.0) < RESTART_COOLDOWN_SECONDS:
+            logger.info(f"channel_auth: reactive restart of '{name}' skipped (cooldown)")
+            return False
+        _last_restart_ts[name] = now
+    ok = _restart_session(name)
+    if ok:
+        if mark_relaunched:
+            try:
+                mark_relaunched(name)
+            except Exception:
+                pass
+        _alert(
+            f"wedge-{name}",
+            f":wrench: **Restarted wedged `{name}`.** It returned an empty "
+            "response with no 401 marker (stuck/locked Claude turn). The next "
+            "scheduled job should recover.",
+        )
+        logger.warning(f"channel_auth: reactively restarted wedged '{name}'")
+    return ok
+
+
 def _alert(key: str, msg: str) -> None:
     """Throttled fire-and-forget Discord post (one per `key` per window)."""
     now = time.time()

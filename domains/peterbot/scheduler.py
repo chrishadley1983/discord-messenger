@@ -834,6 +834,25 @@ class PeterbotScheduler:
                     logger.warning(f"Job {job.name}: empty response, retrying once")
                     await asyncio.sleep(5)
                     response = await _send_once()
+                    # Still empty after the retry → the channel is almost
+                    # certainly wedged (a stuck/silently-401'd Claude turn that
+                    # keeps /health green and prints no /login marker, so the
+                    # pane-grep watchdog can't see it — the 2026-06-22 incident
+                    # where three LLM jobs each burned the full 20-min timeout).
+                    # Reactively restart that channel so the NEXT scheduled job
+                    # runs on a fresh session instead of every job hanging.
+                    # Fire-and-forget + cooldown-guarded: never blocks/fails the
+                    # current job.
+                    if not response or not response.strip():
+                        used_channel = target[0] if target else self.DEFAULT_JOBS_CHANNEL[0]
+                        try:
+                            from domains.peterbot.channel_auth import force_restart_channel
+                            logger.warning(
+                                f"Job {job.name}: empty after retry — restarting wedged '{used_channel}'"
+                            )
+                            asyncio.create_task(asyncio.to_thread(force_restart_channel, used_channel))
+                        except Exception as heal_err:
+                            logger.warning(f"reactive channel heal failed to start: {heal_err}")
             except asyncio.TimeoutError:
                 duration = time.time() - start_time
                 logger.error(f"Job {job.name} timed out after {duration:.1f}s")
