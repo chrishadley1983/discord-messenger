@@ -13,6 +13,7 @@ import base64
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import urllib.parse as _url
@@ -190,9 +191,19 @@ async def _build_data() -> dict:
     week_no = dash.get("week_no", 0) or 0
     days_remaining = dash.get("days_remaining")
     # Current weight independent of programme start so it shows pre-start too.
-    _wt = compute_trend(await fit.fetch_weight_history(45))
+    _hist = await fit.fetch_weight_history(45)
+    _wt = compute_trend(_hist)
     current = _wt.trend_7d or _wt.latest_raw
+    latest_raw = _wt.latest_raw  # today's actual scale reading (vs the smoothed trend headline)
     slope = _wt.slope_kg_per_week
+    # Date of the most recent raw reading, for the "latest scale" line.
+    latest_date = None
+    try:
+        _r = sorted((x for x in _hist if x.get("value") is not None), key=lambda x: x["date"])
+        if _r:
+            latest_date = date.fromisoformat(_r[-1]["date"]).strftime("%d %b")
+    except Exception:
+        latest_date = None
     cum_loss = (start_w - current) if (start_w and current) else None
     prog = (max(0.0, min(100.0, (start_w - current) / (start_w - target_w) * 100))
             if (start_w and current and start_w != target_w) else 0)
@@ -214,11 +225,17 @@ async def _build_data() -> dict:
         on_track, on_label = "ahead", "Ahead of plan"
     elif current <= target_this_week + 0.3:
         on_track, on_label = "on track", "On track"
+    elif week_no <= 2:
+        # Early programme: weight noise dwarfs a 0.3 kg miss off a micro-target.
+        # Don't flag "behind" and don't guilt-trip while the baseline settles.
+        on_track, on_label = "settling", "Settling in"
     else:
-        on_track, on_label = "behind", "Behind — tighten up"
+        on_track, on_label = "behind", "A touch behind"
 
     hero = {
         "current_weight": _round(current) if current else "—",
+        "latest_weight": _round(latest_raw) if latest_raw is not None else "—",
+        "latest_date": latest_date or "—",
         "target_weight": _round(target_w),
         "start_weight": _round(start_w) if start_w else "—",
         "progress_pct": _round(prog, 0) or 0,
@@ -374,6 +391,25 @@ def _render_plain(data: dict, generated_at: str) -> str:
     return _inject(plain=blob, generated_at=generated_at)
 
 
+def _resolve_surge() -> str:
+    """Locate the surge CLI. NSSM services can launch with a PATH that omits the
+    global npm bin dir (this is why the scheduled DiscordBot build deploys but a
+    HadleyAPI-triggered refresh silently fails to push to surge), so fall back to
+    the known npm install location under the user profile."""
+    for name in ("surge", "surge.cmd"):
+        found = shutil.which(name)
+        if found:
+            return found
+    if os.name == "nt":
+        for base in (os.environ.get("APPDATA", ""), os.path.expanduser("~/AppData/Roaming")):
+            if not base:
+                continue
+            cand = Path(base) / "npm" / "surge.cmd"
+            if cand.exists():
+                return str(cand)
+    return "surge"
+
+
 def _deploy(html: str, domain: str) -> bool:
     d = Path(tempfile.mkdtemp(prefix="reset-cut-"))
     (d / "index.html").write_text(html, encoding="utf-8")
@@ -383,10 +419,11 @@ def _deploy(html: str, domain: str) -> bool:
     # On Windows surge is surge.cmd — invoke via cmd /c so PATH resolution +
     # spaces in the temp path are handled correctly (shell=False keeps args
     # individually quoted).
+    surge_bin = _resolve_surge()
     if os.name == "nt":
-        cmd = ["cmd", "/c", "surge", str(d), domain]
+        cmd = ["cmd", "/c", surge_bin, str(d), domain]
     else:
-        cmd = ["surge", str(d), domain]
+        cmd = [surge_bin, str(d), domain]
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=180, env=env,

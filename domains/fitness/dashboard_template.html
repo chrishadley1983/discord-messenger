@@ -4,131 +4,238 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
-<title>Reset Cut</title>
+<title>Reset Cut — Journal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400;1,9..144,500&family=Archivo:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#0b0f14; --bg2:#121823; --card:#161e2b; --card2:#1c2536; --line:#243144;
-  --ink:#e8eef6; --muted:#8aa0b8; --dim:#5f7a96;
-  --accent:#3ddc97; --accent2:#36b3ff; --warn:#ffc857; --bad:#ff6b6b; --good:#3ddc97;
-  --ring:#243144;
-  --shadow:0 8px 30px rgba(0,0,0,.35);
-  --r:16px;
+  /* Editorial paper-and-ink palette — warm, printed, intentionally NOT a dark dashboard */
+  --paper:#f4efe4; --paper2:#efe8d9; --panel:#fbf7ee; --ink:#221d17; --ink2:#4d453a;
+  --muted:#6f6452; --faint:#b7ab95; --line:#ddd3bf; --line2:#cabfa6;
+  --accent:#cf4d27; --accent-deep:#a5371a;   /* ember — energy / "today / live" */
+  --good:#4f7a3f; --warn:#8a6212; --bad:#8c2f2a;  /* moss · ochre · oxblood */
+  --r:9px; --shadow:0 1px 0 rgba(34,29,23,.04), 0 16px 40px -28px rgba(34,29,23,.45);
   font-synthesis:none;
 }
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;background:radial-gradient(1200px 700px at 70% -10%,#16243a 0,var(--bg) 55%) fixed;color:var(--ink);
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
-a{color:var(--accent2)}
-.wrap{max-width:1040px;margin:0 auto;padding:18px 16px 80px}
+html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);
+  font-family:"Archivo",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+/* paper grain + a faint warm vignette for depth (no glassmorphism) */
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.5;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  mix-blend-mode:multiply}
+body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:radial-gradient(1100px 600px at 78% -8%, rgba(207,77,39,.07), transparent 60%)}
+.serif{font-family:"Fraunces",Georgia,"Times New Roman",serif}
+.wrap{position:relative;z-index:1;max-width:1000px;margin:0 auto;padding:26px 22px 96px}
 .hidden{display:none!important}
+a{color:var(--accent-deep);text-underline-offset:2px}
 
-/* Passcode gate */
-#gate{position:fixed;inset:0;background:radial-gradient(900px 500px at 50% 0,#16243a,#0b0f14 60%);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px}
-.gatebox{width:100%;max-width:360px;text-align:center}
-.gatebox .logo{font-size:34px;font-weight:800;letter-spacing:-.5px;margin-bottom:6px;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
-.gatebox p{color:var(--muted);margin:0 0 22px;font-size:14px}
-.gatebox input{width:100%;padding:14px 16px;border-radius:12px;border:1px solid var(--line);background:#0e141d;color:var(--ink);font-size:16px;text-align:center;letter-spacing:2px}
-.gatebox input:focus{outline:none;border-color:var(--accent2)}
-.gatebox button{margin-top:12px;width:100%;padding:13px;border:0;border-radius:12px;background:linear-gradient(90deg,var(--accent),var(--accent2));color:#04130d;font-weight:700;font-size:15px;cursor:pointer}
-.gateerr{color:var(--bad);font-size:13px;height:18px;margin-top:10px}
+/* ── Passcode gate ─────────────────────────────────────────── */
+#gate{position:fixed;inset:0;z-index:50;background:var(--paper);display:flex;align-items:center;justify-content:center;padding:24px}
+#gate::before{content:"";position:absolute;inset:0;opacity:.5;mix-blend-mode:multiply;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E")}
+.gatebox{position:relative;width:100%;max-width:380px;text-align:center}
+.gatebox .kicker{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:var(--accent-deep);font-weight:600}
+.gatebox .logo{font-size:46px;font-weight:600;letter-spacing:-1px;margin:6px 0 4px;line-height:1}
+.gatebox p{color:var(--muted);margin:0 0 24px;font-size:14px}
+.gatebox input{width:100%;padding:15px 16px;border-radius:8px;border:1px solid var(--line2);background:var(--panel);color:var(--ink);font-size:16px;text-align:center;letter-spacing:3px;font-family:"Archivo"}
+.gatebox input:focus{outline:none;border-color:var(--accent)}
+.gatebox button{margin-top:12px;width:100%;padding:14px;border:0;border-radius:8px;background:var(--ink);color:var(--paper);font-weight:600;font-size:14px;letter-spacing:1px;text-transform:uppercase;cursor:pointer}
+.gatebox button:hover{background:var(--accent-deep)}
+.gateerr{color:var(--bad);font-size:13px;height:18px;margin-top:12px}
 
-/* Header */
-header.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
-.title{font-size:20px;font-weight:800;letter-spacing:-.3px}
-.title .sub{display:block;font-size:12px;color:var(--muted);font-weight:500;margin-top:2px}
-.stamp{font-size:11px;color:var(--dim);text-align:right;white-space:nowrap}
-.refreshbtn{width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--accent);font-size:18px;cursor:pointer;flex:0 0 auto;line-height:1}
-.refreshbtn:hover{border-color:var(--accent)}
-.refreshbtn.spin{animation:spin 1s linear infinite;color:var(--accent2)}
+/* ── Masthead ──────────────────────────────────────────────── */
+.masthead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;
+  border-bottom:2px solid var(--ink);padding-bottom:12px;margin-bottom:6px}
+.mh-l .kicker{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:var(--accent-deep);font-weight:600;margin-bottom:2px}
+.mh-l h1{margin:0;font-size:clamp(30px,7vw,46px);font-weight:600;letter-spacing:-1.4px;line-height:.95}
+.mh-l .goal{font-size:13px;color:var(--ink2);margin-top:6px;font-style:italic;font-family:"Fraunces"}
+.mh-r{text-align:right;display:flex;align-items:center;gap:12px;flex:0 0 auto}
+.dateline{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;line-height:1.5;white-space:nowrap}
+.dateline b{display:block;color:var(--ink);font-weight:600;font-size:12px}
+.dateline .livetok{display:block;font-family:"Fraunces";font-size:16px;color:var(--ink);font-weight:600;letter-spacing:-.3px;text-transform:none;margin-bottom:1px}
+.refreshbtn{width:40px;height:40px;border-radius:6px;border:1px solid var(--line2);background:var(--panel);color:var(--accent-deep);font-size:18px;cursor:pointer;flex:0 0 auto;line-height:1;transition:.2s}
+.refreshbtn:hover{border-color:var(--accent);background:#fff}
+.refreshbtn.spin{animation:spin 1s linear infinite;color:var(--accent)}
 @keyframes spin{to{transform:rotate(360deg)}}
-#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(60px);max-width:90%;background:#0e141d;border:1px solid var(--line);color:var(--ink);padding:12px 16px;border-radius:12px;font-size:13px;box-shadow:var(--shadow);opacity:0;transition:.25s;z-index:60;text-align:center}
-#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.issue{font-size:10.5px;letter-spacing:2px;text-transform:uppercase;color:var(--ink2);
+  display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:6px 0 14px;margin-bottom:20px}
 
-/* Tabs */
-.tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;margin-bottom:14px;-webkit-overflow-scrolling:touch}
-.tabs::-webkit-scrollbar{height:0}
-.tab{flex:0 0 auto;padding:9px 14px;border-radius:999px;background:var(--card);border:1px solid var(--line);color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
-.tab.active{background:linear-gradient(90deg,rgba(61,220,151,.18),rgba(54,179,255,.18));color:var(--ink);border-color:#2f4a63}
-.panel{display:none;animation:fade .25s ease}
+/* ── Nav ───────────────────────────────────────────────────── */
+.nav{display:flex;gap:4px;overflow-x:auto;margin-bottom:22px;-webkit-overflow-scrolling:touch;border-bottom:1px solid var(--line)}
+.nav::-webkit-scrollbar{height:0}
+.nav .navitem{flex:0 0 auto;display:flex;align-items:baseline;gap:7px;padding:10px 14px 12px;cursor:pointer;color:var(--muted);
+  border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap;transition:color .15s}
+.nav .navitem .n{font-size:11px;color:var(--ink2);font-weight:600;font-variant-numeric:tabular-nums}
+.nav .navitem .l{font-size:14px;font-weight:600;letter-spacing:.2px}
+.nav .navitem:hover{color:var(--ink2)}
+.nav .navitem.active{color:var(--ink);border-bottom-color:var(--accent)}
+.nav .navitem.active .n{color:var(--accent)}
+.panel{display:none;animation:fade .3s ease}
 .panel.active{display:block}
-@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 
-/* Cards */
-.card{background:linear-gradient(180deg,var(--card),#131a26);border:1px solid var(--line);border-radius:var(--r);padding:18px;box-shadow:var(--shadow)}
-.grid{display:grid;gap:12px}
+/* ── Modules (paper panels, hairline ruled — not glassy cards) ─ */
+.mod{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:20px 22px;box-shadow:var(--shadow)}
+.mod + .mod{margin-top:14px}
+.modhead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px}
+.modhead h3{margin:0;font-family:"Fraunces";font-size:19px;font-weight:600;letter-spacing:-.3px}
+.modhead .meta{font-size:12px;color:var(--muted)}
+.eyebrow{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-weight:600}
+.sechead{display:flex;align-items:baseline;gap:10px;margin:26px 2px 12px}
+.sechead .num{font-family:"Fraunces";font-size:14px;color:var(--accent);font-weight:600}
+.sechead .t{font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-weight:600}
+.sechead .rule{flex:1;height:1px;background:var(--line)}
+.grid{display:grid;gap:14px}
 .g2{grid-template-columns:repeat(2,1fr)}
 .g3{grid-template-columns:repeat(3,1fr)}
 @media(max-width:720px){.g3{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:480px){.g2,.g3{grid-template-columns:1fr}}
+@media(max-width:520px){.g2,.g3{grid-template-columns:1fr}}
 
-/* Hero */
-.hero{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
-.ring{--p:0;width:132px;height:132px;border-radius:50%;flex:0 0 auto;
-  background:conic-gradient(var(--accent) calc(var(--p)*1%),var(--ring) 0);display:flex;align-items:center;justify-content:center}
-.ring .inner{width:108px;height:108px;border-radius:50%;background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center}
-.ring .pct{font-size:26px;font-weight:800}
-.ring .lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
-.heronums{flex:1;min-width:200px}
-.heronums .big{font-size:32px;font-weight:800;letter-spacing:-1px}
-.heronums .big small{font-size:15px;color:var(--muted);font-weight:600}
-.heronums .row{display:flex;gap:18px;margin-top:10px;flex-wrap:wrap}
-.heronums .row div{font-size:13px;color:var(--muted)}
-.heronums .row b{color:var(--ink);font-size:15px;display:block}
-.pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;margin-top:8px}
-.pill.good{background:rgba(61,220,151,.15);color:var(--good)}
-.pill.warn{background:rgba(255,200,87,.15);color:var(--warn)}
-.pill.bad{background:rgba(255,107,107,.15);color:var(--bad)}
+/* ── HERO: the two-number duel (current vs trend) ─────────── */
+.hero{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden}
+.hero .hrow{display:grid;grid-template-columns:.9fr 1px 1.14fr;gap:0}
+@media(max-width:600px){.hero .hrow{grid-template-columns:1fr;gap:0}}
+.numblock{padding:22px 24px 20px;position:relative;animation:rise .5s ease both}
+.numblock.trend{animation-delay:.06s}
+.vrule{background:var(--line)}
+@media(max-width:600px){.vrule{height:1px}}
+.numblock .tag{display:inline-flex;align-items:center;gap:7px;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;font-weight:600}
+.numblock.scale .tag{color:var(--ink2)}
+.numblock.trend .tag{color:var(--accent-deep)}
+.tag .pip{width:8px;height:8px;border-radius:50%;display:inline-block}
+.numblock.scale .pip{background:var(--ink2)}
+.numblock.trend .pip{background:var(--accent)}
+.numblock.trend{background:var(--paper2)}
+.numblock .num{font-family:"Fraunces";font-weight:600;line-height:.9;letter-spacing:-2px;margin:10px 0 2px}
+.numblock.scale .num{color:var(--ink2);font-size:clamp(44px,10vw,62px)}
+.numblock.trend .num{color:var(--accent-deep);font-size:clamp(54px,13.5vw,86px)}
+.numblock .num u{text-decoration:none;font-size:.34em;letter-spacing:0;color:var(--muted);font-weight:500;margin-left:4px}
+.numblock .note{font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.4}
+.numblock .note .em{color:var(--ink2);font-weight:600}
+.hero .deltastrip{display:flex;align-items:center;justify-content:center;gap:8px;
+  background:var(--paper2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  padding:9px 16px;font-size:12.5px;color:var(--ink2);text-align:center}
+.hero .deltastrip b{font-family:"Fraunces";font-weight:600}
 
-/* Metric cards */
-.metric{position:relative}
-.metric .k{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px}
-.metric .v{font-size:26px;font-weight:800;margin-top:6px;letter-spacing:-.5px}
-.metric .s{font-size:12.5px;color:var(--muted);margin-top:4px}
-.metric .dot{position:absolute;top:18px;right:18px;width:10px;height:10px;border-radius:50%}
-.dot.good{background:var(--good)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}.dot.neutral{background:var(--dim)}
+/* progress journey */
+.journey{padding:20px 24px 22px}
+.journey .jtop{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px}
+.journey .jtop .stamp{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);font-weight:600}
+.jtrack{position:relative;height:10px;border-radius:6px;background:var(--paper2);border:1px solid var(--line);overflow:visible;margin:18px 0 8px}
+.jfill{position:absolute;left:0;top:0;bottom:0;border-radius:6px;background:linear-gradient(90deg,var(--accent-deep),var(--accent));width:0;transition:width 1.1s cubic-bezier(.2,.8,.2,1)}
+.jmark{position:absolute;top:50%;width:18px;height:18px;border-radius:50%;background:var(--panel);border:3px solid var(--accent);transform:translate(-50%,-50%);box-shadow:0 2px 6px rgba(0,0,0,.18);transition:left 1.1s cubic-bezier(.2,.8,.2,1)}
+.jtick{position:absolute;top:-5px;bottom:-5px;width:2px;background:var(--ink);opacity:.45}
+.jtick .tl{position:absolute;top:-17px;left:50%;transform:translateX(-50%);font-size:9.5px;letter-spacing:.5px;text-transform:uppercase;color:var(--ink2);white-space:nowrap;font-weight:600}
+.jends{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+.jends b{display:block;font-family:"Fraunces";font-size:17px;color:var(--ink);font-weight:600}
+.jends .r{text-align:right}
+.proj{margin-top:14px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--ink2);
+  border-top:1px dashed var(--line2);padding-top:13px}
+.proj .label{font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--accent-deep);font-weight:600;flex:0 0 auto}
+.proj b{font-family:"Fraunces";font-weight:600;color:var(--ink)}
 
-h2.sec{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:22px 4px 10px}
-.summary{font-size:15.5px;line-height:1.6}
-.summary .by{display:block;margin-top:12px;font-size:12px;color:var(--dim)}
+/* stamp / status tag (editorial, not a neon pill) */
+.stat-tag{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;letter-spacing:.4px;
+  padding:5px 11px;border-radius:6px;border:1px solid currentColor;background:transparent}
+.stat-tag .sq{width:8px;height:8px;border-radius:2px;background:currentColor}
+.t-good{color:var(--good)}.t-warn{color:var(--warn)}.t-bad{color:var(--bad)}.t-neutral{color:var(--muted)}
 
-/* Trends */
-.chartcard h3{margin:0 0 4px;font-size:14px}
-.chartcard .delta{font-size:12px;color:var(--muted);margin-bottom:8px}
-canvas{width:100%!important;height:160px!important}
+/* ── Metric ledger ─────────────────────────────────────────── */
+.ledger{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+@media(max-width:720px){.ledger{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:440px){.ledger{grid-template-columns:1fr}}
+.lcell{background:var(--panel);padding:15px 16px;position:relative}
+.lcell .k{font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:7px}
+.lcell .k .sq{width:7px;height:7px;border-radius:2px;flex:0 0 auto}
+.lcell .v{font-family:"Fraunces";font-size:27px;font-weight:600;margin-top:7px;letter-spacing:-.6px;line-height:1}
+.lcell .s{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.35}
+.sq.good{background:var(--good)}.sq.warn{background:var(--warn)}.sq.bad{background:var(--bad)}.sq.neutral{background:transparent;box-shadow:inset 0 0 0 1.5px var(--muted)}
+.lcell .k .kstat{margin-left:auto;font-size:9.5px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);font-weight:600}
+.lcell .k.s-good .kstat{color:var(--good)}.lcell .k.s-warn .kstat{color:var(--warn)}.lcell .k.s-bad .kstat{color:var(--bad)}
 
-/* Plan */
-.week{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:14px}
+/* ── Coach pull-quote ──────────────────────────────────────── */
+.coach{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:20px 24px;box-shadow:var(--shadow)}
+.coach .clabel{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--accent-deep);font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:9px}
+.coach .clabel::before{content:"";width:20px;height:1px;background:var(--accent);flex:0 0 auto}
+.coach .ctxt{font-family:"Fraunces";font-size:18px;line-height:1.6;color:var(--ink);font-weight:400}
+
+/* Progress headline (deliberately different rhythm to the Today ledger) */
+.progresshead{display:grid;grid-template-columns:.82fr 1.18fr;gap:26px;align-items:center}
+@media(max-width:560px){.progresshead{grid-template-columns:1fr;gap:14px}}
+.progresshead .ph-num{font-family:"Fraunces";font-size:clamp(42px,9vw,60px);font-weight:600;color:var(--accent-deep);letter-spacing:-1.5px;line-height:1;margin-top:6px}
+.progresshead .ph-num u{text-decoration:none;font-size:.3em;color:var(--muted);font-weight:500}
+.progresshead .ph-sub{font-size:12.5px;color:var(--muted);margin-top:9px;line-height:1.4}
+.progresshead .ph-r{border-left:1px solid var(--line);padding-left:24px}
+@media(max-width:560px){.progresshead .ph-r{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:6px}}
+
+/* ── Trends ────────────────────────────────────────────────── */
+.chartcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;box-shadow:var(--shadow)}
+.chartcard .ch-h{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px}
+.chartcard h4{margin:0;font-family:"Fraunces";font-size:16px;font-weight:600}
+.chartcard .delta{font-size:12px;color:var(--muted);font-weight:600}
+.chartcard .delta.up{color:var(--bad)}.chartcard .delta.down{color:var(--good)}
+.chartcard .legend{font-size:11px;color:var(--muted);margin-bottom:8px;display:flex;gap:14px}
+.chartcard .legend span{display:inline-flex;align-items:center;gap:6px}
+.chartcard .legend i{width:14px;height:0;border-top-width:2px;border-top-style:solid;display:inline-block}
+canvas{width:100%!important;height:170px!important}
+.wchart canvas{height:240px!important}
+
+/* ── Training ──────────────────────────────────────────────── */
+.week{display:grid;grid-template-columns:repeat(7,1fr);gap:7px;margin-bottom:8px}
 @media(max-width:600px){.week{grid-template-columns:repeat(4,1fr)}}
-.day{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 8px;text-align:center;font-size:12px}
-.day.today{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
-.day .dn{font-weight:700;color:var(--muted)}
-.day .dl{margin-top:6px;font-size:11px;line-height:1.3}
-.day.rest{opacity:.6}
-.session{margin-top:6px}
-.ex{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card);margin-bottom:8px}
-.ex .exn{font-weight:700;font-size:14.5px}
-.ex .exd{font-size:12.5px;color:var(--muted);margin-top:2px}
-.ex .exc{font-size:12px;color:var(--dim);margin-top:3px;font-style:italic}
-.watch{flex:0 0 auto;padding:8px 12px;border-radius:10px;border:1px solid #2f4a63; background:rgba(54,179,255,.12);color:var(--accent2);font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap}
-.vidwrap{position:relative;padding-bottom:56.25%;height:0;margin:6px 0 12px;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
+.day{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:11px 8px;text-align:center}
+.day.today{border-color:var(--accent);background:#fff;box-shadow:0 0 0 1px var(--accent) inset}
+.day .dn{font-weight:700;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)}
+.day.today .dn{color:var(--accent-deep)}
+.day .dl{margin-top:7px;font-size:11px;line-height:1.3;color:var(--ink2);font-weight:500;min-height:28px;display:flex;align-items:center;justify-content:center}
+.day.rest{opacity:.55}
+.ex{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border:1px solid var(--line);border-radius:8px;background:var(--panel);margin-bottom:9px}
+.ex .exn{font-weight:700;font-size:15px}
+.ex .exd{font-size:12.5px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
+.ex .exc{font-size:12px;color:var(--ink2);margin-top:4px;font-style:italic;font-family:"Fraunces"}
+.watch{flex:0 0 auto;padding:9px 13px;border-radius:8px;border:1px solid var(--ink);background:transparent;color:var(--ink);font-weight:600;font-size:12px;cursor:pointer;white-space:nowrap;transition:.15s}
+.watch:hover{background:var(--ink);color:var(--paper)}
+.vidwrap{position:relative;padding-bottom:56.25%;height:0;margin:4px 0 12px;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
 .vidwrap iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.rotrow{display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid var(--line);font-size:14px}
+.rotrow:last-child{border-bottom:0}
+.rotrow .badge{font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--accent-deep);font-weight:700}
 
-/* Rationale */
-.rationale p{line-height:1.65;color:#d4deea;font-size:15px}
-.rules li{margin-bottom:8px;line-height:1.5}
-.tgt{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
-.tgt b{color:var(--accent)}
-.foot{text-align:center;color:var(--dim);font-size:11px;margin-top:26px;line-height:1.6}
-.disc{background:rgba(255,200,87,.08);border:1px solid rgba(255,200,87,.25);border-radius:12px;padding:12px 14px;font-size:12.5px;color:#d8c89a;margin-top:14px}
+/* ── Targets ───────────────────────────────────────────────── */
+.tgt{display:flex;justify-content:space-between;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line);font-size:14.5px}
+.tgt:last-child{border-bottom:0}
+.tgt b{font-family:"Fraunces";color:var(--ink);font-weight:600;font-size:16px}
+.rationale p{line-height:1.7;color:var(--ink2);font-size:15px;margin:0 0 14px}
+.rationale p:last-child{margin-bottom:0}
+.rationale p .drop{font-family:"Fraunces"}
+.rules{list-style:none;padding:0;margin:0;counter-reset:r}
+.rules li{counter-increment:r;position:relative;padding:11px 0 11px 38px;border-bottom:1px solid var(--line);line-height:1.5;font-size:14.5px}
+.rules li:last-child{border-bottom:0}
+.rules li::before{content:counter(r,decimal-leading-zero);position:absolute;left:0;top:11px;font-family:"Fraunces";font-weight:600;color:var(--accent);font-size:14px}
+.disc{background:rgba(176,125,26,.09);border:1px solid rgba(176,125,26,.3);border-radius:8px;padding:14px 16px;font-size:12.5px;color:#7a5a14;margin-top:14px;line-height:1.55}
+.foot{text-align:center;color:var(--faint);font-size:11px;margin-top:34px;line-height:1.7;letter-spacing:.3px}
+.foot .hr{width:46px;height:1px;background:var(--line2);margin:0 auto 14px}
+
+/* toast */
+#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(70px);max-width:90%;
+  background:var(--ink);color:var(--paper);padding:13px 18px;border-radius:9px;font-size:13px;
+  box-shadow:0 18px 40px -16px rgba(0,0,0,.5);opacity:0;transition:.28s;z-index:60;text-align:center}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 </style>
 </head>
 <body>
 
 <div id="gate">
   <div class="gatebox">
-    <div class="logo">Reset Cut</div>
-    <p>Private dashboard. Enter passcode.</p>
+    <div class="kicker">Private Journal</div>
+    <div class="logo serif">Reset Cut</div>
+    <p>Enter your passcode to read this issue.</p>
     <form id="gform" autocomplete="off">
       <input id="pc" type="password" inputmode="text" placeholder="passcode" autofocus>
       <button type="submit" id="gbtn">Unlock</button>
@@ -138,35 +245,38 @@ canvas{width:100%!important;height:160px!important}
 </div>
 
 <div class="wrap hidden" id="app">
-  <header class="top">
-    <div class="title">Reset Cut <span class="sub">75 kg &amp; 15% body fat by 23 Oct</span></div>
-    <div style="display:flex;align-items:center;gap:10px">
+  <header class="masthead">
+    <div class="mh-l">
+      <div class="kicker">The Reset Cut Journal</div>
+      <h1 class="serif">Where you stand</h1>
+      <div class="goal">Bound for 75&nbsp;kg &amp; 15% body fat by 23 October</div>
+    </div>
+    <div class="mh-r">
       <button id="refresh" class="refreshbtn" title="Refresh from Garmin / Withings / Peter">&#8635;</button>
-      <div class="stamp" id="stamp"></div>
+      <div class="dateline" id="dateline"></div>
     </div>
   </header>
-  <div class="tabs" id="tabs"></div>
+  <div class="issue" id="issue"></div>
+  <nav class="nav" id="nav"></nav>
   <div id="panels"></div>
-  <div class="foot">Static snapshot · regenerated daily · data baked in at build time<br>Built with the local AI coach via your channels.</div>
+  <div class="foot">
+    <div class="hr"></div>
+    Static snapshot · regenerated daily · figures baked in at build time<br>
+    Written with your local AI coach over the channels — not the cloud.
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 // ---- Encrypted payload (AES-GCM, key = PBKDF2(passcode)) ----
-const ENC = {
-  payload: "__PAYLOAD__",
-  salt: "__SALT__",
-  iv: "__IV__",
-  iters: __ITERS__
-};
+const ENC = { payload:"__PAYLOAD__", salt:"__SALT__", iv:"__IV__", iters:__ITERS__ };
 const GENERATED_AT = "__GENERATED_AT__";
-// null on the public (encrypted, HTTPS) surge page; full data object on the
-// LAN-served page (http on a private IP = not a secure context, so WebCrypto
-// is unavailable there — we ship the data in the clear behind the home network).
+// null on the public (encrypted HTTPS) surge page; full data object on the LAN
+// page (http on a private IP = not a secure context → WebCrypto unavailable, so
+// we ship data in the clear behind the home network).
 const PLAIN = __PLAIN_DATA__;
 
 function b64ToBytes(b64){const bin=atob(b64);const a=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);return a;}
-
 async function decrypt(passcode){
   const enc=new TextEncoder();
   const keyMat=await crypto.subtle.importKey("raw",enc.encode(passcode),{name:"PBKDF2"},false,["deriveKey"]);
@@ -180,8 +290,10 @@ async function decrypt(passcode){
 const $=(s,el=document)=>el.querySelector(s);
 const ce=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
 const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+const num=v=>{const n=parseFloat(v);return isFinite(n)?n:null;};
+const fix=(n,d=1)=>n==null?"—":(Math.round(n*Math.pow(10,d))/Math.pow(10,d)).toFixed(d);
 
-let DATA=null, charts=[];
+let DATA=null, charts=[], drawnTrends=false;
 
 document.getElementById("gform").addEventListener("submit",async e=>{
   e.preventDefault();
@@ -191,137 +303,273 @@ document.getElementById("gform").addEventListener("submit",async e=>{
   try{
     DATA=await decrypt($("#pc").value.trim());
     sessionStorage.setItem("rc_pc",$("#pc").value.trim());
-    $("#gate").classList.add("hidden");
-    $("#app").classList.remove("hidden");
-    render();
-  }catch(_){
-    err.textContent="Incorrect passcode";
-    btn.textContent="Unlock"; btn.disabled=false;
-  }
+    $("#gate").classList.add("hidden"); $("#app").classList.remove("hidden"); render();
+  }catch(_){ err.textContent="Incorrect passcode"; btn.textContent="Unlock"; btn.disabled=false; }
 });
 
-// LAN page ships data in the clear — no gate / no WebCrypto needed. Public page uses the encrypted gate.
-// render() is deferred (queueMicrotask) because it references `const TABS`, declared
-// later in this script — calling it synchronously here hits the temporal dead zone.
 if(PLAIN){DATA=PLAIN;$("#gate").classList.add("hidden");$("#app").classList.remove("hidden");queueMicrotask(render);}
 else{(async()=>{const saved=sessionStorage.getItem("rc_pc");if(saved){try{DATA=await decrypt(saved);$("#gate").classList.add("hidden");$("#app").classList.remove("hidden");render();}catch(_){}}})();}
 
-const TABS=[
-  ["overview","Overview"],["summary","Coach"],["trends","Trends"],
-  ["plan","Plan"],["mobility","Mobility"],["exercises","Exercises"],["why","Targets & Why"]
+const NAV=[
+  ["today","01","Today"],["progress","02","Progress"],["trends","03","Trends"],
+  ["training","04","Training"],["targets","05","Targets"]
 ];
 
+// ---- derived, motivational numbers (from existing DATA only) ----
+function parseStamp(s){try{const m=String(s).replace(/^[A-Za-z]+\s+/,'').split(',')[0].trim();const d=new Date(m);return isNaN(d.getTime())?null:d;}catch(_){return null;}}
+function fmtDate(d){return d.toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"});}
+function projection(h){
+  const trend=num(h.current_weight), tgt=num(h.target_weight), slope=num(h.slope);
+  if(trend==null||tgt==null) return null;
+  if(trend<=tgt) return {kind:"there"};
+  if(slope==null||slope>=-0.05) return {kind:"flat"};
+  const weeks=(trend-tgt)/(-slope);
+  const base=parseStamp(GENERATED_AT);
+  const date=base?new Date(base.getTime()+weeks*7*86400000):null;
+  return {kind:"pace",weeks,date};
+}
+function statusClass(s){return s==="good"||s==="warn"||s==="bad"?s:"neutral";}
+
 function render(){
-  $("#stamp").innerHTML="Updated<br>"+esc(DATA.generated_at);
-  const tabs=$("#tabs"); tabs.innerHTML=""; const panels=$("#panels"); panels.innerHTML="";
-  TABS.forEach(([id,label],i)=>{
-    const t=ce("div","tab"+(i===0?" active":""),esc(label)); t.dataset.t=id; tabs.appendChild(t);
+  const stamp=parseStamp(GENERATED_AT);
+  const wk=DATA.hero||{};
+  const _sl=num(wk.slope), _ar=_sl==null?"":_sl<-0.05?" ▼":_sl>0.05?" ▲":" –";
+  $("#dateline").innerHTML='<span class="livetok">'+esc(fix(num(wk.current_weight)))+' kg'+_ar+'</span>Updated<b>'+esc(DATA.generated_at)+'</b>';
+  $("#issue").innerHTML="<span>Week "+esc(wk.week_no)+" of "+esc(wk.duration_weeks)+"</span>"+
+    "<span>"+esc(wk.days_remaining)+" days to deadline</span>"+
+    "<span>"+(stamp?esc(fmtDate(stamp)):esc(DATA.generated_at))+"</span>";
+  const nav=$("#nav"); nav.innerHTML=""; const panels=$("#panels"); panels.innerHTML="";
+  NAV.forEach(([id,n,label],i)=>{
+    const it=ce("div","navitem"+(i===0?" active":""),'<span class="n">'+n+'</span><span class="l">'+esc(label)+'</span>');
+    it.dataset.t=id; nav.appendChild(it);
     const p=ce("div","panel"+(i===0?" active":"")); p.id="p-"+id; panels.appendChild(p);
   });
-  tabs.addEventListener("click",e=>{const t=e.target.closest(".tab");if(!t)return;
-    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+  nav.addEventListener("click",e=>{const t=e.target.closest(".navitem");if(!t)return;
+    document.querySelectorAll(".navitem").forEach(x=>x.classList.remove("active"));
     document.querySelectorAll(".panel").forEach(x=>x.classList.remove("active"));
     t.classList.add("active"); $("#p-"+t.dataset.t).classList.add("active");
     if(t.dataset.t==="trends") drawCharts();
+    if(t.dataset.t==="progress") requestAnimationFrame(animateJourney);
   });
-  renderOverview(); renderSummary(); renderPlan(); renderMobility(); renderExercises(); renderWhy();
-  // trends drawn on first open (canvas needs to be visible)
+  renderToday(); renderProgress(); renderTraining(); renderTargets();
+  requestAnimationFrame(animateJourney);
 }
 
-function renderMobility(){
-  const p=$("#p-mobility"); if(!p) return; p.innerHTML="";
-  const m=DATA.mobility; if(!m){p.innerHTML='<div class="card">No mobility routine.</div>';return;}
-  const head=ce("div","card");
-  head.innerHTML='<h3 style="margin:0 0 2px">Today · '+esc(m.name)+'</h3>'+
-    '<div style="color:var(--muted);font-size:13px;margin-bottom:6px">~'+esc(m.total_min)+' min · once through, breathe into each. No bouncing.</div>';
-  p.appendChild(head);
-  (m.moves||[]).forEach(mv=>head.appendChild(exRow(mv)));
-  const rot=ce("div","card"); rot.style.marginTop="12px";
-  rot.innerHTML='<h3 style="margin:0 0 8px">The rotation · 10 min daily</h3>'+
-    (m.rotation||[]).map((r,i)=>'<div class="tgt"><span>'+esc(r)+'</span><b>'+(i===m.rotation_today?'Today':'')+'</b></div>').join("");
-  p.appendChild(rot);
-}
-
-function renderOverview(){
-  const h=DATA.hero, p=$("#p-overview"); p.innerHTML="";
-  const card=ce("div","card");
+// ── 01 · TODAY ───────────────────────────────────────────────
+function renderToday(){
+  const h=DATA.hero, p=$("#p-today"); p.innerHTML="";
+  const scale=num(h.latest_weight), trend=num(h.current_weight), slope=num(h.slope);
+  const delta=(scale!=null&&trend!=null)?scale-trend:null;
+  let trendDir="";
+  if(slope!=null){
+    if(slope<-0.05) trendDir=' · <span style="color:var(--good)">▼ trending down</span>';
+    else if(slope>0.05) trendDir=' · <span style="color:var(--warn)">▲ ticking up</span>';
+    else trendDir=' · <span style="color:var(--muted)">– holding</span>';
+  }
+  let dnote="";
+  if(delta!=null){
+    const ad=Math.abs(delta);
+    if(ad<0.15) dnote="Scale and trend agree — clean read.";
+    else if(delta>0) dnote="<b>+"+fix(ad)+" kg</b> above the trend — a normal up-day (water, salt, food). Judge the week by the line, not one morning.";
+    else dnote="<b>−"+fix(ad)+" kg</b> below the trend — the line is catching down to you. Nice.";
+  }
+  // HERO — the two-number duel
   const hero=ce("div","hero");
-  const pillClass=h.on_track==="ahead"?"good":h.on_track==="behind"?"bad":h.on_track==="on track"?"good":"warn";
   hero.innerHTML=
-    '<div class="ring" style="--p:'+(h.progress_pct||0)+'"><div class="inner"><div class="pct">'+Math.round(h.progress_pct||0)+'%</div><div class="lbl">to goal</div></div></div>'+
-    '<div class="heronums">'+
-      '<div class="big">'+esc(h.current_weight)+'<small> kg</small></div>'+
-      '<span class="pill '+pillClass+'">'+esc(h.on_track_label)+'</span>'+
-      '<div class="row">'+
-        '<div>Target<b>'+esc(h.target_weight)+' kg</b></div>'+
-        '<div>This week<b>'+esc(h.target_this_week)+' kg</b></div>'+
-        '<div>Lost<b>'+esc(h.cumulative_loss)+' kg</b></div>'+
-        '<div>Trend<b>'+esc(h.slope)+' kg/wk</b></div>'+
-        '<div>Week<b>'+esc(h.week_no)+' / '+esc(h.duration_weeks)+'</b></div>'+
-        '<div>Days left<b>'+esc(h.days_remaining)+'</b></div>'+
-      '</div></div>';
-  card.appendChild(hero); p.appendChild(card);
-  p.appendChild(ce("h2","sec","Key metrics"));
-  const grid=ce("div","grid g3");
+    '<div class="hrow">'+
+      '<div class="numblock scale">'+
+        '<span class="tag"><i class="pip"></i>Today · scale</span>'+
+        '<div class="num">'+esc(fix(scale))+'<u>kg</u></div>'+
+        '<div class="note">Your raw reading'+(h.latest_date&&h.latest_date!=="—"?' · <span class="em">'+esc(h.latest_date)+'</span>':'')+'</div>'+
+      '</div>'+
+      '<div class="vrule"></div>'+
+      '<div class="numblock trend">'+
+        '<span class="tag"><i class="pip"></i>7-day trend · what counts</span>'+
+        '<div class="num">'+esc(fix(trend))+'<u>kg</u></div>'+
+        '<div class="note"><span class="em">7-weigh-in average</span>'+trendDir+'</div>'+
+      '</div>'+
+    '</div>'+
+    (dnote?'<div class="deltastrip">'+dnote+'</div>':'')+
+    renderJourney(h);
+  p.appendChild(hero);
+
+  // Coach note (hairline panel, eyebrow-led — no stock quote-mark/border cliché)
+  if(DATA.summary){
+    const c=ce("div","coach"); c.style.marginTop="14px";
+    c.innerHTML='<div class="clabel">Pete · your coach</div><div class="ctxt">'+esc(DATA.summary).replace(/\n+/g," ")+'</div>';
+    p.appendChild(c);
+  }
+
+  // Key metric ledger
+  p.appendChild(sechead("·","Where the numbers sit"));
+  const led=ce("div","ledger");
+  const WORD={good:"on track",warn:"watch",bad:"off",neutral:""};
   (DATA.metrics||[]).forEach(m=>{
-    const c=ce("div","card metric");
-    c.innerHTML='<div class="dot '+esc(m.status)+'"></div><div class="k">'+esc(m.label)+'</div><div class="v">'+esc(m.value)+'</div><div class="s">'+esc(m.sub)+'</div>';
-    grid.appendChild(c);
+    const sc=statusClass(m.status);
+    led.appendChild(ce("div","lcell",
+      '<div class="k s-'+sc+'"><span class="sq '+sc+'"></span>'+esc(m.label)+(WORD[sc]?'<span class="kstat">'+WORD[sc]+'</span>':'')+'</div>'+
+      '<div class="v">'+esc(m.value)+'</div>'+
+      '<div class="s">'+esc(m.sub)+'</div>'));
   });
-  p.appendChild(grid);
+  p.appendChild(led);
+
+  // Today's training at a glance
+  const pl=DATA.plan;
+  if(pl&&pl.days&&pl.days[pl.today_index]){
+    const td=pl.days[pl.today_index];
+    p.appendChild(sechead("·","On the agenda today"));
+    const m=ce("div","mod");
+    m.innerHTML='<div class="modhead"><h3>'+esc(td.name)+' · '+esc(td.label)+'</h3>'+
+      '<span class="meta">'+(td.is_rest?'Recovery':((td.exercises||[]).length+' moves'))+'</span></div>';
+    if(td.exercises&&td.exercises.length){ td.exercises.slice(0,4).forEach(ex=>m.appendChild(exRow(ex)));
+      if(td.exercises.length>4) m.appendChild(ce("div","",'<div style="font-size:12.5px;color:var(--muted);margin-top:4px">+ '+(td.exercises.length-4)+' more in <b>Training</b></div>')); }
+    else m.appendChild(ce("div","",'<div style="font-size:13.5px;color:var(--ink2);line-height:1.5">'+(td.is_rest?'Rest day — a 10-minute mobility flow only if you feel tight. Walking still counts.':'Walk + your 10-minute hip mobility.')+'</div>'));
+    p.appendChild(m);
+  }
 }
 
-function renderSummary(){
-  const p=$("#p-summary");
-  const c=ce("div","card summary");
-  c.innerHTML=esc(DATA.summary).replace(/\n/g,"<br>")+'<span class="by">— Pete, your AI coach · generated locally</span>';
-  p.innerHTML=""; p.appendChild(c);
+function renderJourney(h){
+  const start=num(h.start_weight), trend=num(h.current_weight), tgt=num(h.target_weight), tw=num(h.target_this_week);
+  let pct=num(h.progress_pct); if(pct==null) pct=0; pct=Math.max(0,Math.min(100,pct));
+  // tick position for "this week" target along start→target
+  let tickPct=null;
+  if(start!=null&&tgt!=null&&start!==tgt&&tw!=null){tickPct=Math.max(0,Math.min(100,(start-tw)/(start-tgt)*100));}
+  const proj=projection(h);
+  let projHTML="";
+  if(proj){
+    if(proj.kind==="there") projHTML='<span class="label">Arrived</span><span>You’re at goal weight on the trend. Hold and recomposition from here.</span>';
+    else if(proj.kind==="flat") projHTML='<span class="label">This week</span><span>Trend’s flat — driven by recent reads. The plan wants ~0.8&nbsp;kg/wk; the next clean week gets it moving.</span>';
+    else projHTML='<span class="label">At this pace</span><span><b>'+esc(fix(tgt))+'&nbsp;kg</b> by <b>'+(proj.date?esc(fmtDate(proj.date)):"—")+'</b> &middot; ~'+Math.round(proj.weeks)+'&nbsp;weeks out</span>';
+  }
+  return '<div class="journey">'+
+    '<div class="jtop"><span class="stamp">The journey</span>'+statusTag(h.on_track,h.on_track_label)+'</div>'+
+    '<div class="jtrack">'+
+      '<div class="jfill" data-pct="'+pct+'"></div>'+
+      (tickPct!=null?'<div class="jtick" style="left:'+tickPct+'%"><span class="tl">Wk '+esc(h.week_no)+' aim</span></div>':'')+
+      '<div class="jmark" data-pct="'+pct+'"></div>'+
+    '</div>'+
+    '<div class="jends">'+
+      '<div><b>'+esc(fix(start))+' kg</b>Start</div>'+
+      '<div class="r"><b>'+esc(fix(tgt))+' kg</b>Goal</div>'+
+    '</div>'+
+    (projHTML?'<div class="proj">'+projHTML+'</div>':'')+
+  '</div>';
+}
+function animateJourney(){
+  document.querySelectorAll(".jfill").forEach(el=>{el.style.width=(el.dataset.pct||0)+"%";});
+  document.querySelectorAll(".jmark").forEach(el=>{el.style.left=(el.dataset.pct||0)+"%";});
+}
+function statusTag(on,label){
+  const cls=on==="ahead"?"t-good":on==="behind"?"t-bad":on==="on track"?"t-good":"t-warn";
+  return '<span class="stat-tag '+cls+'"><span class="sq"></span>'+esc(label)+'</span>';
+}
+function sechead(numTxt,title){return ce("div","sechead",'<span class="num">'+esc(numTxt)+'</span><span class="t">'+esc(title)+'</span><span class="rule"></span>');}
+function tgtRow(k,v,word,sub){
+  const dot=word?'<span class="sq '+word+'" style="display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:8px;vertical-align:middle"></span>':'';
+  return '<div class="tgt"><span>'+dot+esc(k)+(sub?' <span style="color:var(--muted);font-size:12px">· '+esc(sub)+'</span>':'')+'</span><b>'+esc(v)+'</b></div>';
 }
 
-function chartCard(title,delta){const c=ce("div","card chartcard");c.innerHTML='<h3>'+esc(title)+'</h3><div class="delta">'+esc(delta)+'</div>';const cv=ce("canvas");c.appendChild(cv);return [c,cv];}
+// ── 02 · PROGRESS ────────────────────────────────────────────
+function renderProgress(){
+  const p=$("#p-progress"), h=DATA.hero; p.innerHTML="";
+  // big restatement of the journey
+  const top=ce("div","hero"); top.innerHTML='<div class="journey">'+
+    '<div class="jtop"><span class="stamp">Start → today → goal</span>'+statusTag(h.on_track,h.on_track_label)+'</div>'+
+    renderJourneyInner(h)+'</div>';
+  p.appendChild(top);
+
+  // headline progress — promoted "still to go" + a ruled list (deliberately
+  // a different rhythm to the Today ledger so the two views don't twin)
+  p.appendChild(sechead("·","The story so far"));
+  const lost=num(h.cumulative_loss), trend=num(h.current_weight), slope=num(h.slope);
+  const toGo=(trend!=null&&num(h.target_weight)!=null)?trend-num(h.target_weight):null;
+  const lostWord=(lost!=null&&lost>0.1)?"good":"neutral";
+  const rateWord=slope!=null&&slope<-0.1?"good":slope!=null&&slope>0.1?"warn":"neutral";
+  const rateSub=slope!=null&&slope>0.1?"a normal early wobble — the line decides":"14-day trend";
+  const big=ce("div","mod progresshead");
+  big.innerHTML='<div class="ph-l"><div class="eyebrow">Still to go</div>'+
+      '<div class="ph-num">'+esc(toGo!=null?fix(toGo):"—")+'<u> kg</u></div>'+
+      '<div class="ph-sub">to reach '+esc(fix(num(h.target_weight)))+' kg · '+Math.round(num(h.progress_pct)||0)+'% of the way covered</div></div>'+
+    '<div class="ph-r">'+
+      tgtRow("Lost so far",(lost!=null&&lost>0?"−"+fix(lost):fix(lost))+" kg",lostWord)+
+      tgtRow("Weekly rate",(slope!=null?(slope>0?"+":"")+fix(slope):"—")+" kg/wk",rateWord,rateSub)+
+      tgtRow("Week",esc(h.week_no)+" / "+esc(h.duration_weeks),"")+
+      tgtRow("Days left",esc(h.days_remaining)+" days","")+
+    '</div>';
+  p.appendChild(big);
+
+  // weight journey chart (raw vs trend) — reinforces current-vs-trend story
+  const series=(DATA.trends&&DATA.trends.series)||{};
+  if((series.weight||[]).length){
+    p.appendChild(sechead("·","Your weight line"));
+    const cc=ce("div","chartcard wchart");
+    cc.innerHTML='<div class="ch-h"><h4>Weight — raw vs 7-read trend</h4></div>'+
+      '<div class="legend"><span><i style="border-color:#d98b6a"></i>Scale reads</span><span><i style="border-color:var(--ink)"></i>Trend line</span></div>';
+    const cv=ce("canvas"); cc.appendChild(cv); p.appendChild(cc);
+    requestAnimationFrame(()=>drawWeightChart(cv,series.weight));
+  }
+}
+function renderJourneyInner(h){
+  const start=num(h.start_weight), tgt=num(h.target_weight), tw=num(h.target_this_week);
+  let pct=Math.max(0,Math.min(100,num(h.progress_pct)||0));
+  let tickPct=(start!=null&&tgt!=null&&start!==tgt&&tw!=null)?Math.max(0,Math.min(100,(start-tw)/(start-tgt)*100)):null;
+  const proj=projection(h); let projHTML="";
+  if(proj&&proj.kind==="pace") projHTML='<div class="proj"><span class="label">At this pace</span><span><b>'+esc(fix(tgt))+' kg</b> by <b>'+(proj.date?esc(fmtDate(proj.date)):"—")+'</b> · ~'+Math.round(proj.weeks)+' weeks</span></div>';
+  else if(proj&&proj.kind==="flat") projHTML='<div class="proj"><span class="label">This week</span><span>Trend’s flat — the next clean week moves it.</span></div>';
+  return '<div class="jtrack"><div class="jfill" data-pct="'+pct+'"></div>'+
+    (tickPct!=null?'<div class="jtick" style="left:'+tickPct+'%"><span class="tl">Wk aim</span></div>':'')+
+    '<div class="jmark" data-pct="'+pct+'"></div></div>'+
+    '<div class="jends"><div><b>'+esc(fix(start))+' kg</b>Start</div><div class="r"><b>'+esc(fix(tgt))+' kg</b>Goal</div></div>'+projHTML;
+}
+
+// ── 03 · TRENDS ──────────────────────────────────────────────
+function movingAvg(vals,w){const out=[];for(let i=0;i<vals.length;i++){const s=vals.slice(Math.max(0,i-w+1),i+1);out.push(s.reduce((a,b)=>a+b,0)/s.length);}return out;}
+function axisOpts(o){o=o||{};return {responsive:true,maintainAspectRatio:false,
+  plugins:{legend:{display:false},tooltip:{backgroundColor:"#221d17",titleColor:"#f4efe4",bodyColor:"#f4efe4",cornerRadius:6,padding:8,displayColors:false}},
+  interaction:{intersect:false,mode:"index"},
+  scales:{x:{grid:{display:false},border:{color:"#cabfa6"},ticks:{color:"#6f6452",maxTicksLimit:6,font:{family:"Archivo",size:10}}},
+          y:{grid:{color:o.grid||"#e7dfcd"},border:{display:false},ticks:{color:o.tick||"#6f6452",maxTicksLimit:o.maxTicks||6,font:{family:"Archivo",size:o.tsize||10},
+             callback:o.unit?function(v){return v+o.unit;}:undefined}}}};}
+function drawWeightChart(cv,pts){
+  if(!pts||!pts.length) return;
+  const labels=pts.map(x=>x.date.slice(5)), raw=pts.map(x=>x.value), tr=movingAvg(raw,7);
+  charts.push(new Chart(cv,{type:"line",data:{labels,datasets:[
+    {data:raw,borderColor:"#d98b6a",backgroundColor:"transparent",borderWidth:1.3,pointRadius:2.2,pointBackgroundColor:"#d98b6a",tension:.25,order:2},
+    {data:tr,borderColor:"#221d17",backgroundColor:"rgba(34,29,23,.05)",borderWidth:2.8,pointRadius:0,fill:true,tension:.35,order:1}
+  ]},options:axisOpts({grid:"#d8cdb4",tick:"#4d453a",maxTicks:5,tsize:11,unit:" kg"})}));
+}
 function drawCharts(){
-  charts.forEach(c=>c.destroy()); charts=[];
+  charts.forEach(c=>c.destroy()); charts=[]; drawnTrends=true;
   const p=$("#p-trends"); p.innerHTML="";
-  const grid=ce("div","grid g2"); p.appendChild(grid);
-  const series=DATA.trends.series, sum=DATA.trends.summary;
-  const defs=[["weight","Weight (kg)","#3ddc97"],["steps","Steps","#36b3ff"],["sleep_score","Sleep score","#b388ff"],["hrv","HRV (ms)","#ffc857"],["resting_hr","Resting HR","#ff8fa3"],["stress","Stress","#7ee0d6"]];
+  const series=(DATA.trends&&DATA.trends.series)||{}, sum=(DATA.trends&&DATA.trends.summary)||{};
+  // weight first, full width with raw vs trend
+  if((series.weight||[]).length){
+    const cc=ce("div","chartcard wchart");
+    cc.innerHTML='<div class="ch-h"><h4>Weight</h4></div><div class="legend"><span><i style="border-color:#d98b6a"></i>Scale reads</span><span><i style="border-color:var(--ink)"></i>7-read trend</span></div>';
+    const cv=ce("canvas"); cc.appendChild(cv); p.appendChild(cc); drawWeightChart(cv,series.weight);
+  }
+  const grid=ce("div","grid g2"); grid.style.marginTop="14px"; p.appendChild(grid);
+  const defs=[["steps","Steps","#4f7a3f"],["sleep_score","Sleep score","#6a6cae"],["hrv","HRV (ms)","#b07d1a"],["resting_hr","Resting HR","#8c2f2a"],["stress","Stress","#3f7d74"]];
   defs.forEach(([k,label,col])=>{
     const pts=series[k]||[]; if(!pts.length) return;
-    const s=sum[k]||{}; const d=s.delta_pct==null?"":(s.delta_pct>0?"▲ ":"▼ ")+Math.abs(s.delta_pct)+"% vs prior 14d";
-    const [card,cv]=chartCard(label,d); grid.appendChild(card);
-    const ch=new Chart(cv,{type:"line",data:{labels:pts.map(x=>x.date.slice(5)),datasets:[{data:pts.map(x=>x.value),borderColor:col,backgroundColor:col+"22",fill:true,tension:.35,pointRadius:0,borderWidth:2}]},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:"#5f7a96",maxTicksLimit:6,font:{size:10}}},y:{grid:{color:"#1c2536"},ticks:{color:"#5f7a96",font:{size:10}}}}}});
-    charts.push(ch);
+    const s=sum[k]||{}; const up=s.delta_pct!=null&&s.delta_pct>0;
+    const dtxt=s.delta_pct==null?"":((up?"▲ ":"▼ ")+Math.abs(s.delta_pct)+"%");
+    // for resting_hr & stress, down is good; for others up is good — colour accordingly.
+    // A change is BAD (red ".up") when it moves the wrong way: metric rose where down
+    // is good, OR fell where up is good — i.e. exactly when up===goodDown.
+    const goodDown=(k==="resting_hr"||k==="stress");
+    const dcls=s.delta_pct==null?"":((up===goodDown)?"up":"down");
+    const cc=ce("div","chartcard");
+    cc.innerHTML='<div class="ch-h"><h4>'+esc(label)+'</h4><span class="delta '+dcls+'">'+dtxt+'</span></div>';
+    const cv=ce("canvas"); cc.appendChild(cv); grid.appendChild(cc);
+    charts.push(new Chart(cv,{type:"line",data:{labels:pts.map(x=>x.date.slice(5)),datasets:[{data:pts.map(x=>x.value),borderColor:col,backgroundColor:"transparent",fill:false,tension:.35,pointRadius:0,borderWidth:1.8}]},options:axisOpts()}));
   });
+  // avoid an orphaned final tile on an odd count — let it span the row
+  const cards=grid.querySelectorAll(".chartcard");
+  if(cards.length%2===1) cards[cards.length-1].style.gridColumn="1 / -1";
 }
 
-function renderPlan(){
-  const p=$("#p-plan"); p.innerHTML="";
-  const pl=DATA.plan;
-  const week=ce("div","week");
-  pl.days.forEach((d,i)=>{
-    const cell=ce("div","day"+(i===pl.today_index?" today":"")+(d.is_rest?" rest":""));
-    cell.innerHTML='<div class="dn">'+esc(d.name)+'</div><div class="dl">'+esc(d.short)+'</div>';
-    week.appendChild(cell);
-  });
-  p.appendChild(week);
-  const today=pl.days[pl.today_index];
-  const card=ce("div","card");
-  card.innerHTML='<h3 style="margin:0 0 2px">Today · '+esc(today.name)+'</h3><div style="color:var(--muted);font-size:13px;margin-bottom:6px">'+esc(today.label)+(today.note?' — '+esc(today.note):'')+'</div>';
-  p.appendChild(card);
-  (today.exercises||[]).forEach(ex=>card.appendChild(exRow(ex)));
-  if(!today.exercises||!today.exercises.length){card.innerHTML+='<div style="color:var(--muted);font-size:13px">'+(today.is_rest?'Rest day — 10-min mobility only if tight.':'Walk + 10-min hip mobility.')+'</div>';}
-  // rest of week sessions
-  p.appendChild(ce("h2","sec","The week"));
-  pl.days.forEach((d,i)=>{
-    if(i===pl.today_index||!d.exercises||!d.exercises.length) return;
-    const c=ce("div","card"); c.style.marginBottom="10px";
-    c.innerHTML='<h3 style="margin:0 0 6px">'+esc(d.name)+' · '+esc(d.label)+'</h3>';
-    d.exercises.forEach(ex=>c.appendChild(exRow(ex)));
-    p.appendChild(c);
-  });
-}
-
+// ── 04 · TRAINING (plan + mobility + exercise library) ───────
 function exRow(ex){
   const row=ce("div","ex");
   const left=ce("div");
@@ -339,43 +587,86 @@ function exRow(ex){
   }
   return row;
 }
-
-function renderExercises(){
-  const p=$("#p-exercises"); p.innerHTML="";
-  p.appendChild(ce("div","card",'<div style="color:var(--muted);font-size:13px">Form demos for every move in your programme. Tap a card to watch.</div>'));
-  const grid=ce("div","grid g2"); p.appendChild(grid);
-  (DATA.exercises||[]).forEach(ex=>{
-    const c=ce("div","card");
-    c.innerHTML='<div class="exn" style="font-size:15px">'+esc(ex.name)+'</div><div class="exd">'+esc(ex.group||"")+'</div>'+(ex.cue?'<div class="exc">'+esc(ex.cue)+'</div>':'');
-    if(ex.video_id){
-      const v=ce("div","vidwrap");
-      v.innerHTML='<iframe loading="lazy" allow="encrypted-media" allowfullscreen src="https://www.youtube-nocookie.com/embed/'+esc(ex.video_id)+'"></iframe>';
-      c.appendChild(v);
+function renderTraining(){
+  const p=$("#p-training"); p.innerHTML=""; const pl=DATA.plan;
+  if(pl&&pl.days){
+    const week=ce("div","week");
+    pl.days.forEach((d,i)=>week.appendChild(ce("div","day"+(i===pl.today_index?" today":"")+(d.is_rest?" rest":""),
+      '<div class="dn">'+esc(d.name)+'</div><div class="dl">'+esc(d.short)+'</div>')));
+    p.appendChild(week);
+    const today=pl.days[pl.today_index];
+    const card=ce("div","mod");
+    card.innerHTML='<div class="modhead"><h3>Today · '+esc(today.name)+'</h3><span class="meta">'+esc(today.label)+'</span></div>'+
+      (today.note?'<div style="font-size:13px;color:var(--ink2);margin-bottom:10px;font-family:Fraunces">'+esc(today.note)+'</div>':'');
+    (today.exercises||[]).forEach(ex=>card.appendChild(exRow(ex)));
+    if(!today.exercises||!today.exercises.length) card.innerHTML+='<div style="color:var(--ink2);font-size:13.5px;line-height:1.5">'+(today.is_rest?'Rest day — 10-min mobility only if tight. The daily walk still stands.':'Walk + 10-min hip mobility.')+'</div>';
+    p.appendChild(card);
+    // rest of week
+    p.appendChild(sechead("·","The rest of the week"));
+    pl.days.forEach((d,i)=>{
+      if(i===pl.today_index||!d.exercises||!d.exercises.length) return;
+      const c=ce("div","mod");
+      c.innerHTML='<div class="modhead"><h3>'+esc(d.name)+' · '+esc(d.label)+'</h3><span class="meta">'+d.exercises.length+' moves</span></div>';
+      d.exercises.forEach(ex=>c.appendChild(exRow(ex)));
+      p.appendChild(c);
+    });
+  }
+  // Mobility
+  const m=DATA.mobility;
+  if(m){
+    p.appendChild(sechead("·","Daily mobility · 10 minutes"));
+    const head=ce("div","mod");
+    head.innerHTML='<div class="modhead"><h3>Today · '+esc(m.name)+'</h3><span class="meta">~'+esc(m.total_min)+' min</span></div>'+
+      '<div style="color:var(--muted);font-size:12.5px;margin-bottom:8px">Once through, breathe into each. No bouncing.</div>';
+    (m.moves||[]).forEach(mv=>head.appendChild(exRow(mv)));
+    p.appendChild(head);
+    if(m.rotation&&m.rotation.length){
+      const rot=ce("div","mod");
+      rot.innerHTML='<div class="modhead"><h3>The rotation</h3></div>'+
+        m.rotation.map((r,i)=>'<div class="rotrow"><span>'+esc(r)+'</span>'+(i===m.rotation_today?'<span class="badge">Today</span>':'')+'</div>').join("");
+      p.appendChild(rot);
     }
-    grid.appendChild(c);
-  });
+  }
+  // Exercise library
+  const lib=DATA.exercises||[];
+  if(lib.length){
+    p.appendChild(sechead("·","Form library"));
+    p.appendChild(ce("div","",'<div style="color:var(--muted);font-size:13px;margin:-4px 2px 12px">Every move in your programme, with a demo. Tap to watch.</div>'));
+    const grid=ce("div","grid g2");
+    lib.forEach(ex=>{
+      const c=ce("div","mod"); c.style.padding="16px 18px";
+      c.innerHTML='<div class="exn" style="font-size:15.5px">'+esc(ex.name)+'</div><div class="exd" style="color:var(--muted);font-size:12.5px;margin-top:3px">'+esc(ex.group||"")+'</div>'+(ex.cue?'<div class="exc" style="margin-top:5px">'+esc(ex.cue)+'</div>':'');
+      if(ex.video_id){const v=ce("div","vidwrap");v.style.marginTop="10px";
+        v.innerHTML='<iframe loading="lazy" allow="encrypted-media" allowfullscreen src="https://www.youtube-nocookie.com/embed/'+esc(ex.video_id)+'"></iframe>';c.appendChild(v);}
+      grid.appendChild(c);
+    });
+    p.appendChild(grid);
+  }
 }
 
-function renderWhy(){
-  const p=$("#p-why"); p.innerHTML="";
-  const r=DATA.rationale;
-  const t=ce("div","card");
-  t.innerHTML='<h3 style="margin:0 0 8px">Daily targets</h3>';
-  (r.targets||[]).forEach(x=>t.appendChild(ce("div","tgt",'<span>'+esc(x[0])+'</span><b>'+esc(x[1])+'</b>')));
+// ── 05 · TARGETS & WHY ───────────────────────────────────────
+function renderTargets(){
+  const p=$("#p-targets"); p.innerHTML=""; const r=DATA.rationale||{};
+  const t=ce("div","mod");
+  t.innerHTML='<div class="modhead"><h3>Daily targets</h3><span class="meta">the non-negotiables</span></div>'+
+    (r.targets||[]).map(x=>'<div class="tgt"><span>'+esc(x[0])+'</span><b>'+esc(x[1])+'</b></div>').join("");
   p.appendChild(t);
-  const c=ce("div","card rationale"); c.style.marginTop="12px";
-  c.innerHTML='<h3 style="margin:0 0 8px">The rationale</h3>'+(r.paras||[]).map(x=>'<p>'+esc(x)+'</p>').join("");
-  p.appendChild(c);
-  const rl=ce("div","card"); rl.style.marginTop="12px";
-  rl.innerHTML='<h3 style="margin:0 0 8px">The rules</h3><ul class="rules">'+(r.rules||[]).map(x=>'<li>'+esc(x)+'</li>').join("")+'</ul>';
-  p.appendChild(rl);
-  if(r.disclaimer){p.appendChild(ce("div","disc",esc(r.disclaimer)));}
+  if(r.paras&&r.paras.length){
+    const c=ce("div","mod rationale");
+    c.innerHTML='<div class="modhead"><h3>Why this plan</h3></div>'+r.paras.map(x=>'<p>'+esc(x)+'</p>').join("");
+    p.appendChild(c);
+  }
+  if(r.rules&&r.rules.length){
+    const rl=ce("div","mod");
+    rl.innerHTML='<div class="modhead"><h3>The rules</h3></div><ul class="rules">'+r.rules.map(x=>'<li>'+esc(x)+'</li>').join("")+'</ul>';
+    p.appendChild(rl);
+  }
+  if(r.disclaimer) p.appendChild(ce("div","disc",esc(r.disclaimer)));
 }
 
-// ---- Refresh: triggers a local rebuild from Garmin/Withings/Peter. Works on the
-// home network (page served over http from the API); on the public surge page the
-// HTTPS->HTTP call is blocked, so it degrades to a helpful message. ----
-const LOCAL_API="http://172.19.64.1:8100";
+// ---- Refresh: rebuild from Garmin/Withings/Peter. Targets the host that
+// served this page when on the LAN (http); on surge (https) it degrades to a hint. ----
+const LOCAL_API=(location.protocol==="http:"&&location.hostname)?location.origin:"http://172.19.64.1:8100";
 function toast(msg,ms){let t=$("#toast");if(!t){t=ce("div");t.id="toast";document.body.appendChild(t);}t.textContent=msg;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),ms||6000);}
 async function doRefresh(){
   const b=$("#refresh"); if(b.classList.contains("spin"))return; b.classList.add("spin");
@@ -388,12 +679,12 @@ async function doRefresh(){
       await new Promise(s=>setTimeout(s,3000));
       try{
         const st=await (await fetch(LOCAL_API+"/fitness/dashboard/refresh/status")).json();
-        if(st && st.generated_at && st.generated_at!==start && !st.building){toast("Updated — reloading…",4000);setTimeout(()=>location.reload(),700);return;}
+        if(st&&st.generated_at&&st.generated_at!==start&&!st.building){toast("Updated — reloading…",4000);setTimeout(()=>location.reload(),700);return;}
       }catch(_){/* keep polling */}
     }
     toast("Still building — reload in a moment.",8000);
   }catch(_){
-    toast("Live refresh runs on your home network — open http://172.19.64.1:8100/fitness/dashboard/page (this page auto-updates daily at 08:20).",10000);
+    toast("Live refresh runs on your home network — open the LAN page (auto-updates daily at 08:20).",10000);
   }finally{ b.classList.remove("spin"); }
 }
 document.getElementById("refresh").addEventListener("click",doRefresh);
