@@ -776,6 +776,87 @@
     "description": "Health check and to-do list processing",
     "channel": "#peter-heartbeat!quiet"
   },
+  "home-sensors": {
+    "triggers": [
+      "temperature in the bedroom",
+      "how warm is it in here",
+      "room temperature",
+      "house temperature",
+      "is it cold in the kitchen",
+      "how warm is the bedroom",
+      "humidity",
+      "how humid is it",
+      "indoor temperature",
+      "is it warmer than yesterday",
+      "temperature trend",
+      "overnight low",
+      "has it been warmer this week"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Live INDOOR temperature & humidity per room from the home Zigbee sensors, plus history/trends (warmer than yesterday, overnight low, weekly trend)",
+    "channel": null
+  },
+  "home-control": {
+    "triggers": [
+      "turn the plug on",
+      "turn the plug off",
+      "is the plug on",
+      "put netflix on",
+      "put youtube on the screen",
+      "close netflix",
+      "wake the screen",
+      "turn the kitchen screen on"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Control Pi-connected home devices — smart plug on/off, the kitchen screen, and streaming (Netflix/YouTube/NowTV)",
+    "channel": null
+  },
+  "pocket-money": {
+    "triggers": [
+      "how much pocket money does max have",
+      "how much pocket money does emmie have",
+      "what's max's balance",
+      "what's emmie's balance",
+      "add money to max",
+      "add money to emmie",
+      "take money off max",
+      "pocket money balance",
+      "pocket money grid"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Check and adjust the kids' pocket money balances (Emmie & Max) conversationally — separate from the scheduled Sunday pocket-money-weekly calc",
+    "channel": null
+  },
+  "kids-pets": {
+    "triggers": [
+      "how are the pets",
+      "how's max's pet",
+      "how's emmie's pet",
+      "do the pets need feeding",
+      "pet status"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Check the kids' virtual Tamagotchi pets on the dashboard (Max's and Emmie's)",
+    "channel": null
+  },
+  "dad-jokes": {
+    "triggers": [
+      "tell me a joke",
+      "what's today's joke",
+      "dad joke",
+      "add a joke",
+      "put a joke on the screen",
+      "tell the kids a joke"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Read or add the 'Peter says...' dad jokes shown on the kids' dashboard screen",
+    "channel": null
+  },
   "hydration": {
     "triggers": [
       "water",

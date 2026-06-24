@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "IHD Kiosk Touch",
+  "version": "1.0",
+  "description": "Touch-friendly scrollbars, keyboard-safe scrolling, and iframe spacer for the IHD kiosk",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "css": ["scrollbar.css"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+fastapi==0.115.0
+uvicorn==0.30.0
+smbus2==0.4.3
+RPi.bme280==0.2.4

@@ -1,0 +1,135 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f5f2eb;
+  --surface: #ffffff;
+  --surface-alt: #f0ece2;
+  --border: #e0d9cc;
+  --accent: #c47f0a;
+  --accent-glow: rgba(196, 127, 10, 0.08);
+  --text: #1a1710;
+  --text-mid: #7a7060;
+  --text-dim: #bbb0a0;
+  --green: #2a9e5c;
+  --blue: #2e78d0;
+  --rose: #d44868;
+  --purple: #7c52c8;
+
+  /* Person colours */
+  --chris: #c47f0a;
+  --abby: #c8304c;
+  --max: #2060b8;
+  --emmie: #7040b8;
+  --family: #1e8a50;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-alt: var(--surface-alt);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-glow: var(--accent-glow);
+  --color-text: var(--text);
+  --color-text-mid: var(--text-mid);
+  --color-text-dim: var(--text-dim);
+  --color-green: var(--green);
+  --color-blue: var(--blue);
+  --color-rose: var(--rose);
+  --color-purple: var(--purple);
+  --font-sans: var(--font-figtree);
+  --font-serif: var(--font-fraunces);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  /* Bigger text for 13.3" 1080p touchscreen at kitchen distance */
+  font-size: 18px;
+}
+
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-figtree), sans-serif;
+}
+
+/* Prevent horizontal scrollbar caused by wide vertical scrollbar */
+.overflow-y-auto { overflow-x: hidden; }
+
+/* Scrollbar styling — wide & touch-friendly for kiosk touchscreen */
+::-webkit-scrollbar {
+  width: 20px;
+}
+::-webkit-scrollbar-track {
+  background: var(--surface-alt);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 10px;
+  border: 4px solid var(--surface-alt);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+
+/* Animations */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 6px var(--green); }
+  50% { box-shadow: 0 0 14px var(--green); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes coinBounce {
+  0% { transform: scale(0.9); opacity: 0.5; }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes jokeReveal {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Pet animations */
+@keyframes pet-breathe {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(1.04); }
+}
+@keyframes pet-sleep-breathe {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(1.06); }
+}
+@keyframes pet-happy-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+@keyframes sparkle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}

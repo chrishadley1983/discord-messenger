@@ -1,0 +1,9 @@
+<!DOCTYPE html>
+<html><head><style>
+*{margin:0;padding:0}
+body{background:rgba(30,30,30,0.9);display:flex;align-items:center;justify-content:center;height:100vh;cursor:pointer}
+button{background:none;border:none;color:white;font-size:36px;font-weight:bold;cursor:pointer;width:100%;height:100%}
+button:active{color:#e50914}
+</style></head><body>
+<button onclick="fetch('/api/media',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'close'})}).then(()=>window.close())">✕</button>
+</body></html>

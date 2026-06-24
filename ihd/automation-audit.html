@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hadley Automation Ecosystem — Full Audit</title>
+<style>
+  :root {
+    --bg: #f5f2eb;
+    --card: #ffffff;
+    --accent: #c47f0a;
+    --text: #2d2a24;
+    --muted: #7a7265;
+    --border: #e8e2d6;
+    --green: #22863a;
+    --red: #cb2431;
+    --amber: #b08800;
+    --blue: #0366d6;
+    --purple: #6f42c1;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 2rem; color: var(--accent); margin-bottom: 8px; }
+  .subtitle { color: var(--muted); margin-bottom: 32px; font-size: 0.95rem; }
+  h2 { font-size: 1.4rem; color: var(--text); margin: 32px 0 16px; padding-bottom: 8px; border-bottom: 2px solid var(--accent); }
+  h3 { font-size: 1.1rem; margin: 20px 0 10px; color: var(--text); }
+  h4 { font-size: 0.95rem; margin: 14px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* Navigation */
+  .nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 32px; position: sticky; top: 0; background: var(--bg); padding: 12px 0; z-index: 10; border-bottom: 1px solid var(--border); }
+  .nav a { padding: 6px 14px; border-radius: 20px; background: var(--card); border: 1px solid var(--border); color: var(--text); text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: all 0.2s; }
+  .nav a:hover { background: var(--accent); color: white; border-color: var(--accent); }
+
+  /* Cards */
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 16px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.9rem; }
+  th { background: #f0ece3; text-align: left; padding: 10px 12px; font-weight: 600; border-bottom: 2px solid var(--border); }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:hover td { background: #faf8f4; }
+
+  /* Badges */
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.78rem; font-weight: 600; }
+  .badge-green { background: #dcffe4; color: var(--green); }
+  .badge-red { background: #ffdce0; color: var(--red); }
+  .badge-amber { background: #fff5cc; color: var(--amber); }
+  .badge-blue { background: #dbedff; color: var(--blue); }
+  .badge-purple { background: #f0e6ff; color: var(--purple); }
+  .badge-grey { background: #eee; color: #666; }
+
+  /* Lists */
+  ul { padding-left: 20px; margin: 8px 0; }
+  li { margin: 4px 0; font-size: 0.92rem; }
+
+  /* Alert box */
+  .alert { padding: 14px 18px; border-radius: 8px; margin: 12px 0; font-size: 0.9rem; }
+  .alert-warn { background: #fff8e1; border-left: 4px solid var(--amber); }
+  .alert-danger { background: #fff0f0; border-left: 4px solid var(--red); }
+  .alert-info { background: #e8f4fd; border-left: 4px solid var(--blue); }
+  .alert-success { background: #e6ffed; border-left: 4px solid var(--green); }
+
+  /* Stats row */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 16px 0; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; text-align: center; }
+  .stat-value { font-size: 2rem; font-weight: 700; color: var(--accent); }
+  .stat-label { font-size: 0.82rem; color: var(--muted); margin-top: 4px; }
+
+  /* Collapsible */
+  details { margin: 8px 0; }
+  details summary { cursor: pointer; font-weight: 600; padding: 8px 0; color: var(--blue); }
+  details summary:hover { text-decoration: underline; }
+
+  code { background: #f0ece3; padding: 2px 6px; border-radius: 4px; font-size: 0.88em; }
+  .mono { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.88em; }
+
+  /* Dashboard opportunity highlight */
+  .opportunity { border-left: 4px solid var(--accent); padding-left: 14px; margin: 10px 0; }
+
+  @media (max-width: 768px) {
+    .card-grid { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    h1 { font-size: 1.5rem; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Hadley Automation Ecosystem</h1>
+<p class="subtitle">Full audit — 11 March 2026 &bull; Discord-Messenger &bull; Hadley Bricks &bull; IHD Dashboard &bull; Claude Skills &bull; Chrome Extensions &bull; Infrastructure</p>
+
+<div class="stats">
+  <div class="stat"><div class="stat-value">62</div><div class="stat-label">Peterbot Scheduled Jobs</div></div>
+  <div class="stat"><div class="stat-value">24</div><div class="stat-label">HB Cron Endpoints</div></div>
+  <div class="stat"><div class="stat-value">17</div><div class="stat-label">Claude Skills</div></div>
+  <div class="stat"><div class="stat-value">6</div><div class="stat-label">Supabase Edge Functions</div></div>
+  <div class="stat"><div class="stat-value">2</div><div class="stat-label">Chrome Extensions</div></div>
+  <div class="stat"><div class="stat-value">2</div><div class="stat-label">Live Surge Sites</div></div>
+</div>
+
+<nav class="nav">
+  <a href="#peterbot">Peterbot Jobs</a>
+  <a href="#hb-cron">HB Cron Jobs</a>
+  <a href="#hb-sync">HB Sync Services</a>
+  <a href="#skills">Claude Skills (17)</a>
+  <a href="#supabase">Supabase Functions</a>
+  <a href="#extensions">Chrome Extensions</a>
+  <a href="#ihd">IHD Dashboard</a>
+  <a href="#sites">Surge Sites</a>
+  <a href="#alerting">Alerting &amp; Monitoring</a>
+  <a href="#gaps">Alerting Gaps</a>
+  <a href="#dashboard-opps">Dashboard Opportunities</a>
+  <a href="#redundant">Redundant Code</a>
+</nav>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="peterbot">1. Peterbot — Scheduled Jobs (Discord-Messenger)</h2>
+
+<div class="card">
+  <h4>Infrastructure</h4>
+  <ul>
+    <li><strong>Framework:</strong> APScheduler (AsyncIOScheduler) with cron triggers</li>
+    <li><strong>Timezone:</strong> Europe/London</li>
+    <li><strong>Quiet hours:</strong> 23:00–06:00 (blocked unless <code>!quiet</code>)</li>
+    <li><strong>Job DB:</strong> SQLite <code>peter_dashboard/job_history.db</code> (1.38 MB)</li>
+    <li><strong>Services:</strong> NSSM Windows services (Discord bot, Hadley API, scheduler)</li>
+    <li><strong>Dashboard:</strong> Peter Dashboard Flask app with job management API</li>
+  </ul>
+</div>
+
+<h3>All 62 Scheduled Jobs</h3>
+<table>
+  <thead><tr><th>Time</th><th>Job</th><th>Category</th><th>Error Handling</th></tr></thead>
+  <tbody>
+    <tr><td>06:30</td><td>Morning Laughs</td><td>Entertainment</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>06:45</td><td>Morning Briefing</td><td>Information</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>06:50</td><td>School Sync</td><td>Kids</td><td><span class="badge badge-amber">Partial</span></td></tr>
+    <tr><td>07:00</td><td>Weather Forecast</td><td>Information</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>07:00</td><td>Nutrition Morning</td><td>Health</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>07:00</td><td>Balance Monitor</td><td>Finance</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>07:15</td><td>School Run</td><td>Kids</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>07:30</td><td>YouTube Feed</td><td>Entertainment</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>08:00</td><td>Hadley Bricks Daily</td><td>Business</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>08:00</td><td>Energy Sync</td><td>Home</td><td><span class="badge badge-amber">Basic</span></td></tr>
+    <tr><td>08:30</td><td>Withings Sync</td><td>Health</td><td><span class="badge badge-amber">Basic</span></td></tr>
+    <tr><td>09:00</td><td>WhatsApp Sync</td><td>Comms</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>09:00</td><td>Hydration Check-in</td><td>Health</td><td><span class="badge badge-amber">Minimal</span></td></tr>
+    <tr><td>10:00</td><td>Incremental Seed</td><td>System</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>10:00</td><td>Embedding Report</td><td>System</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>12:00</td><td>Hydration Check-in</td><td>Health</td><td><span class="badge badge-amber">Minimal</span></td></tr>
+    <tr><td>15:00</td><td>Hydration Check-in</td><td>Health</td><td><span class="badge badge-amber">Minimal</span></td></tr>
+    <tr><td>15:30</td><td>School Run PM</td><td>Kids</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>17:00</td><td>Meal Planner</td><td>Home</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>18:00</td><td>Hydration Check-in</td><td>Health</td><td><span class="badge badge-amber">Minimal</span></td></tr>
+    <tr><td>20:00</td><td>Evening Summary</td><td>Information</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>21:00</td><td>Practice Allocate</td><td>Kids</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>Weekly</td><td>Weekly Health Report</td><td>Health</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>Monthly</td><td>Monthly Health Report</td><td>Health</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>10min</td><td>Spurs Live</td><td>Entertainment</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>Various</td><td>Reminders (user-set)</td><td>Utility</td><td><span class="badge badge-green">Full</span></td></tr>
+    <tr><td>Daily</td><td>Claude Code Health</td><td>System</td><td><span class="badge badge-red">Minimal</span></td></tr>
+  </tbody>
+</table>
+<p style="color:var(--muted);font-size:0.85rem;margin-top:4px;">Note: 62 jobs total — table shows key representative jobs. Many share similar patterns (weather, news, sports, reminders etc.)</p>
+
+<details>
+  <summary>Peter Dashboard Health Monitor (Background Service)</summary>
+  <div class="card" style="margin-top:8px;">
+    <p>Independent health check service running every <strong>60 seconds</strong>:</p>
+    <table>
+      <thead><tr><th>Service</th><th>Check</th><th>Priority</th></tr></thead>
+      <tbody>
+        <tr><td>Hadley API</td><td><code>localhost:8100/health</code></td><td><span class="badge badge-red">CRITICAL</span></td></tr>
+        <tr><td>Discord Bot</td><td>Process check</td><td><span class="badge badge-red">CRITICAL</span></td></tr>
+        <tr><td>Second Brain (Supabase)</td><td>Connection check</td><td><span class="badge badge-red">CRITICAL</span></td></tr>
+        <tr><td>Hadley Bricks</td><td><code>localhost:3000</code></td><td><span class="badge badge-grey">Non-critical</span></td></tr>
+        <tr><td>Peterbot Session</td><td>Router v2 check</td><td><span class="badge badge-red">CRITICAL</span></td></tr>
+      </tbody>
+    </table>
+    <p><strong>Alert threshold:</strong> 5 min downtime → Discord alert → re-alert every 30 min if still down</p>
+  </div>
+</details>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="hb-cron">2. Hadley Bricks — Cron Jobs (GCP Cloud Scheduler → Vercel)</h2>
+
+<div class="card">
+  <h4>Infrastructure</h4>
+  <ul>
+    <li><strong>Scheduler:</strong> Google Cloud Scheduler (europe-west2)</li>
+    <li><strong>Runtime:</strong> Vercel (Next.js API routes)</li>
+    <li><strong>Service Account:</strong> <code>hadley-scheduler-sa@PROJECT.iam.gserviceaccount.com</code></li>
+    <li><strong>Secrets:</strong> GCP Secret Manager (<code>hadley-bricks-cron-secret</code>)</li>
+    <li><strong>Job DB:</strong> Supabase <code>job_execution_history</code> table</li>
+    <li><strong>Resumable driver:</strong> Cloud Function <code>pricing-sync-driver</code> (gen2, Node 20)</li>
+  </ul>
+</div>
+
+<h3>All 24 Cron Endpoints</h3>
+<table>
+  <thead><tr><th>Job</th><th>Schedule</th><th>Type</th><th>Discord Alerts</th></tr></thead>
+  <tbody>
+    <tr><td>Amazon Two-Phase Sync</td><td>Every 5 min</td><td>Fire-and-forget</td><td><span class="badge badge-green">Yes (5)</span></td></tr>
+    <tr><td>Amazon Pricing</td><td>Every 30 min</td><td>Resumable</td><td><span class="badge badge-green">Yes (4)</span></td></tr>
+    <tr><td>eBay Pricing</td><td>Daily 02:00</td><td>Resumable</td><td><span class="badge badge-green">Yes (5)</span></td></tr>
+    <tr><td>BrickLink Pricing</td><td>Daily 02:30</td><td>Resumable</td><td><span class="badge badge-green">Yes (5)</span></td></tr>
+    <tr><td>eBay Negotiation</td><td>4× daily</td><td>Fire-and-forget</td><td><span class="badge badge-red">None</span></td></tr>
+    <tr><td>Vinted Cleanup</td><td>Daily 00:00</td><td>Fire-and-forget</td><td><span class="badge badge-amber">Basic (2)</span></td></tr>
+    <tr><td>Vinted Collections</td><td>Daily 08:00</td><td>Fire-and-forget</td><td><span class="badge badge-green">Yes (3)</span></td></tr>
+    <tr><td>Refresh Watchlist</td><td>Weekly Sun 03:00</td><td>Fire-and-forget</td><td><span class="badge badge-green">Yes (3)</span></td></tr>
+    <tr><td>Rebrickable Sync</td><td>Weekly Sun 04:00</td><td>Fire-and-forget</td><td><span class="badge badge-green">Yes (4)</span></td></tr>
+    <tr><td>Retirement Sync</td><td>Daily 06:00</td><td>Fire-and-forget</td><td><span class="badge badge-green">Yes (3)</span></td></tr>
+    <tr><td>Investment Sync</td><td>Daily 07:00</td><td>Fire-and-forget</td><td><span class="badge badge-red">None</span></td></tr>
+    <tr><td>Investment Retrain</td><td>Monthly 1st 05:00</td><td>Fire-and-forget</td><td><span class="badge badge-red">None</span></td></tr>
+    <tr><td>SP-API Buy Box Overlay</td><td>Daily 06:00</td><td>Fire-and-forget</td><td><span class="badge badge-green">Yes (4)</span></td></tr>
+    <tr><td>SP-API Buy Box Refresh</td><td>Every 30 min</td><td>Fire-and-forget</td><td><span class="badge badge-red">None</span></td></tr>
+    <tr><td>Cost Allocation</td><td>Daily 21:15</td><td>Fire-and-forget</td><td><span class="badge badge-green">Yes (3)</span></td></tr>
+    <tr><td>Vercel Usage Report</td><td>Daily 07:00</td><td>Fire-and-forget</td><td><span class="badge badge-green">Yes (3)</span></td></tr>
+    <tr><td>Full Sync (stuck detect)</td><td>Every 4 hours</td><td>Fire-and-forget</td><td><span class="badge badge-green">Yes (5)</span></td></tr>
+    <tr><td>Email Purchases</td><td>Periodic</td><td>Fire-and-forget</td><td><span class="badge badge-green">Yes (3)</span></td></tr>
+    <tr><td>eBay FP Cleanup</td><td>Periodic</td><td>Fire-and-forget</td><td><span class="badge badge-green">Yes (4)</span></td></tr>
+    <tr><td>Minifig Daily Inventory</td><td>Daily</td><td>Fire-and-forget</td><td><span class="badge badge-red">None</span></td></tr>
+    <tr><td>Minifig Poll Bricqer</td><td>Periodic</td><td>Fire-and-forget</td><td><span class="badge badge-red">None</span></td></tr>
+    <tr><td>Minifig Poll eBay</td><td>Periodic</td><td>Fire-and-forget</td><td><span class="badge badge-red">None</span></td></tr>
+    <tr><td>Minifig Reprice</td><td>Periodic</td><td>Fire-and-forget</td><td><span class="badge badge-red">None</span></td></tr>
+    <tr><td>Minifig Research Refresh</td><td>Periodic</td><td>Fire-and-forget</td><td><span class="badge badge-red">None</span></td></tr>
+  </tbody>
+</table>
+
+<details>
+  <summary>Stuck Job Detection (Full Sync)</summary>
+  <div class="card" style="margin-top:8px;">
+    <p>Runs every 4 hours. Checks for jobs stuck <code>IN_PROGRESS</code> for >30 minutes across:</p>
+    <ul>
+      <li><code>ebay_sync_log</code></li>
+      <li><code>amazon_sync_log</code></li>
+      <li><code>bricklink_sync_log</code></li>
+      <li><code>brickowl_sync_log</code></li>
+      <li><code>amazon_sync_feeds</code> (processing/submitted >30 min old)</li>
+    </ul>
+    <p>Auto-resets stuck jobs to FAILED. Alerts Discord if >3 consecutive zero-progress invocations.</p>
+  </div>
+</details>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="hb-sync">3. Hadley Bricks — Sync Services &amp; Integrations</h2>
+
+<div class="card-grid">
+  <div class="card">
+    <h3>Amazon SP-API</h3>
+    <ul>
+      <li>Two-phase order sync (every 5 min)</li>
+      <li>FBA pricing refresh (every 30 min)</li>
+      <li>Buy Box overlay (daily)</li>
+      <li>Feed submissions (inventory updates)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>eBay</h3>
+    <ul>
+      <li>Order sync + pricing (daily)</li>
+      <li>Negotiation engine (4× daily)</li>
+      <li>Featured Plus cleanup</li>
+      <li>Listing management</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>BrickLink</h3>
+    <ul>
+      <li>Pricing sync (daily, resumable)</li>
+      <li>Order sync</li>
+      <li>Inventory management</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Vinted</h3>
+    <ul>
+      <li>Listing cleanup (daily)</li>
+      <li>Collections sync (daily)</li>
+      <li>Negotiation automation</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Data Enrichment</h3>
+    <ul>
+      <li>Rebrickable sync (weekly)</li>
+      <li>Retirement predictions (daily)</li>
+      <li>Investment classification (daily)</li>
+      <li>Investment ML retrain (monthly)</li>
+      <li>Cost allocation (daily)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Minifigs</h3>
+    <ul>
+      <li>Daily inventory</li>
+      <li>Bricqer order polling</li>
+      <li>eBay order polling</li>
+      <li>Repricing</li>
+      <li>Research refresh</li>
+    </ul>
+  </div>
+</div>
+
+<h3>Discord Webhook Channels (Hadley Bricks)</h3>
+<table>
+  <thead><tr><th>Channel</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td>#sync-status</td><td>Standard sync reports (green/amber/red)</td></tr>
+    <tr><td>#alerts</td><td>High-priority failures &amp; rate limits</td></tr>
+    <tr><td>#orders</td><td>New order notifications</td></tr>
+    <tr><td>#pricing</td><td>Price change alerts</td></tr>
+    <tr><td>#vinted-deals</td><td>Vinted Sniper deal alerts</td></tr>
+  </tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="skills">4. Claude Code Skills</h2>
+
+<div class="card-grid">
+  <div class="card">
+    <h3>amazon-delivery-performance</h3>
+    <p>Scrapes Royal Mail Click &amp; Drop + tracking, generates PDF delivery performance reports, emails via SMTP.</p>
+    <p><span class="badge badge-blue">Python</span> <span class="badge badge-purple">Playwright</span> <span class="badge badge-grey">WeasyPrint</span></p>
+  </div>
+  <div class="card">
+    <h3>guide-creator</h3>
+    <p>Converts raw content → interactive HTML guides with Leaflet maps. Publishes to surge.sh. Manages site registry.</p>
+    <p><span class="badge badge-blue">HTML/CSS/JS</span> <span class="badge badge-purple">Surge.sh</span> <span class="badge badge-grey">Google Drive</span></p>
+  </div>
+  <div class="card">
+    <h3>send-email</h3>
+    <p>Send HTML emails via Gmail SMTP. Default method for all email sending.</p>
+    <p><span class="badge badge-blue">Python SMTP</span></p>
+  </div>
+  <div class="card">
+    <h3>surge-publish</h3>
+    <p>Publish static HTML to surge.sh CDN. Automates interactive login via pexpect.</p>
+    <p><span class="badge badge-blue">Surge CLI</span> <span class="badge badge-purple">Python pexpect</span></p>
+  </div>
+  <div class="card">
+    <h3>hadley-bricks-data</h3>
+    <p>Data enrichment for LEGO inventory — Brickset API lookups for set info, pricing, images.</p>
+    <p><span class="badge badge-blue">Brickset API</span></p>
+  </div>
+  <div class="card">
+    <h3>practice-papers</h3>
+    <p>Practice test system for Emmie — comprehension, maths, verbal reasoning, NVR, writing.</p>
+    <p><span class="badge badge-blue">HTML/JS</span></p>
+  </div>
+  <div class="card">
+    <h3>rm-tracking-backfill</h3>
+    <p>Royal Mail tracking data backfill — batch lookup of historical tracking numbers.</p>
+    <p><span class="badge badge-blue">Python</span></p>
+  </div>
+  <div class="card">
+    <h3>practice-family-setup</h3>
+    <p>Family/student setup for practice test system — create families, students, sessions.</p>
+    <p><span class="badge badge-blue">Supabase</span></p>
+  </div>
+  <div class="card">
+    <h3>auction-lot-analyser</h3>
+    <p>Analyse LEGO auction lots for profitability — identify sets from photos, look up BrickLink/eBay prices, calculate COG% and ROI.</p>
+    <p><span class="badge badge-blue">Browser MCP</span> <span class="badge badge-purple">BrickLink</span></p>
+  </div>
+  <div class="card">
+    <h3>bug-hunt</h3>
+    <p>Four-stage adversarial bug review pipeline: Hunter → Skeptic → Referee → Verifier subagents.</p>
+    <p><span class="badge badge-blue">Agent subagents</span></p>
+  </div>
+  <div class="card">
+    <h3>frontend-design</h3>
+    <p>Create production-grade frontend interfaces — React components, HTML/CSS, landing pages, dashboards.</p>
+    <p><span class="badge badge-blue">React</span> <span class="badge badge-grey">HTML/CSS</span></p>
+  </div>
+  <div class="card">
+    <h3>generate-post-from-idea</h3>
+    <p>Generate Instagram posts from Hadley Bricks backlog ideas — caption, hashtags, 3 linked Stories per post.</p>
+    <p><span class="badge badge-blue">Supabase</span> <span class="badge badge-purple">Claude API</span></p>
+  </div>
+  <div class="card">
+    <h3>hadley-bricks-review-queue</h3>
+    <p>Process Hadley Bricks review queue — identify LEGO set numbers from Vinted purchase photos via Browser MCP.</p>
+    <p><span class="badge badge-blue">Browser MCP</span> <span class="badge badge-purple">Brickset</span></p>
+  </div>
+  <div class="card">
+    <h3>instagram-photo-optimizer</h3>
+    <p>Optimize product images for Instagram — creates 4x5 feed, 4x5 clean, 1x1 square, 9x16 story/reel variants.</p>
+    <p><span class="badge badge-blue">Python PIL</span></p>
+  </div>
+  <div class="card">
+    <h3>lego-news-scout</h3>
+    <p>Scout LEGO news (Reddit, web, Brickset) for trending topics, deals, retirements — feeds into Instagram backlog.</p>
+    <p><span class="badge badge-blue">WebSearch</span> <span class="badge badge-purple">Supabase</span></p>
+  </div>
+  <div class="card">
+    <h3>proton-to-gmail-forwarder</h3>
+    <p>Forward Vinted receipt emails from Proton Mail to Gmail via Browser MCP automation. Currently manual, could be scheduled.</p>
+    <p><span class="badge badge-blue">Browser MCP</span> <span class="badge badge-purple">SMTP</span></p>
+  </div>
+  <div class="card">
+    <h3>notebook-research</h3>
+    <p>Gather sources (YouTube, URLs, PDFs) → Google Notebook LM → generate audio overviews, infographics, quizzes, mind maps.</p>
+    <p><span class="badge badge-blue">notebooklm-py</span> <span class="badge badge-purple">yt-dlp</span></p>
+  </div>
+  <div class="card">
+    <h3>unsplash</h3>
+    <p>Search &amp; download free stock photos from Unsplash + Pixabay with base64-embedded preview grid.</p>
+    <p><span class="badge badge-blue">Python requests</span></p>
+  </div>
+  <div class="card">
+    <h3>weekly-instagram-batch</h3>
+    <p>Generate 7 Instagram posts per week — prioritises queued ideas, fills from inventory, creates 3 Stories per post (21 total).</p>
+    <p><span class="badge badge-blue">Supabase</span> <span class="badge badge-purple">Claude API</span></p>
+  </div>
+  <div class="card">
+    <h3>vinted-package-message</h3>
+    <p>Automate sending packaging request messages to Vinted sellers via browser automation.</p>
+    <p><span class="badge badge-blue">Browser MCP</span></p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="supabase">5. Supabase Edge Functions</h2>
+
+<div class="card-grid">
+  <div class="card">
+    <h3>generate-instagram-posts</h3>
+    <p><span class="badge badge-purple">instagram-automation</span></p>
+    <p>Generates weekly batch of Instagram post drafts. Selects diverse LEGO items, enriches with Brickset data, uses Claude Sonnet to write captions + hashtags. Schedules 1 post/day for 7 days.</p>
+    <p><strong>Trigger:</strong> Manual POST request</p>
+  </div>
+  <div class="card">
+    <h3>practice-auth</h3>
+    <p><span class="badge badge-purple">hadley-bricks</span></p>
+    <p>Session token validation and role checking (parent/child) for emmie-practice test site.</p>
+  </div>
+  <div class="card">
+    <h3>practice-dashboard</h3>
+    <p><span class="badge badge-purple">hadley-bricks</span></p>
+    <p>Fetches student results, performance data. Role-based filtering (parent sees all, child sees self).</p>
+  </div>
+  <div class="card">
+    <h3>practice-family-lookup</h3>
+    <p><span class="badge badge-purple">hadley-bricks</span></p>
+    <p>Looks up family by code to get family ID.</p>
+  </div>
+  <div class="card">
+    <h3>practice-family-setup</h3>
+    <p><span class="badge badge-purple">hadley-bricks</span></p>
+    <p>Create new family, generate unique code, set up students, create parent session.</p>
+  </div>
+  <div class="card">
+    <h3>practice-results</h3>
+    <p><span class="badge badge-purple">hadley-bricks</span></p>
+    <p>Submit test results, calculate scores, store in <code>practice.results</code> table.</p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="extensions">6. Chrome Extensions</h2>
+
+<div class="card-grid">
+  <div class="card">
+    <h3>Vinted Sniper</h3>
+    <p>Monitors Vinted catalog for LEGO listings. Identifies set numbers via text matching + Gemini 2.0 Flash Vision API. Compares Vinted price vs Amazon (Supabase → Keepa fallback). Sends colour-coded Discord alerts.</p>
+    <ul>
+      <li><strong>Green:</strong> ≥25% profit margin</li>
+      <li><strong>Amber:</strong> ≥15% profit margin</li>
+      <li>Polling: 45s (configurable), auto-refresh 60-240s</li>
+      <li>Quiet hours support (configurable)</li>
+      <li>Postage: £2.39 added to COG</li>
+    </ul>
+    <p><span class="badge badge-blue">Manifest v3</span> <span class="badge badge-purple">Gemini Vision</span> <span class="badge badge-grey">Discord Webhooks</span></p>
+  </div>
+  <div class="card">
+    <h3>IHD Kiosk Touch</h3>
+    <p>Universal kiosk UX improvements for the Pi dashboard. Loaded as unpacked extension in Chromium.</p>
+    <ul>
+      <li>20px touch-friendly scrollbars (semi-transparent)</li>
+      <li>Iframe-only 50vh bottom spacer (for on-screen keyboard)</li>
+      <li>Focusin scroll-to-center with 350ms debounce</li>
+    </ul>
+    <p><span class="badge badge-blue">Manifest v3</span> <span class="badge badge-grey">Content Scripts</span></p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="ihd">7. IHD Dashboard (Raspberry Pi)</h2>
+
+<div class="card">
+  <h4>Hardware &amp; Infrastructure</h4>
+  <ul>
+    <li><strong>Device:</strong> Raspberry Pi 5 (4GB) @ 192.168.0.110</li>
+    <li><strong>Display:</strong> Waveshare 13.3" 1920×1080 touchscreen</li>
+    <li><strong>Sensors:</strong> BME280 (temp/humidity/pressure), BH1750 (light), HC-SR501 (PIR motion)</li>
+    <li><strong>Smart Home:</strong> Sonoff ZBDongle-E + S60ZBTPG smart plug via Zigbee2MQTT</li>
+    <li><strong>Stack:</strong> Next.js 14 (App Router) + TypeScript + Tailwind CSS</li>
+    <li><strong>Process Manager:</strong> pm2 (auto-restart on boot)</li>
+    <li><strong>Keyboard:</strong> wvkbd (Wayland on-screen keyboard, ~300px)</li>
+  </ul>
+</div>
+
+<h3>Pages &amp; Widgets</h3>
+<table>
+  <thead><tr><th>Page</th><th>Route</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>Home (6 widgets)</td><td><code>/</code></td><td><span class="badge badge-green">Live</span></td></tr>
+    <tr><td>Calendar (7-day week)</td><td><code>/calendar</code></td><td><span class="badge badge-green">Live</span></td></tr>
+    <tr><td>Meals (weekly planner)</td><td><code>/meals</code></td><td><span class="badge badge-green">Live</span></td></tr>
+    <tr><td>Control (sensors/Zigbee)</td><td><code>/control</code></td><td><span class="badge badge-amber">Partial</span></td></tr>
+    <tr><td>Chris (tasks/Hadley/running)</td><td><code>/chris</code></td><td><span class="badge badge-amber">Partial</span></td></tr>
+    <tr><td>Kids</td><td><code>/kids</code></td><td><span class="badge badge-green">Live</span></td></tr>
+  </tbody>
+</table>
+
+<h3>API Routes (all proxy to Hadley API @ port 8100)</h3>
+<table>
+  <thead><tr><th>Endpoint</th><th>Source</th><th>Caching</th></tr></thead>
+  <tbody>
+    <tr><td><code>/api/calendar</code></td><td>Google Calendar (service account)</td><td>None (no-store), 5s timeout</td></tr>
+    <tr><td><code>/api/kids</code></td><td>Hadley API</td><td>None, 5s timeout</td></tr>
+    <tr><td><code>/api/meals</code></td><td>Hadley API</td><td>None, 5s timeout</td></tr>
+    <tr><td><code>/api/plug</code></td><td>Zigbee2MQTT</td><td>None, 5s timeout</td></tr>
+    <tr><td><code>/api/sensor</code></td><td>BME280 FastAPI (port 5000)</td><td>None, 5s timeout</td></tr>
+    <tr><td><code>/api/trip</code></td><td>Hadley API</td><td>None, 5s timeout</td></tr>
+    <tr><td><code>/api/weather</code></td><td>Weather API</td><td>None, 5s timeout</td></tr>
+  </tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="sites">8. Surge.sh Sites</h2>
+
+<div class="card-grid">
+  <div class="card">
+    <h3>hadley-japan-2026.surge.sh</h3>
+    <p><span class="badge badge-green">Live</span> &bull; 48 published guides</p>
+    <p>Japan trip guides with interactive Leaflet maps, haversine distance calculation, tab navigation. Covers activities, food, transport, day trips, seasonal events.</p>
+    <p><strong>Sections:</strong> Activities, Food, Transport, Seasonal, Day Trips, Key Days</p>
+  </div>
+  <div class="card">
+    <h3>emmie-practice.surge.sh</h3>
+    <p><span class="badge badge-green">Live</span> &bull; 50+ test pages</p>
+    <p>Practice tests for Emmie — comprehension, maths, verbal reasoning, NVR, writing, punctuation, vocabulary. Dashboard with login, session-based access, result tracking via Supabase.</p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="peter-dashboard">8b. Peter Dashboard (Live Monitoring)</h2>
+
+<div class="card">
+  <h4>Running System — Port 5000</h4>
+  <p>Python/FastAPI app providing real-time job monitoring, service health checks, and unified log aggregation.</p>
+  <ul>
+    <li><strong>Service health loop:</strong> Checks Hadley API, Discord Bot, Supabase, Peterbot session every 60s</li>
+    <li><strong>Job history DB:</strong> SQLite <code>job_history.db</code> (1.38 MB) — tracks all 62 scheduled job executions</li>
+    <li><strong>WebSocket:</strong> Real-time updates every 5 seconds at <code>/ws</code></li>
+  </ul>
+  <h4>API Endpoints</h4>
+  <table>
+    <thead><tr><th>Endpoint</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /api/status</code></td><td>All service statuses</td></tr>
+      <tr><td><code>GET /api/jobs</code></td><td>All scheduled jobs with execution history</td></tr>
+      <tr><td><code>GET /api/jobs/{id}/history</code></td><td>Execution history for specific job</td></tr>
+      <tr><td><code>GET /api/jobs/{id}/logs</code></td><td>Recent logs for specific job</td></tr>
+      <tr><td><code>GET /api/job-stats</code></td><td>24h success rate, avg duration</td></tr>
+      <tr><td><code>POST /api/jobs/{id}/run</code></td><td>Manual trigger</td></tr>
+      <tr><td><code>GET /api/logs/unified</code></td><td>Aggregated logs from all services</td></tr>
+      <tr><td><code>GET /api/logs/errors</code></td><td>Recent errors (24h-168h)</td></tr>
+      <tr><td><code>GET /api/logs/stats</code></td><td>Log volume and error rates</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="alert alert-warn">
+  <strong>Supabase <code>job_execution_history</code> table is DORMANT:</strong> The migration exists but no application code writes to it. HB cron jobs do NOT log executions to Supabase — only Discord alerts. This is a key gap for any dashboard that wants to show HB job status.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="alerting">9. Alerting &amp; Monitoring Overview</h2>
+
+<div class="stats">
+  <div class="stat"><div class="stat-value" style="color:var(--green);">23</div><div class="stat-label">Jobs with Full Alerts</div></div>
+  <div class="stat"><div class="stat-value" style="color:var(--amber);">10</div><div class="stat-label">Partial Alerts</div></div>
+  <div class="stat"><div class="stat-value" style="color:var(--red);">10</div><div class="stat-label">No Alerts</div></div>
+</div>
+
+<h3>Alert Channels</h3>
+<table>
+  <thead><tr><th>System</th><th>Method</th><th>Channels</th></tr></thead>
+  <tbody>
+    <tr><td>Hadley Bricks</td><td>Discord Webhooks</td><td>sync-status, alerts, orders, pricing, vinted-deals</td></tr>
+    <tr><td>Peterbot</td><td>Discord Bot (direct messages)</td><td>Various channels via bot</td></tr>
+    <tr><td>Peter Dashboard</td><td>Discord Webhook</td><td>DISCORD_WEBHOOK_ALERTS env var</td></tr>
+    <tr><td>Vinted Sniper</td><td>Discord Webhook</td><td>Configurable in extension options</td></tr>
+    <tr><td>Delivery Reports</td><td>SMTP Email</td><td>Chris's Gmail</td></tr>
+    <tr><td>IHD Dashboard</td><td>None</td><td>Relies on upstream Hadley API health</td></tr>
+  </tbody>
+</table>
+
+<h3>Execution History Databases</h3>
+<table>
+  <thead><tr><th>System</th><th>Storage</th><th>Size</th><th>Retention</th></tr></thead>
+  <tbody>
+    <tr><td>Discord-Messenger</td><td>SQLite <code>job_history.db</code></td><td>1.38 MB</td><td>No explicit cleanup</td></tr>
+    <tr><td>Hadley Bricks</td><td>Supabase <code>job_execution_history</code></td><td>Growing</td><td>No explicit cleanup</td></tr>
+    <tr><td>GCP Cloud Scheduler</td><td>Cloud Logging</td><td>GCP-managed</td><td>30 days default</td></tr>
+  </tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="gaps">10. Alerting Gaps &amp; Silent Failures</h2>
+
+<div class="alert alert-danger">
+  <strong>Critical: 5 HB jobs with NO error handling or alerts</strong> — these fail silently with no notification.
+</div>
+
+<table>
+  <thead><tr><th>System</th><th>Job</th><th>Issue</th><th>Impact</th></tr></thead>
+  <tbody>
+    <tr><td><span class="badge badge-amber">HB</span></td><td>investment-retrain</td><td>No Discord alerts (monthly ML retrain)</td><td>Model drift undetected</td></tr>
+    <tr><td><span class="badge badge-amber">HB</span></td><td>investment-sync</td><td>No Discord alerts (daily classification)</td><td>Investment signals stale</td></tr>
+    <tr><td><span class="badge badge-red">HB</span></td><td>spapi-buybox-refresh</td><td>No try-catch at all (every 30 min)</td><td>Unhandled exceptions crash silently</td></tr>
+    <tr><td><span class="badge badge-red">HB</span></td><td>minifigs/* (5 jobs)</td><td>No error handling, no alerts</td><td>Entire minifig pipeline blind</td></tr>
+    <tr><td><span class="badge badge-amber">HB</span></td><td>negotiation</td><td>Has try-catch but no Discord alerts</td><td>Missed eBay deal negotiations</td></tr>
+    <tr><td><span class="badge badge-amber">DM</span></td><td>school_sync</td><td>Minimal logging (1 logger.warn)</td><td>School data sync failures missed</td></tr>
+    <tr><td><span class="badge badge-amber">DM</span></td><td>claude_code_health</td><td>Minimal instrumentation</td><td>Claude Code outages missed</td></tr>
+    <tr><td><span class="badge badge-amber">DM</span></td><td>withings_sync</td><td>Basic error handling, no alerting</td><td>Health data gaps</td></tr>
+    <tr><td><span class="badge badge-grey">IHD</span></td><td>All API routes</td><td>No local error tracking or alerts</td><td>Dashboard errors invisible</td></tr>
+  </tbody>
+</table>
+
+<div class="alert alert-warn">
+  <strong>Stuck job detection only runs every 4 hours</strong> — a stuck sync could go undetected for up to 4 hours. Recommend increasing to every 30 minutes.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="dashboard-opps">11. Dashboard Opportunities</h2>
+
+<p>Things that could be surfaced on the IHD Pi dashboard or a web-based monitoring dashboard:</p>
+
+<div class="card-grid">
+  <div class="card">
+    <h3>🟢 High Value — Quick Wins</h3>
+    <div class="opportunity">
+      <strong>Job Health Widget</strong><br>
+      Aggregate <code>job_execution_history</code> (HB) + <code>job_history.db</code> (DM) into a traffic-light summary: all green / X warnings / Y failures. Tap to expand details.
+    </div>
+    <div class="opportunity">
+      <strong>Hadley Bricks Daily P&L</strong><br>
+      Data already exists in HB — orders, costs, platform fees. Surface today's revenue, margin, and orders-shipped count.
+    </div>
+    <div class="opportunity">
+      <strong>Vinted Sniper Live Feed</strong><br>
+      Show recent Vinted Sniper deal alerts on the dashboard. Data flows through Discord webhook — could duplicate to a Supabase table for dashboard consumption.
+    </div>
+    <div class="opportunity">
+      <strong>Amazon Buy Box Status</strong><br>
+      SP-API Buy Box overlay runs every 30 min. Surface how many listings have the Buy Box vs lost it.
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>🟡 Medium Value</h3>
+    <div class="opportunity">
+      <strong>Emmie Practice Progress</strong><br>
+      Already have <code>practice-dashboard</code> edge function. Surface recent test scores, streak count, next practice due.
+    </div>
+    <div class="opportunity">
+      <strong>Inventory Alerts</strong><br>
+      Low stock, repricing opportunities, items approaching retirement date. Data available in HB Supabase.
+    </div>
+    <div class="opportunity">
+      <strong>Service Health Monitor</strong><br>
+      Peter Dashboard already checks 5 services every 60s. Surface this on the IHD dashboard as a simple status grid.
+    </div>
+    <div class="opportunity">
+      <strong>Upcoming Calendar + Meals Combo</strong><br>
+      Already have both APIs. Could show "Today at a glance" — events, tonight's dinner, any school activities.
+    </div>
+    <div class="opportunity">
+      <strong>Running / Fitness Data</strong><br>
+      Withings sync already pulls health data. Surface step count, weight trend, recent runs.
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>🔵 Stretch Goals</h3>
+    <div class="opportunity">
+      <strong>Cron Job Timeline</strong><br>
+      Visual timeline showing when each HB cron job last ran and next run time. Highlight overdue or failed jobs in red.
+    </div>
+    <div class="opportunity">
+      <strong>Instagram Post Queue</strong><br>
+      Show upcoming scheduled Instagram posts from the <code>instagram_posts</code> table. Preview caption + image.
+    </div>
+    <div class="opportunity">
+      <strong>Financial Dashboard</strong><br>
+      Balance monitor data + HB revenue + platform fees = full daily financial overview.
+    </div>
+    <div class="opportunity">
+      <strong>Smart Home Controls</strong><br>
+      Already have Zigbee2MQTT integration. Expand to show all smart devices, power usage, schedules.
+    </div>
+    <div class="opportunity">
+      <strong>Instagram Post Queue</strong><br>
+      Show upcoming scheduled Instagram posts from <code>instagram_posts</code> table. Preview caption + image.
+    </div>
+  </div>
+</div>
+
+<div class="alert alert-info">
+  <strong>Pre-requisite for HB job monitoring on dashboard:</strong> The Supabase <code>job_execution_history</code> table exists but is dormant — HB cron routes need to be wired up to call <code>jobExecutionService</code> to start logging. Without this, there's no queryable data source for HB job status.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="redundant">12. Redundant Code &amp; Cleanup Opportunities</h2>
+
+<div class="card">
+  <h3>Confirmed Redundancies</h3>
+  <table>
+    <thead><tr><th>Item</th><th>Location</th><th>Issue</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>GitHub Actions cron workflows</td>
+        <td>HB <code>.github/workflows/</code></td>
+        <td>6 workflow files (amazon-pricing-cron.yml, amazon-sync-cron.yml, bricklink-pricing-cron.yml, ebay-pricing-cron.yml, negotiation-cron.yml, vinted-cleanup-cron.yml) — all confirmed DISABLED with comment "moved to Google Cloud Scheduler"</td>
+        <td><span class="badge badge-red">Delete</span> — GCS equivalents confirmed active</td>
+      </tr>
+      <tr>
+        <td>Duplicate surge-publish / send-email logic</td>
+        <td><code>~/.skills/skills/</code></td>
+        <td>surge-publish and send-email are standalone skills but their logic is also embedded in guide-creator</td>
+        <td><span class="badge badge-amber">Review</span> — keep as standalone for reuse, but ensure no drift</td>
+      </tr>
+      <tr>
+        <td>practice-family-setup (skill vs edge function)</td>
+        <td>Skill + Supabase function</td>
+        <td>Exists as both a Claude skill and a Supabase edge function — may be duplicated logic</td>
+        <td><span class="badge badge-amber">Review</span> — skill may just invoke the function</td>
+      </tr>
+      <tr>
+        <td>Emmie practice HTML (137 files)</td>
+        <td><code>Discord-Messenger/spelling-test/emmie-practice/</code></td>
+        <td>Scrollbar CSS was bulk-added then reverted — now handled by kiosk-touch-ext extension</td>
+        <td><span class="badge badge-green">Done</span> — already cleaned up</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Potential Consolidation</h3>
+  <table>
+    <thead><tr><th>Area</th><th>Current State</th><th>Suggestion</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Discord alerting</td>
+        <td>HB uses <code>discord.service.ts</code>, DM uses direct webhook calls, Peter Dashboard has its own health monitor</td>
+        <td>Consider unified alert service with configurable channels</td>
+      </tr>
+      <tr>
+        <td>Job execution tracking</td>
+        <td>SQLite (DM) vs Supabase (HB) vs Cloud Logging (GCS)</td>
+        <td>Could consolidate into single Supabase table for unified dashboard</td>
+      </tr>
+      <tr>
+        <td>SMTP email sending</td>
+        <td>Skill config at <code>~/.skills/skills/amazon-delivery-performance/smtp_config.json</code></td>
+        <td>Config lives in delivery-performance skill but is shared — move to <code>~/.skills/config/smtp.json</code></td>
+      </tr>
+      <tr>
+        <td>Pricing data sources</td>
+        <td>Keepa API (Vinted Sniper) + SP-API (HB) + BrickLink API (HB) + eBay API (HB)</td>
+        <td>Vinted Sniper queries Supabase first then Keepa — ensure price_snapshots table is kept fresh by HB cron</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2>13. Supabase Projects</h2>
+
+<table>
+  <thead><tr><th>Project</th><th>Purpose</th><th>Status</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>modjoikyuhqzouxvieua</code></td><td>Primary: HB Inventory + DM data</td><td><span class="badge badge-green">Active</span></td><td>~170k rows, main project</td></tr>
+    <tr><td><code>vkezoyhjoufvsjopjbrr</code></td><td>Finance Tracker</td><td><span class="badge badge-green">Active</span></td><td>~7k rows — candidate for consolidation into primary</td></tr>
+    <tr><td><code>pocptwknyxyrtmnfnrph</code></td><td>Family Fuel (Nutrition)</td><td><span class="badge badge-grey">Paused</span></td><td>Could delete</td></tr>
+    <tr><td><code>nvsjlktgtvhzmmirieel</code></td><td>Japan Travel Planner</td><td><span class="badge badge-grey">Paused</span></td><td>Could delete</td></tr>
+    <tr><td>Others</td><td>Family Meal Planner, Football Prediction, GainAI</td><td><span class="badge badge-grey">Paused</span></td><td>Consolidation opportunity</td></tr>
+  </tbody>
+</table>
+
+<div class="alert alert-info">
+  <strong>Cost saving:</strong> Consolidating paused projects into the primary project with separate schemas could reduce Supabase costs from ~$45/month to ~$25/month.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2>14. MCP Servers</h2>
+
+<table>
+  <thead><tr><th>Server</th><th>Project</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>second-brain</code></td><td>Discord-Messenger + HB</td><td>Personal knowledge base (Python MCP)</td></tr>
+    <tr><td><code>financial-data</code></td><td>Discord-Messenger + HB</td><td>Financial data aggregation (Python MCP)</td></tr>
+    <tr><td><code>next-devtools</code></td><td>Family Meal Planner</td><td>Next.js build/runtime/TS error monitoring</td></tr>
+    <tr><td><code>supabase</code></td><td>Family Meal Planner</td><td>PostgreSQL database access</td></tr>
+    <tr><td><code>playwright</code></td><td>Family Meal Planner</td><td>Browser automation + screenshots</td></tr>
+  </tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2>15. Architecture Overview</h2>
+
+<div class="card">
+<pre style="font-family:'Cascadia Code','Fira Code',monospace;font-size:0.82rem;line-height:1.5;overflow-x:auto;white-space:pre;">
+┌─────────────────────────────────────────────────────────────────────┐
+│                        HADLEY ECOSYSTEM                             │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌─────────────┐    ┌──────────────┐    ┌────────────────────────┐  │
+│  │  GCP Cloud   │───▶│  Vercel       │───▶│  Supabase (PostgreSQL) │  │
+│  │  Scheduler   │    │  (Next.js)    │    │  - inventory_items     │  │
+│  │  19 jobs     │    │  24 API routes│    │  - job_execution_hist  │  │
+│  └─────────────┘    └──────┬───────┘    │  - price_snapshots     │  │
+│                            │            │  - instagram_posts     │  │
+│  ┌─────────────┐           │            │  - practice.*          │  │
+│  │  Cloud Run   │           │            └────────────────────────┘  │
+│  │  (Docker)    │           │                       │                │
+│  │  Delivery    │           ▼                       │                │
+│  │  Reports     │    ┌──────────────┐               │                │
+│  └─────────────┘    │  Discord      │               │                │
+│                      │  Webhooks    │◀──────────────┘                │
+│  ┌─────────────┐    │  5 channels   │                               │
+│  │  Surge.sh    │    └──────────────┘                               │
+│  │  CDN         │                                                    │
+│  │  2 sites     │    ┌──────────────┐    ┌────────────────────────┐  │
+│  └─────────────┘    │  Windows PC   │    │  Raspberry Pi 5        │  │
+│                      │  (NSSM)      │    │  - Next.js dashboard   │  │
+│  ┌─────────────┐    │  - Peterbot   │───▶│  - BME280 sensor API   │  │
+│  │  Chrome Ext  │    │  - Hadley API │    │  - Zigbee2MQTT         │  │
+│  │  Vinted      │    │  - Scheduler  │    │  - wvkbd keyboard      │  │
+│  │  Sniper      │    │  - Dashboard  │    │  - Kiosk Touch ext     │  │
+│  └─────────────┘    └──────────────┘    └────────────────────────┘  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+</pre>
+</div>
+
+<div style="text-align:center;color:var(--muted);font-size:0.82rem;margin-top:40px;padding-bottom:24px;">
+  Generated by Claude Code &bull; 11 March 2026
+</div>
+
+</div>
+</body>
+</html>

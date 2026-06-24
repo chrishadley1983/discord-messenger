@@ -568,6 +568,15 @@ async def on_ready():
     from domains.energy.events import register as _register_energy_events
     _register_energy_events(scheduler)
 
+    # Home environment sensors watchdog — the zigbee2mqtt bridge on the
+    # dashboard Pi (192.168.0.110:5001, same box as the pocket-money dashboard)
+    # has dropped off WiFi silently before with no alert. Pings it every 5 min
+    # and alerts #alerts if it goes dark or a sensor battery is low. The live
+    # readings are also exposed at GET /home/sensors. See
+    # domains/home_sensors/service.py.
+    from domains.home_sensors.service import register_monitor as _register_home_sensors
+    _register_home_sensors(scheduler)
+
     # Extract-channel recycler — restart the stateless Haiku extraction
     # session before its context fills and it wedges (which silently slowed
     # everything that extracts ~20x). See domains/peterbot/extract_channel_recycle.py.

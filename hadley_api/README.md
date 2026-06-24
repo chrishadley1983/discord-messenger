@@ -235,6 +235,20 @@ Unified task management system with 4 list types: personal_todo, peter_queue, id
 - `GET /ev/combined` - Combined EV info
 - `GET /ring/status` - Ring doorbell status
 - `GET /kia/status` - Kia vehicle status
+- `GET /home/sensors` - Live **indoor** temperature/humidity/occupancy per room from the zigbee2mqtt bridge on the dashboard Pi (`192.168.0.110:5001`). Returns `sensors[]` with `room`, `temperature_c`, `humidity_pct`, `occupancy`, `illuminance_lux`, `battery_pct`, `link_quality`. (For *outdoor* weather use `/weather/current`.) A 5-min watchdog (bot.py) alerts #alerts if the bridge goes dark or a sensor battery is low.
+- `GET /home/sensors/history?room=bedroom&hours=24&kind=readings` - Raw time-series for one room/device from the bridge's ~30-day store. `kind=readings` (temp/humidity) or `motion`. `room` accepts a friendly name (`bedroom`) or device id (`sensor_bedroom`).
+- `GET /home/sensors/trend?days=7` - Per-room daily min/max/avg temperature + humidity with a vs-prior-day delta. Powers "is it warmer than yesterday / overnight low / weekly trend".
+
+### In-Home Display (IHD)
+Proxy over the running IHD kitchen-dashboard app on the Pi (`192.168.0.110:3000`). Mutating endpoints require `x-api-key`. Source folded into repo at `ihd/` (see `ihd/PROVENANCE.md`); integration in `domains/ihd/service.py`.
+- `GET /ihd/plug` / `POST /ihd/plug {state:"ON"|"OFF"}` - Smart plug (Sonoff S60ZBTPG) status + control.
+- `GET /ihd/pocket-money` (`?full=true` for transactions) / `POST /ihd/pocket-money {child,amount_pence,description}` - Kids' pocket money (Emmie/Max, pence). Credit + / debit -.
+- `GET /ihd/pocket-money/grid?week=YYYY-MM-DD` / `GET /ihd/pocket-money/calculate?week=` - Weekly chore grid + computed totals.
+- `GET /ihd/jokes` / `POST /ihd/jokes {text}` - The "Peter says..." dad jokes on the kids screen.
+- `GET /ihd/pets` - Tamagotchi pet status (max + emmie).
+- `GET /ihd/kids` - Homework/spellings/11PlusMate summary.
+- `POST /ihd/media {action:"launch"|"close", app:"netflix"|"youtube"|"nowtv"}` - Launch/close streaming on the kitchen screen.
+- `GET /ihd/screen` / `POST /ihd/screen/wake` - Display state + wake.
 
 ### Utilities
 - `GET /fetch-url?url=<url>` - Fetch and parse URL content
