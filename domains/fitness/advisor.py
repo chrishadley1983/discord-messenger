@@ -34,6 +34,7 @@ class Snapshot:
     is_training_day: bool = False
     session_type: str | None = None
     deficit_kcal: int = 550
+    protein_mode: str | None = None   # goal phase protein mode: "fixed" | "adaptive"
 
     # Weight
     current_weight_kg: float | None = None
@@ -151,6 +152,9 @@ async def build_snapshot() -> Snapshot:
     live = fit.compute_current_targets(programme, current_weight, avg_steps)
     snap.calories_target = live.target_calories
     snap.protein_target = live.target_protein_g
+    snap.protein_mode = (
+        fit.resolve_goal(programme, current_weight)["phase"].get("protein") or {}
+    ).get("mode")
     snap.bmr = live.bmr
     snap.tdee = live.tdee
 
@@ -414,7 +418,11 @@ def _rule_protein_critical(s: Snapshot) -> Advice | None:
         severity="warning",
         category="nutrition",
         headline="Protein critically low",
-        detail=f"Only {int(s.protein_eaten)}g of {s.protein_target}g protein ({int(pct)}%) and it's {s.hour_of_day}:00. In a deficit, low protein = muscle loss. Full stop.",
+        detail=f"Only {int(s.protein_eaten)}g of {s.protein_target}g protein ({int(pct)}%) and it's {s.hour_of_day}:00. " + (
+            "Protein's the floor that keeps you full and holds muscle while the deficit does the work."
+            if s.protein_mode == "fixed"
+            else "In a deficit, low protein = muscle loss. Full stop."
+        ),
         action=f"You need {int(s.protein_target - s.protein_eaten)}g more. Two scoops of whey (50g) + a chicken breast (40g) would close the gap.",
     )
 
@@ -429,7 +437,11 @@ def _rule_protein_undershoot(s: Snapshot) -> Advice | None:
         severity="caution",
         category="nutrition",
         headline="Behind on protein",
-        detail=f"{int(s.protein_eaten)}g of {s.protein_target}g protein ({int(pct)}%). At {s.deficit_kcal} kcal deficit, every gram matters for muscle preservation.",
+        detail=f"{int(s.protein_eaten)}g of {s.protein_target}g protein ({int(pct)}%). At {s.deficit_kcal} kcal deficit, " + (
+            "topping it up keeps you full and holds muscle while you lean out."
+            if s.protein_mode == "fixed"
+            else "every gram matters for muscle preservation."
+        ),
         action=f"Add a high-protein snack: Greek yoghurt, whey shake, or eggs. Need ~{int(s.protein_target - s.protein_eaten)}g more.",
     )
 
@@ -444,8 +456,16 @@ def _rule_protein_nailing_it(s: Snapshot) -> Advice | None:
         severity="positive",
         category="nutrition",
         headline="Protein target hit",
-        detail=f"{int(s.protein_eaten)}g protein — that's exactly what your muscles need to hold on during this cut.",
-        action="This is the single most important macro. Keep prioritising it.",
+        detail=f"{int(s.protein_eaten)}g protein — " + (
+            "right on your floor: full, satisfied, and holding muscle while fat loss leads."
+            if s.protein_mode == "fixed"
+            else "that's exactly what your muscles need to hold on during this cut."
+        ),
+        action=(
+            "Solid. In this phase calories lead and protein's the floor — you've got both covered."
+            if s.protein_mode == "fixed"
+            else "This is the single most important macro. Keep prioritising it."
+        ),
     )
 
 

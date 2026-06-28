@@ -167,6 +167,20 @@
     "description": "Monday weigh-in trigger — Day-1 kickoff then weekly checkpoint for the reset cut",
     "channel": "#food-log"
   },
+  "dad-jokes": {
+    "triggers": [
+      "tell me a joke",
+      "what's today's joke",
+      "dad joke",
+      "add a joke",
+      "put a joke on the screen",
+      "tell the kids a joke"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Read or add the \"Peter says...\" dad jokes shown on the kids' dashboard",
+    "channel": null
+  },
   "daily-batch": {
     "triggers": [],
     "conversational": false,
@@ -363,11 +377,12 @@
       "flight deals",
       "cheap flights",
       "tokyo flights",
-      "flights to japan"
+      "flights to japan",
+      "flight watch"
     ],
     "conversational": true,
     "scheduled": true,
-    "description": "Daily flight price monitoring for nonstop UK-Tokyo flights with deal alerts",
+    "description": "Daily London-Tokyo flight watch (Google Flights scrape, SerpApi fallback) for the Easter 2027 family trip",
     "channel": "#alerts"
   },
   "football-scores": {
@@ -776,6 +791,23 @@
     "description": "Health check and to-do list processing",
     "channel": "#peter-heartbeat!quiet"
   },
+  "home-control": {
+    "triggers": [
+      "turn the plug on",
+      "turn the plug off",
+      "is the plug on",
+      "switch on the {device}",
+      "put netflix on",
+      "put youtube on the screen",
+      "close netflix",
+      "wake the screen",
+      "turn the kitchen screen on"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Control Pi-connected home devices — smart plug, the kitchen screen, and streaming/TV",
+    "channel": null
+  },
   "home-sensors": {
     "triggers": [
       "temperature in the bedroom",
@@ -786,75 +818,11 @@
       "how warm is the bedroom",
       "humidity",
       "how humid is it",
-      "indoor temperature",
-      "is it warmer than yesterday",
-      "temperature trend",
-      "overnight low",
-      "has it been warmer this week"
+      "indoor temperature"
     ],
     "conversational": true,
     "scheduled": false,
-    "description": "Live INDOOR temperature & humidity per room from the home Zigbee sensors, plus history/trends (warmer than yesterday, overnight low, weekly trend)",
-    "channel": null
-  },
-  "home-control": {
-    "triggers": [
-      "turn the plug on",
-      "turn the plug off",
-      "is the plug on",
-      "put netflix on",
-      "put youtube on the screen",
-      "close netflix",
-      "wake the screen",
-      "turn the kitchen screen on"
-    ],
-    "conversational": true,
-    "scheduled": false,
-    "description": "Control Pi-connected home devices — smart plug on/off, the kitchen screen, and streaming (Netflix/YouTube/NowTV)",
-    "channel": null
-  },
-  "pocket-money": {
-    "triggers": [
-      "how much pocket money does max have",
-      "how much pocket money does emmie have",
-      "what's max's balance",
-      "what's emmie's balance",
-      "add money to max",
-      "add money to emmie",
-      "take money off max",
-      "pocket money balance",
-      "pocket money grid"
-    ],
-    "conversational": true,
-    "scheduled": false,
-    "description": "Check and adjust the kids' pocket money balances (Emmie & Max) conversationally — separate from the scheduled Sunday pocket-money-weekly calc",
-    "channel": null
-  },
-  "kids-pets": {
-    "triggers": [
-      "how are the pets",
-      "how's max's pet",
-      "how's emmie's pet",
-      "do the pets need feeding",
-      "pet status"
-    ],
-    "conversational": true,
-    "scheduled": false,
-    "description": "Check the kids' virtual Tamagotchi pets on the dashboard (Max's and Emmie's)",
-    "channel": null
-  },
-  "dad-jokes": {
-    "triggers": [
-      "tell me a joke",
-      "what's today's joke",
-      "dad joke",
-      "add a joke",
-      "put a joke on the screen",
-      "tell the kids a joke"
-    ],
-    "conversational": true,
-    "scheduled": false,
-    "description": "Read or add the 'Peter says...' dad jokes shown on the kids' dashboard screen",
+    "description": "Live INDOOR temperature & humidity per room from the home Zigbee sensors",
     "channel": null
   },
   "hydration": {
@@ -916,6 +884,20 @@
     "scheduled": true,
     "description": "Daily kids briefing — today's and tomorrow's activities, kit needed, school notices, spellings",
     "channel": "#peterbot+WhatsApp:group"
+  },
+  "kids-pets": {
+    "triggers": [
+      "how are the pets",
+      "how's max's pet",
+      "how's emmie's pet",
+      "are the pets ok",
+      "do the pets need feeding",
+      "pet status"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Check the kids' virtual pets (Tamagotchi) on the dashboard — Max's and Emmie's",
+    "channel": null
   },
   "kids-weekly": {
     "triggers": [
@@ -1267,6 +1249,23 @@
     "scheduled": true,
     "description": "Morning football results — Premier League, Champions League, Dover Athletic",
     "channel": "#peterbot+WhatsApp:chris"
+  },
+  "pocket-money": {
+    "triggers": [
+      "how much pocket money does {child} have",
+      "what's {child}'s balance",
+      "pocket money balance",
+      "add {amount} to {child}",
+      "give {child} {amount}",
+      "take {amount} off {child}",
+      "{child}'s pocket money",
+      "pocket money grid",
+      "what did the kids earn this week"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Check and adjust the kids' pocket money balances (Emmie & Max), conversationally",
+    "channel": null
   },
   "pocket-money-weekly": {
     "triggers": [

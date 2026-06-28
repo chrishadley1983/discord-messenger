@@ -544,6 +544,7 @@ All routes in `hadley_api/fitness_routes.py`. See `docs/playbooks/FITNESS.md` fo
   - Body: `{start_date, current_weight_kg, target_loss_kg, duration_weeks}`
   - Archives old active programmes + "Hit 80kg"/"Lose weight" goals
   - Computes TDEE (Mifflin-St Jeor + Garmin activity factor)
+  - Seeds a fat-loss-first `goal_config` (protein floor ≈ 1.4 g/kg of start weight; auto-switches to adaptive muscle-build at BMI < 25)
   - Creates 6 accountability goals (weight/calories/protein/steps/strength/mobility)
 - `POST /fitness/programme/recalibrate` — refresh calorie/protein targets from latest weight (auth required)
   - Body (all optional): `{current_weight_kg, avg_steps, deficit_kcal}` — defaults to 7-day trend weight + 7-day step avg
@@ -551,9 +552,15 @@ All routes in `hadley_api/fitness_routes.py`. See `docs/playbooks/FITNESS.md` fo
   - Updates the active programme row in-place (tdee_kcal, daily_calorie_target, daily_protein_g)
   - Returns `{old, new, weight_used_kg, bmr, activity_factor, deficit_kcal}`
 - `POST /fitness/weekly-checkin` — persist a Sunday snapshot (auth required)
+- `GET /fitness/goal` — resolved goal phase + live targets
+  - Returns `{current_phase, effective_phase, transitioned, bmi, phase{label,focus,protein,protein_note,rule}, config, live_targets}`
+  - The active programme's `goal_config` is the source of truth for the protein target + coaching framing; `effective_phase` applies any BMI auto-switch
+- `PUT /fitness/goal` — update the active programme's goal/phase config (auth required)
+  - Body: `{goal_config}` to replace wholesale, or partials `{current_phase, phases, auto_switch}` merged into the existing config
+  - Use to flip phase, retune the protein target, or change the auto-switch rule
 
 Tables:
-- `fitness_programmes` — programme header (start, target, TDEE, targets)
+- `fitness_programmes` — programme header (start, target, TDEE, targets, `goal_config` jsonb for goal/phase)
 - `fitness_exercises` — exercise library (seeded with 35+ bodyweight movements)
 - `fitness_workout_sessions` + `fitness_workout_sets` — workout logs
 - `fitness_mobility_sessions` — mobility slots (morning/evening unique per day)

@@ -36,7 +36,10 @@ Comprehensive weekly health review every Sunday at 9am UK. Covers weight trend, 
     "avg_carbs": 245,
     "avg_fat": 68,
     "avg_water": 3200,
-    "protein_days_hit": 5
+    "protein_days_hit": 5,
+    "protein_target_used": 125,
+    "incomplete_days": [],
+    "incomplete_count": 0
   },
   "steps": {
     "total": 94500,
@@ -122,6 +125,8 @@ Grade scale: A+ (≥90%), A (≥80%), B (≥70%), C (≥60%), D (≥50%), F (<50
 ## Rules
 
 - Use actual numbers from the data - don't make up values
+- **Nutrition averages already exclude partial-tracking days** — `days_tracked` is the count of *properly logged* days, and the averages are over those only. If `incomplete_count > 0`, append a brief note after the nutrition block listing the excluded day(s) from `incomplete_days`, e.g. "(Fri excluded — only 479 cal logged, looks like a missed tracking day)". Never average a partial day into the headline numbers.
+- **Protein "hit" uses the live target** in `protein_target_used` (the programme's current floor, e.g. 125g), NOT a hardcoded 160g. Report `protein_days_hit / days_tracked`.
 - If a section has no data (empty object), show "⚠️ No data this week"
 - Compare everything to targets where available
 - Celebrate wins explicitly

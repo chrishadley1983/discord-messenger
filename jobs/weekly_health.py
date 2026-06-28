@@ -82,8 +82,25 @@ async def _get_weight_week() -> dict:
         return {}
 
 
-async def _get_nutrition_week() -> dict:
-    """Get nutrition averages for the past week."""
+# A day with fewer logged calories than this is treated as incomplete tracking
+# (e.g. only a snack or breakfast got logged) and is EXCLUDED from the weekly
+# averages rather than dragging them down — one forgotten dinner shouldn't tank
+# the week. Excluded days are surfaced separately so nothing is hidden.
+INCOMPLETE_DAY_KCAL = 600
+
+
+async def _get_nutrition_week(
+    cal_target: int | None = None,
+    protein_target: int | None = None,
+) -> dict:
+    """Get nutrition averages for the past week.
+
+    Averages are computed over *properly logged* days only — days with under
+    ``INCOMPLETE_DAY_KCAL`` logged are assumed to be partial-tracking days and
+    are excluded (and reported separately under ``incomplete_days``).
+    ``protein_days_hit`` counts days that met the live ``protein_target``
+    (falls back to 144 g only if no target is supplied).
+    """
     try:
         start_date = (datetime.now() - timedelta(days=7)).date().isoformat()
         end_date = datetime.now().date().isoformat()
@@ -115,24 +132,39 @@ async def _get_nutrition_week() -> dict:
             daily[day]["fat"] += r["fat_g"] or 0
             daily[day]["water"] += r["water_ml"] or 0
 
-        days = len(daily)
-        if days == 0:
-            return {}
+        # Split properly-logged days from partial-tracking days. Averages use the
+        # former only; the latter are reported so they're visible, not hidden.
+        logged = {d: v for d, v in daily.items() if v["calories"] >= INCOMPLETE_DAY_KCAL}
+        incomplete = [
+            {"date": d, "calories": round(v["calories"]), "protein": round(v["protein"])}
+            for d, v in sorted(daily.items()) if v["calories"] < INCOMPLETE_DAY_KCAL
+        ]
 
-        # Sort by date for graph
-        sorted_days = sorted(daily.keys())
+        days = len(logged)
+        if days == 0:
+            return {
+                "days_tracked": 0,
+                "incomplete_days": incomplete,
+                "incomplete_count": len(incomplete),
+            }
+
+        pro_hit_threshold = protein_target or 144
+        sorted_days = sorted(logged.keys())
         raw_dates = [datetime.strptime(d, "%Y-%m-%d") for d in sorted_days]
-        raw_calories = [daily[d]["calories"] for d in sorted_days]
-        raw_protein = [daily[d]["protein"] for d in sorted_days]
+        raw_calories = [logged[d]["calories"] for d in sorted_days]
+        raw_protein = [logged[d]["protein"] for d in sorted_days]
 
         return {
             "days_tracked": days,
-            "avg_calories": round(sum(d["calories"] for d in daily.values()) / days),
-            "avg_protein": round(sum(d["protein"] for d in daily.values()) / days),
-            "avg_carbs": round(sum(d["carbs"] for d in daily.values()) / days),
-            "avg_fat": round(sum(d["fat"] for d in daily.values()) / days),
-            "avg_water": round(sum(d["water"] for d in daily.values()) / days),
-            "protein_days_hit": sum(1 for d in daily.values() if d["protein"] >= 144),  # 90% of 160g target
+            "avg_calories": round(sum(v["calories"] for v in logged.values()) / days),
+            "avg_protein": round(sum(v["protein"] for v in logged.values()) / days),
+            "avg_carbs": round(sum(v["carbs"] for v in logged.values()) / days),
+            "avg_fat": round(sum(v["fat"] for v in logged.values()) / days),
+            "avg_water": round(sum(v["water"] for v in logged.values()) / days),
+            "protein_days_hit": sum(1 for v in logged.values() if v["protein"] >= pro_hit_threshold),
+            "protein_target_used": pro_hit_threshold,
+            "incomplete_days": incomplete,
+            "incomplete_count": len(incomplete),
             "raw_dates": raw_dates,
             "raw_calories": raw_calories,
             "raw_protein": raw_protein

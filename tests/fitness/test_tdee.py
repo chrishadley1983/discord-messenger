@@ -87,6 +87,22 @@ class TestComputeTdee:
         # 1.8 * 90 = 162 → rounded to nearest 5 = 160
         assert r.target_protein_g == 160
 
+    def test_fixed_protein_g_overrides_gkg(self):
+        # A goal phase that pins protein to a flat number ignores the g/kg calc.
+        r = compute_tdee(91, 178, 42, avg_steps=15000, fixed_protein_g=125)
+        assert r.target_protein_g == 125          # flat, not 2.0*91=182
+        # Even with a high ratio also set, the fixed value wins.
+        r2 = compute_tdee(91, 178, 42, avg_steps=15000,
+                          protein_g_per_kg=2.0, fixed_protein_g=125)
+        assert r2.target_protein_g == 125
+        # Calories are still computed normally alongside the fixed protein.
+        assert r2.target_calories == r2.tdee - 550
+
+    def test_fixed_protein_not_force_rounded(self):
+        # Fixed targets are taken verbatim (not snapped to 5g like the g/kg path).
+        r = compute_tdee(91, 178, 42, avg_steps=15000, fixed_protein_g=123)
+        assert r.target_protein_g == 123
+
     def test_targets_drop_as_weight_drops(self):
         """Adaptation check: losing weight drops calorie target because
         BMR (and therefore TDEE) fall with bodyweight."""

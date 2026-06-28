@@ -21,6 +21,7 @@ import httpx
 from domains.fitness.service import (
     abandon_active_programmes,
     create_programme,
+    default_goal_config,
     fetch_steps_history,
 )
 from domains.fitness.tdee import compute_tdee
@@ -156,6 +157,12 @@ async def start_programme(
 
     target_weight = round(current_weight_kg - target_loss_kg, 1)
 
+    # Phase-aware goal: fat-loss-first (a flat protein floor so weight loss
+    # leads) auto-switching to the adaptive muscle-build multiplier at a healthy
+    # BMI. The floor is derived from the starting weight, not hardcoded.
+    goal_config = default_goal_config(current_weight_kg)
+    protein_floor = goal_config["phases"]["fat_loss"]["protein"]["g"]
+
     # 4. Create programme
     programme = await create_programme(
         name=f"Post-Japan 13-week cut",
@@ -164,14 +171,15 @@ async def start_programme(
         target_weight_kg=target_weight,
         tdee_kcal=tdee.tdee,
         daily_calorie_target=tdee.target_calories,
-        daily_protein_g=tdee.target_protein_g,
+        daily_protein_g=protein_floor,
         duration_weeks=duration_weeks,
         split="5x_short",
         daily_steps_target=DEFAULT_STEPS_TARGET,
         weekly_strength_sessions=DEFAULT_WEEKLY_STRENGTH_SESSIONS,
+        goal_config=goal_config,
         notes=f"BMR {tdee.bmr} × {tdee.activity_factor} = {tdee.tdee}. "
               f"Deficit {tdee.deficit_kcal}. 5x/week 20-min sessions. "
-              f"Height {HEIGHT_CM}cm. Protein 1.67 g/kg. "
+              f"Height {HEIGHT_CM}cm. Protein {protein_floor}g floor (fat-loss phase). "
               f"Archived goals: {', '.join(archived) or 'none'}",
     )
 
@@ -208,16 +216,18 @@ async def start_programme(
     )
     goals_created.append(g)
 
-    # Daily protein
+    # Daily protein — the fat-loss-phase floor (weight loss leads; protein is a
+    # satiety/retention floor, not a max). Rises to the adaptive target when the
+    # programme auto-switches to muscle-build at a healthy BMI.
     g = await _create_goal(
         api_base, api_key,
-        title=f"Protein ≥ {tdee.target_protein_g}g daily",
+        title=f"Protein ≥ {protein_floor}g daily",
         goal_type="habit",
         metric="g",
-        target_value=tdee.target_protein_g,
+        target_value=protein_floor,
         direction="up",
         frequency="daily",
-        description="Preserve muscle in the cut",
+        description="Protein floor — stay full and hold muscle while fat loss leads",
         auto_source="nutrition_protein",
     )
     goals_created.append(g)
