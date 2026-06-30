@@ -16,6 +16,7 @@ from __future__ import annotations
 _RATES_PER_MTOK = {
     "claude-opus-4-7":     {"input": 15.00, "output": 75.00, "cache_read": 1.50},
     "claude-opus-4-6":     {"input": 15.00, "output": 75.00, "cache_read": 1.50},
+    "claude-sonnet-5":     {"input": 3.00,  "output": 15.00, "cache_read": 0.30},
     "claude-sonnet-4-6":   {"input": 3.00,  "output": 15.00, "cache_read": 0.30},
     "claude-sonnet-4-5":   {"input": 3.00,  "output": 15.00, "cache_read": 0.30},
     "claude-haiku-4-5":    {"input": 1.00,  "output": 5.00,  "cache_read": 0.10},

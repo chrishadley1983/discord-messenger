@@ -1187,6 +1187,7 @@ class PeterbotScheduler:
     # Skills with these `model:` declarations in frontmatter route to the matching
     # channel; skills with no `model:` declaration route to the default jobs-channel.
     CHANNEL_BY_MODEL = {
+        "claude-sonnet-5":   ("jobs-channel-sonnet", 8105),
         "claude-sonnet-4-6": ("jobs-channel-sonnet", 8105),
         "claude-sonnet-4-5": ("jobs-channel-sonnet", 8105),
         "claude-haiku-4-5":  ("jobs-channel-sonnet", 8105),
