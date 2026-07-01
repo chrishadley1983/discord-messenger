@@ -60,8 +60,8 @@ CLI_MAX_TURNS = 80            # Max agentic turns for conversations (browser flo
 CLI_SCHEDULED_MAX_TURNS = 50  # Max agentic turns for scheduled jobs (same as conversations)
 # No --max-budget-usd flag needed: CLI runs on subscription, not API billing.
 # The subscription's own rate limits are the safety net.
-CLI_MODEL = "claude-opus-4-6"            # Opus 4.6 for conversations (fallback path)
-CLI_SCHEDULED_MODEL = "claude-opus-4-6"  # Opus 4.6 for scheduled jobs (fallback path)
+CLI_MODEL = "claude-opus-4-8"            # Opus 4.8 for conversations (fallback path)
+CLI_SCHEDULED_MODEL = "claude-opus-4-8"  # Opus 4.8 for scheduled jobs (fallback path)
 CLI_COMMAND = os.environ.get("PETERBOT_CLI_COMMAND", "claude")  # CLI binary
 CLI_WORKING_DIR = PETERBOT_SESSION_PATH  # ~/peterbot (where CLAUDE.md lives)
 

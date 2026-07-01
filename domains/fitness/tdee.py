@@ -86,6 +86,7 @@ def compute_tdee(
     sex: str = "male",
     deficit_kcal: int = 550,
     protein_g_per_kg: float = DEFAULT_PROTEIN_G_PER_KG,
+    fixed_protein_g: int | None = None,
 ) -> TdeeResult:
     """Full TDEE + targets calculation.
 
@@ -101,6 +102,11 @@ def compute_tdee(
         sex: 'male' or 'female'.
         deficit_kcal: Daily deficit (default 550 -> ~0.6 kg/week).
         protein_g_per_kg: Protein target per kg bodyweight (default 1.67).
+            Used only when fixed_protein_g is None (adaptive protein).
+        fixed_protein_g: An absolute protein target in grams. When set, it
+            overrides the weight-adaptive g/kg calc — used by goal phases that
+            pin protein to a flat number (e.g. a fat-loss phase at 125 g)
+            rather than scaling it with bodyweight.
 
     Returns:
         TdeeResult with BMR, TDEE, target calories and protein.
@@ -109,8 +115,12 @@ def compute_tdee(
     factor = activity_factor_from_steps(avg_steps)
     tdee = round(bmr * factor)
     target_cals = tdee - deficit_kcal
-    # Protein rounded to nearest 5g for easier tracking
-    protein = round((protein_g_per_kg * weight_kg) / 5) * 5
+    if fixed_protein_g is not None:
+        # Flat, goal-driven protein target (not scaled with bodyweight).
+        protein = int(fixed_protein_g)
+    else:
+        # Protein rounded to nearest 5g for easier tracking
+        protein = round((protein_g_per_kg * weight_kg) / 5) * 5
     return TdeeResult(
         bmr=bmr,
         activity_factor=factor,

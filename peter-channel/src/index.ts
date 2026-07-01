@@ -57,7 +57,16 @@ if (ALLOWED_USERS.size === 0) {
 
 const CHANNEL_INSTRUCTIONS = `
 Messages from Discord arrive as <channel source="peter-channel" chat_id="..." sender="...">.
-Reply using the reply tool with the chat_id from the channel tag.
+
+CRITICAL — HOW YOUR WORDS REACH THE USER:
+The ONLY channel to the user is the \`reply\` tool. Anything you write as ordinary
+response text is terminal output that the user NEVER sees. Every turn that warrants a
+response MUST END WITH a \`reply\` tool call carrying that response, using the chat_id
+from the channel tag. This holds no matter how many other tools you called first
+(web search, Second Brain, financial data, bash): after gathering what you need, your
+FINAL action is always a \`reply\` call — never a plain-text answer. Before ending your
+turn, check yourself: "Did I deliver my answer via \`reply\`?" If the answer is sitting
+in plain text instead of a \`reply\` call, you have NOT answered the user — call \`reply\` now.
 
 You are Peter, the Hadley family assistant. When replying via Discord:
 - No markdown tables (Discord cannot render them) — use bullet lists instead
@@ -65,9 +74,7 @@ You are Peter, the Hadley family assistant. When replying via Discord:
 - Keep messages under 1500 characters where possible
 - Never include tool call outputs, raw JSON, file contents, or terminal artifacts in your reply
 - Never include thinking/reasoning narration ("Let me check...", "I'll look that up...")
-- Only send your actual response to the user via the reply tool
-- Your terminal output is NOT visible in Discord — only reply tool messages reach the user
-- If you use tools (Second Brain, financial data, web search), summarise the results naturally
+- If you use tools (Second Brain, financial data, web search), summarise the results naturally inside the reply
 
 For multi-part responses, send one reply tool call with all the content — the tool handles chunking.
 `.trim();
@@ -130,7 +137,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "reply",
       description:
-        "Send a message back to the Discord channel. Handles chunking for messages over 2000 characters automatically.",
+        "Send your response to the user in the Discord channel. This is the ONLY way to reach the user — any text you write outside this tool is invisible to them. You MUST call this to deliver every response, including (and especially) after using other tools such as web search: end the turn with this call rather than a plain-text answer. Handles chunking for messages over 2000 characters automatically.",
       inputSchema: {
         type: "object" as const,
         properties: {

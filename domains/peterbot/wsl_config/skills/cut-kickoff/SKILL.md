@@ -27,15 +27,24 @@ this skill checks whether he's stepped on the Withings Body scale today and:
 - **Weighed in, week 2+** → posts the **weekly checkpoint** (trend vs target
   line, this week's focus, today's session).
 
-This is the front door to the reset cut: **75 kg by 23 Oct 2026, 15% body fat**,
-built around protein, strength and steps, kept simple.
+This is the front door to the reset cut. The target weight, deadline, daily
+targets AND the **current goal phase** (e.g. fat-loss vs muscle-build, with its
+own protein target and framing) all come from the **dashboard payload at
+runtime** — never hardcode a protein number, a "protect muscle" line, or a date.
 
 ## Live data (fetch at runtime)
 
 ```
-GET http://172.19.64.1:8100/fitness/dashboard      # programme, weight trend, today_workout, steps, nutrition targets, week_no, day_no, days_remaining, flags
+GET http://172.19.64.1:8100/fitness/dashboard      # programme, weight trend, today_workout, steps, nutrition targets, goal{phase,label,focus,protein_note,rule,protein_mode}, week_no, day_no, days_remaining, flags
 GET http://172.19.64.1:8100/nutrition/weight        # latest weigh-in + its date — used to detect "weighed in today"
 ```
+
+**Goal phase (drives the protein framing):** read `goal` from the dashboard.
+`goal.rule` is the headline protein rule, `goal.protein_note` the one-liner, and
+`nutrition.target_protein` the live number. In a fat-loss phase protein is a
+*floor* (weight loss first); in a muscle-build phase it's the adaptive g/kg
+target. Use these verbatim — do **not** assert "180 g" or "non-negotiable for
+muscle" from memory.
 
 **Weighed-in-today test:** the `date` from `/nutrition/weight` starts with today's date (UK).
 
@@ -57,19 +66,19 @@ Barefoot, after the loo, before coffee. Once it logs, I'll fire your
 🚀 **Day 1 — The Reset Cut starts now**
 Baseline: {latest weight}kg{, {bf}% if available}
 
-🎯 **18-week targets** (by 23 Oct)
-75 kg · 15% body fat · strong, rested, calmer
+🎯 **{duration_weeks}-week targets** (by {end_date})
+{target_weight} kg · {goal.label}
 
 📋 **Daily targets**
-~2,050 kcal · 180g protein · 3L water · 15k steps (aim, not pass/fail)
+~{target_calories} kcal · {target_protein}g protein · 3L water · {steps_target/1000}k steps (aim, not pass/fail)
 
-🏋️ **This week's sessions** (4 × ~30 min, weekdays)
+🏋️ **This week's sessions** ({weekly_strength_sessions} × ~30 min, weekdays)
 Mon Lower A · Tue Upper A · Thu Lower B · Fri Upper B · Wed+Sat walk/mobility
 
 🧱 **The only rules**
-1. Hit protein (180g) — non-negotiable, it protects muscle
+1. {goal.rule}
 2. Log everything (I'll track it)
-3. Walk daily, lift 4×, 10-min hip mobility daily
+3. Walk daily, lift {weekly_strength_sessions}×, 10-min hip mobility daily
 4. Bed 22:30, caffeine before noon
 
 Today: {today_workout.label} — let's go. 💪
@@ -78,14 +87,14 @@ Today: {today_workout.label} — let's go. 💪
 ## Output — Weekly Checkpoint (week 2+)
 
 ```
-📋 **Week {week_no} of 18 — Monday weigh-in**
+📋 **Week {week_no} of {duration_weeks} — Monday weigh-in**
 {date}
 
 ⚖️ Trend: {trend_7d}kg vs target {target_this_week}kg this week — {on track ✅ / behind / ahead}
-Cumulative: {cumulative_loss_kg}kg of 15kg ▓░░░░ {progress %}
-{days_remaining} days to 23 Oct → projected {trend_7d + slope*weeks_remaining}kg
+Cumulative: {cumulative_loss_kg}kg of {start_weight - target_weight}kg ▓░░░░ {progress %}
+{days_remaining} days to {end_date} → projected {trend_7d + slope*weeks_remaining}kg
 
-🎯 Targets this week: {target_calories} kcal · {target_protein}g protein · 15k steps
+🎯 Targets this week: {target_calories} kcal · {target_protein}g protein · {steps_target/1000}k steps
 🏋️ Today: {today_workout.label}
 
 [1-2 sentences — honest + encouraging, tie to weeks remaining. Flag if behind.]

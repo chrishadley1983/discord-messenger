@@ -61,7 +61,7 @@ while true; do
   claude \
     --mcp-config /tmp/whatsapp-channel-mcp.json \
     --dangerously-load-development-channels server:whatsapp-channel \
-    --model claude-opus-4-6 \
+    --model claude-opus-4-8 \
     --effort medium \
     --permission-mode bypassPermissions
   EXIT_CODE=$?

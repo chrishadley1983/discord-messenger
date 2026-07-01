@@ -112,6 +112,7 @@ async def create_programme(
     daily_steps_target: int = 12000,
     weekly_strength_sessions: int = 5,
     notes: str | None = None,
+    goal_config: dict | None = None,
 ) -> dict:
     """Insert a new programme row. Does NOT archive existing programmes."""
     start = date.fromisoformat(start_date)
@@ -131,6 +132,8 @@ async def create_programme(
         "weekly_strength_sessions": weekly_strength_sessions,
         "notes": notes,
     }
+    if goal_config is not None:
+        body["goal_config"] = goal_config
     async with httpx.AsyncClient(timeout=10) as c:
         resp = await c.post(_url(PROGRAMMES_TABLE), headers=_write_headers(), json=body)
         resp.raise_for_status()
@@ -149,6 +152,20 @@ async def abandon_active_programmes() -> int:
         if resp.status_code in (200, 204):
             return len(resp.json()) if resp.content else 0
         return 0
+
+
+async def update_goal_config(programme_id: str, goal_config: dict) -> dict:
+    """Persist a new goal_config onto a programme row (Peter's goal editor)."""
+    async with httpx.AsyncClient(timeout=10) as c:
+        resp = await c.patch(
+            _url(PROGRAMMES_TABLE),
+            headers=_write_headers(),
+            params={"id": f"eq.{programme_id}"},
+            json={"goal_config": goal_config},
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        return rows[0] if rows else {"id": programme_id, "goal_config": goal_config}
 
 
 def week_number(programme: dict, target: date | None = None) -> int:
@@ -170,6 +187,141 @@ def week_number(programme: dict, target: date | None = None) -> int:
 # ══════════════════════════════════════════════════════════════════════
 # WEIGHT-ADAPTIVE TARGETS
 # ══════════════════════════════════════════════════════════════════════
+
+# BMI below this is no longer "overweight" — the default trigger for switching
+# a programme out of its aggressive fat-loss phase. Stored per-programme in
+# goal_config.auto_switch.below, so this is only the fallback.
+HEALTHY_BMI_DEFAULT = 25.0
+
+# Default fat-loss protein floor as g/kg of STARTING weight. Deliberately below
+# the muscle-build multiplier — a satiety/retention floor while weight loss
+# leads. Used only to seed a new programme's goal_config; once set it's a flat
+# number that doesn't drift with weight.
+FAT_LOSS_PROTEIN_G_PER_KG = 1.4
+
+
+def bmi(weight_kg: float, height_cm: float = CHRIS_HEIGHT_CM) -> float:
+    """Body Mass Index from weight (kg) + height (cm)."""
+    h_m = height_cm / 100.0
+    return weight_kg / (h_m * h_m) if h_m else 0.0
+
+
+def _adaptive_phase(g_per_kg: float) -> dict:
+    """Synthesise a phase dict for legacy programmes with no goal_config —
+    mirrors the old weight-adaptive behaviour using the column factor."""
+    return {
+        "label": "Active cut",
+        "focus": "Lose fat while protecting lean mass.",
+        "protein": {"mode": "adaptive", "g_per_kg": g_per_kg},
+        "protein_note": f"~{g_per_kg:g} g/kg bodyweight.",
+        "rule": f"Hit ~{g_per_kg:g} g/kg protein.",
+    }
+
+
+def resolve_goal(
+    programme: dict,
+    current_weight_kg: float | None = None,
+    *,
+    height_cm: int = CHRIS_HEIGHT_CM,
+) -> dict:
+    """Resolve the active goal phase for a programme.
+
+    The programme's ``goal_config`` is the single source of truth for the
+    protein target and coaching framing. This reads it and applies any
+    metric-based auto-switch (e.g. ``fat_loss`` -> ``muscle_build`` once BMI
+    drops into the healthy range). The switch is forward-only.
+
+    When ``goal_config`` is absent the result mirrors the legacy
+    weight-adaptive behaviour using the programme's ``protein_g_per_kg``
+    column, so old rows and callers keep working unchanged.
+
+    Returns:
+        {
+          "current_phase": str,     # stored phase
+          "effective_phase": str,   # phase after auto-switch
+          "transitioned": bool,     # effective != current (switch fired)
+          "phase": dict,            # resolved phase definition (label/focus/
+                                    #   protein/protein_note/rule)
+          "bmi": float | None,
+          "config": dict | None,    # raw goal_config (None if legacy)
+        }
+    """
+    config = programme.get("goal_config") or None
+    col_factor = float(programme.get("protein_g_per_kg") or DEFAULT_PROTEIN_G_PER_KG)
+    cur_bmi = bmi(current_weight_kg, height_cm) if current_weight_kg else None
+
+    if not isinstance(config, dict) or not config.get("phases"):
+        return {
+            "current_phase": "default", "effective_phase": "default",
+            "transitioned": False, "phase": _adaptive_phase(col_factor),
+            "bmi": cur_bmi, "config": None,
+        }
+
+    phases = config.get("phases", {})
+    current_phase = config.get("current_phase") or next(iter(phases), "")
+    effective_phase = current_phase
+
+    sw = config.get("auto_switch") or {}
+    to_phase = sw.get("below_to") or sw.get("to_phase")
+    if (
+        sw.get("metric") == "bmi" and to_phase in phases and to_phase != current_phase
+        and cur_bmi is not None and sw.get("below") is not None
+        and cur_bmi < float(sw["below"])
+    ):
+        effective_phase = to_phase
+
+    phase = dict(phases.get(effective_phase) or phases.get(current_phase) or {})
+    # Backfill the adaptive multiplier from the column when the phase omits it,
+    # so "the old multiple" always tracks the programme's protein_g_per_kg.
+    pr = dict(phase.get("protein") or {})
+    if pr.get("mode") == "adaptive" and pr.get("g_per_kg") is None:
+        pr["g_per_kg"] = col_factor
+        phase["protein"] = pr
+
+    return {
+        "current_phase": current_phase,
+        "effective_phase": effective_phase,
+        "transitioned": effective_phase != current_phase,
+        "phase": phase,
+        "bmi": cur_bmi,
+        "config": config,
+    }
+
+
+def default_goal_config(
+    start_weight_kg: float,
+    *,
+    muscle_g_per_kg: float = DEFAULT_PROTEIN_G_PER_KG,
+    switch_bmi: float = HEALTHY_BMI_DEFAULT,
+) -> dict:
+    """Build the default fat-loss-first goal_config for a new programme.
+
+    The ``fat_loss`` phase pins protein to a flat floor (computed once from the
+    starting weight, so weight loss leads); it auto-switches to the adaptive
+    ``muscle_build`` multiplier once BMI drops below ``switch_bmi``. Editable
+    later via PUT /fitness/goal.
+    """
+    floor = int(round((FAT_LOSS_PROTEIN_G_PER_KG * start_weight_kg) / 5) * 5)
+    return {
+        "current_phase": "fat_loss",
+        "auto_switch": {"metric": "bmi", "below": switch_bmi, "to_phase": "muscle_build"},
+        "phases": {
+            "fat_loss": {
+                "label": "Fat loss first",
+                "focus": "Weight loss is the priority — the calorie deficit leads; protein is a satiety/retention floor, not a max.",
+                "protein": {"mode": "fixed", "g": floor},
+                "protein_note": f"{floor} g floor — enough to stay full and hold some muscle; not maxed, because fat loss comes first.",
+                "rule": f"Hit ~{floor} g protein and stay under calories — protein is a floor, not the headline.",
+            },
+            "muscle_build": {
+                "label": "Build muscle",
+                "focus": "Healthy weight reached — shift toward protecting and building lean mass.",
+                "protein": {"mode": "adaptive", "g_per_kg": muscle_g_per_kg},
+                "protein_note": f"~{muscle_g_per_kg:g} g/kg — high protein to drive lean-mass growth now you're at a healthy weight.",
+                "rule": f"Hit protein (~{muscle_g_per_kg:g} g/kg) — the priority for building muscle.",
+            },
+        },
+    }
 
 
 def compute_current_targets(
@@ -201,19 +353,37 @@ def compute_current_targets(
     Returns:
         TdeeResult with live BMR, TDEE, target_calories, target_protein_g.
     """
-    # Deficit and protein default to the programme's own settings (so a
-    # deliberately aggressive plan isn't overridden by the generic 550/1.67
-    # defaults), falling back to those defaults when the programme doesn't
-    # specify. This keeps the weight-adaptive targets aligned with the plan
-    # while still auto-adjusting down as BMR drops with weight loss.
+    # Deficit defaults to the programme's own setting (so a deliberately
+    # aggressive plan isn't overridden by the generic 550 default), falling
+    # back to that default when the programme doesn't specify. This keeps the
+    # weight-adaptive calories aligned with the plan while still auto-adjusting
+    # down as BMR drops with weight loss.
     resolved_deficit = (
         deficit_kcal if deficit_kcal is not None
         else int(programme.get("deficit_kcal") or 550)
     )
-    resolved_protein = (
-        protein_g_per_kg if protein_g_per_kg is not None
-        else float(programme.get("protein_g_per_kg") or DEFAULT_PROTEIN_G_PER_KG)
-    )
+
+    # Protein comes from the resolved goal phase: a 'fixed' phase pins it to a
+    # flat number (e.g. 125 g during fat-loss); an 'adaptive' phase scales it
+    # by the g/kg multiplier. An explicit protein_g_per_kg override still wins
+    # (back-compat for callers that force a multiplier).
+    fixed_protein_g: int | None = None
+    if protein_g_per_kg is not None:
+        resolved_factor = protein_g_per_kg
+    else:
+        protein_spec = resolve_goal(
+            programme, current_weight_kg, height_cm=height_cm
+        )["phase"].get("protein", {})
+        if protein_spec.get("mode") == "fixed" and protein_spec.get("g") is not None:
+            fixed_protein_g = int(protein_spec["g"])
+            resolved_factor = DEFAULT_PROTEIN_G_PER_KG  # unused when fixed
+        else:
+            resolved_factor = float(
+                protein_spec.get("g_per_kg")
+                or programme.get("protein_g_per_kg")
+                or DEFAULT_PROTEIN_G_PER_KG
+            )
+
     return compute_tdee(
         weight_kg=current_weight_kg,
         height_cm=height_cm,
@@ -221,7 +391,8 @@ def compute_current_targets(
         avg_steps=avg_steps,
         sex=sex,
         deficit_kcal=resolved_deficit,
-        protein_g_per_kg=resolved_protein,
+        protein_g_per_kg=resolved_factor,
+        fixed_protein_g=fixed_protein_g,
     )
 
 
@@ -264,6 +435,7 @@ async def recalibrate_programme(
     live = compute_current_targets(
         programme, current_weight_kg, avg_steps, deficit_kcal=deficit_kcal
     )
+    goal = resolve_goal(programme, current_weight_kg)
     old = {
         "tdee_kcal": int(programme["tdee_kcal"]),
         "daily_calorie_target": int(programme["daily_calorie_target"]),
@@ -274,6 +446,22 @@ async def recalibrate_programme(
         "daily_calorie_target": live.target_calories,
         "daily_protein_g": live.target_protein_g,
     }
+
+    # If the goal phase auto-switched (e.g. BMI dropped into the healthy range
+    # so protein flips from a flat fat-loss floor to the adaptive muscle-build
+    # multiplier), persist the new current_phase so the change is sticky and
+    # can be announced to Chris.
+    phase_changed = None
+    if goal["transitioned"] and goal["config"]:
+        new_config = dict(goal["config"])
+        new_config["current_phase"] = goal["effective_phase"]
+        new["goal_config"] = new_config
+        phase_changed = {
+            "from": goal["current_phase"],
+            "to": goal["effective_phase"],
+            "label": goal["phase"].get("label"),
+            "bmi": round(goal["bmi"], 1) if goal["bmi"] is not None else None,
+        }
 
     async with httpx.AsyncClient(timeout=10) as c:
         resp = await c.patch(
@@ -294,6 +482,8 @@ async def recalibrate_programme(
         "bmr": live.bmr,
         "activity_factor": live.activity_factor,
         "deficit_kcal": live.deficit_kcal,
+        "phase_changed": phase_changed,
+        "effective_phase": goal["effective_phase"],
     }
 
 
@@ -802,6 +992,22 @@ async def compute_dashboard() -> dict:
 
         result["steps"]["target"] = programme["daily_steps_target"]
         result["strength_this_week"]["target"] = programme["weekly_strength_sessions"]
+
+        # Active goal phase — the source of truth for the protein target +
+        # coaching framing, so skills/dashboard never hardcode "180g / protect
+        # muscle". Auto-switches (e.g. fat_loss -> muscle_build at healthy BMI).
+        goal = resolve_goal(programme, current_weight)
+        _gp = goal["phase"].get("protein") or {}
+        result["goal"] = {
+            "phase": goal["effective_phase"],
+            "label": goal["phase"].get("label"),
+            "focus": goal["phase"].get("focus"),
+            "protein_note": goal["phase"].get("protein_note"),
+            "rule": goal["phase"].get("rule"),
+            "protein_mode": _gp.get("mode"),
+            "protein_g_per_kg": _gp.get("g_per_kg"),
+            "bmi": round(goal["bmi"], 1) if goal["bmi"] is not None else None,
+        }
 
         # Cumulative loss
         if trend.trend_7d is not None and programme.get("start_weight_kg"):

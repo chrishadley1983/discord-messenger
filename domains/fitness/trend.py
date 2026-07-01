@@ -16,6 +16,14 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Iterable
 
+# A weekly kg/wk rate is only honest once the regression window spans enough
+# days/readings. Below this floor (e.g. the first few days of a new programme,
+# once history is filtered to the programme start) a 3-4 day window reads a
+# huge spurious rate off pure water-weight noise — so we report no slope rather
+# than a fake one. Matches the stall-detection floor so the two stay coherent.
+MIN_SLOPE_DAYS = 10
+MIN_SLOPE_READINGS = 3
+
 
 @dataclass
 class TrendResult:
@@ -100,25 +108,26 @@ def compute_trend(
     t_sma = sma(values, 7)
     t_ema = ema(values, alpha=0.1)
 
-    # Slope over last 14 days (or all we have)
+    # Slope over the last 14 days (or all we have) — but only once the window
+    # spans enough days/readings to mean something. A 4-day window early in a
+    # programme reads a wildly steep kg/wk rate off day-to-day water swings, so
+    # below the floor we report no slope (None) rather than a fake trajectory.
     window_items = items[-14:]
-    if len(window_items) >= 2:
+    window_days = (
+        (window_items[-1]["date"] - window_items[0]["date"]).days
+        if len(window_items) >= 2 else 0
+    )
+    slope_per_week: float | None = None
+    if len(window_items) >= MIN_SLOPE_READINGS and window_days >= MIN_SLOPE_DAYS:
         base_day = window_items[0]["date"].toordinal()
         points = [(r["date"].toordinal() - base_day, r["value"]) for r in window_items]
         slope_per_day = linear_slope(points)
         slope_per_week = slope_per_day * 7 if slope_per_day is not None else None
-    else:
-        slope_per_week = None
 
-    # Stall detection: need at least 3 readings spanning 10+ days with slope worse than -0.1 kg/wk.
-    # Without the >=3 floor a single outlier vs one other reading can fake a stall.
-    window_days = (window_items[-1]["date"] - window_items[0]["date"]).days if len(window_items) >= 2 else 0
-    stalled = bool(
-        slope_per_week is not None
-        and len(window_items) >= 3
-        and window_days >= 10
-        and slope_per_week > -0.1
-    )
+    # Stall detection: a slope only exists once it's already cleared the window
+    # floor above (>=3 readings spanning >=10 days), so this just adds the
+    # "barely moving" test on top.
+    stalled = bool(slope_per_week is not None and slope_per_week > -0.1)
 
     if stalled:
         message = (
@@ -127,6 +136,12 @@ def compute_trend(
         )
     elif slope_per_week is not None:
         message = f"On track: {slope_per_week:+.2f} kg/wk over {window_days} days."
+    elif n >= 2:
+        # Have readings, but the window's still too short to call a weekly rate.
+        message = (
+            f"Settling in — only {window_days} day(s) of readings so far; "
+            f"need ~{MIN_SLOPE_DAYS} to call a weekly rate."
+        )
     else:
         message = "Not enough data to compute trend (need 2+ readings)."
 

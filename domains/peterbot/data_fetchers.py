@@ -273,7 +273,9 @@ async def get_health_digest_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
-async def _sync_garmin_to_supabase(date_str: str, data: dict | None = None) -> None:
+async def _sync_garmin_to_supabase(
+    date_str: str | None = None, data: dict | None = None, days: int = 3
+) -> None:
     """Sync recent Garmin data to garmin_daily_summary table.
 
     Overnight metrics (sleep, RHR, HRV) for a night arrive late — often after
@@ -283,15 +285,17 @@ async def _sync_garmin_to_supabase(date_str: str, data: dict | None = None) -> N
     calendar date. A night that hadn't synced yesterday gets filled in today,
     so nothing is lost. Idempotent — safe to run repeatedly.
 
-    `date_str`/`data` are retained for call-site compatibility but no longer
-    drive what gets written.
+    `days` controls the trailing-window size: the morning digest uses the
+    default 3, while the weekly summary passes a wider window (≈8) to self-heal
+    a whole week of the table before reading it. `date_str`/`data` are retained
+    for call-site compatibility but no longer drive what gets written.
     """
     import httpx
     from config import SUPABASE_URL, SUPABASE_KEY
     from domains.nutrition.services.garmin import daily_summary_records
 
     try:
-        records = await daily_summary_records(days=3)
+        records = await daily_summary_records(days=days)
         if not records:
             logger.info("Garmin sync: no data to sync for trailing window")
             return
@@ -303,23 +307,38 @@ async def _sync_garmin_to_supabase(date_str: str, data: dict | None = None) -> N
             "Prefer": "resolution=merge-duplicates",
         }
 
+        # Upsert ONE row at a time, sending only the fields we actually have a
+        # value for. Two reasons:
+        #  1. Partial days must not clobber good data. A day still in progress
+        #     (e.g. *today* before steps exist) yields a record with null/absent
+        #     metrics. `merge-duplicates` overwrites every column present in the
+        #     payload, so writing `steps=null` would wipe a value an earlier sync
+        #     already stored for that day. Dropping null keys leaves those
+        #     columns untouched, and the next upload fills them in when ready.
+        #  2. PostgREST's *bulk* upsert 400s on a mixed-key array ("All object
+        #     keys must match"), and daily_summary_records legitimately omits
+        #     keys it has no value for — so per-row upsert is what actually works.
+        ok = 0
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{SUPABASE_URL}/rest/v1/garmin_daily_summary?on_conflict=user_id,date",
-                headers=headers,
-                json=records,  # bulk upsert
-                timeout=30,
-            )
+            for rec in records:
+                payload = {k: v for k, v in rec.items() if v is not None}
+                if "user_id" not in payload or "date" not in payload:
+                    continue  # need the conflict target to upsert safely
+                resp = await client.post(
+                    f"{SUPABASE_URL}/rest/v1/garmin_daily_summary?on_conflict=user_id,date",
+                    headers=headers,
+                    json=payload,
+                    timeout=30,
+                )
+                if resp.status_code in (200, 201, 204):
+                    ok += 1
+                else:
+                    logger.warning(
+                        f"Garmin sync: {rec.get('date')} upsert returned "
+                        f"{resp.status_code}: {resp.text[:200]}"
+                    )
 
-        if resp.status_code in (200, 201, 204):
-            summary = ", ".join(
-                f"{r['date']}(sleep={r.get('sleep_hours')}h rhr={r.get('resting_hr')} "
-                f"hrv={r.get('hrv_last_night')} steps={r.get('steps')})"
-                for r in records
-            )
-            logger.info(f"Garmin sync: upserted {len(records)} rows — {summary}")
-        else:
-            logger.warning(f"Garmin sync: upsert returned {resp.status_code}: {resp.text}")
+        logger.info(f"Garmin sync: upserted {ok}/{len(records)} day rows (days={days})")
 
     except Exception as e:
         logger.error(f"Garmin sync failed: {e}")
@@ -344,10 +363,29 @@ async def get_weekly_health_data() -> dict[str, Any]:
     from domains.nutrition.config import DAILY_TARGETS, get_live_targets
 
     try:
+        # Live targets first — they drive the nutrition thresholds (calorie
+        # floor for "incomplete day" exclusion, protein hit target) below.
+        try:
+            targets = await get_live_targets()
+        except Exception as e:
+            logger.warning(f"Live targets failed, using defaults: {e}")
+            targets = dict(DAILY_TARGETS)
+        cal_target = targets.get("calories")
+        protein_target = targets.get("protein_g")
+
+        # Self-heal the Garmin table before reading it. The morning fire-and-
+        # forget sync only covers a 3-day window and can miss a whole week if it
+        # hasn't run; the weekly summary reads garmin_daily_summary, so make sure
+        # the week is actually populated. Best-effort — never block the summary.
+        try:
+            await _sync_garmin_to_supabase("weekly-backfill", days=8)
+        except Exception as e:
+            logger.warning(f"Weekly Garmin self-heal sync failed: {e}")
+
         # Parallel fetch all data using legacy functions
         results = await asyncio.gather(
             _get_weight_week(),
-            _get_nutrition_week(),
+            _get_nutrition_week(cal_target, protein_target),
             _get_steps_week(),
             _get_sleep_week(),
             _get_heart_rate_week(),
@@ -376,12 +414,6 @@ async def get_weekly_health_data() -> dict[str, Any]:
         if isinstance(goals, Exception):
             logger.warning(f"Failed to get goals: {goals}")
             goals = {}
-
-        try:
-            targets = await get_live_targets()
-        except Exception as e:
-            logger.warning(f"Live targets failed, using defaults: {e}")
-            targets = dict(DAILY_TARGETS)
 
         return {
             "weight": weight,

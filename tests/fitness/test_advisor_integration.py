@@ -341,18 +341,20 @@ class TestGarminHrvSync:
     and bulk-upserts on (user_id,date) so late-syncing nights self-heal."""
 
     @pytest.mark.asyncio
-    async def test_sync_bulk_upserts_records(self):
-        """_sync_garmin_to_supabase posts whatever daily_summary_records returns."""
+    async def test_sync_upserts_each_record(self):
+        """_sync_garmin_to_supabase upserts ONE row per day. Per-row (not a
+        single mixed-key bulk array) because PostgREST 400s a bulk array whose
+        objects don't all share the same keys — and daily_summary_records
+        legitimately omits keys it has no value for."""
         records = [
             {
                 "user_id": "chris", "date": "2026-05-01", "source": "garmin",
                 "sleep_hours": 7.5, "sleep_score": 80, "resting_hr": 58,
-                "hrv_weekly_avg": 45, "hrv_last_night": 42, "hrv_status": "BALANCED",
-                "avg_stress": 30, "steps": 14000, "steps_goal": 15000,
+                "hrv_last_night": 42, "avg_stress": 30, "steps": 14000,
             },
             {
                 "user_id": "chris", "date": "2026-04-30", "source": "garmin",
-                "sleep_hours": 6.0, "resting_hr": 62, "steps": 10000, "steps_goal": 15000,
+                "sleep_hours": 6.0, "resting_hr": 62, "steps": 10000,
             },
         ]
 
@@ -375,17 +377,52 @@ class TestGarminHrvSync:
 
                     await _sync_garmin_to_supabase("2026-05-01")
 
-                    assert mock_client.post.called
-                    call_args = mock_client.post.call_args
-                    posted = call_args.kwargs.get("json") or call_args[1].get("json")
+                    # One POST per record — a single dict each, never a list.
+                    assert mock_client.post.call_count == 2
+                    for call in mock_client.post.call_args_list:
+                        posted = call.kwargs.get("json")
+                        assert isinstance(posted, dict)
+                        url = call.args[0] if call.args else call.kwargs.get("url", "")
+                        assert "on_conflict=user_id,date" in url
+                        assert "merge-duplicates" in call.kwargs.get("headers", {}).get("Prefer", "")
 
-                    # Bulk upsert: the full list of per-date records is posted.
-                    assert posted == records
-                    # Idempotent upsert keyed on (user_id,date).
-                    url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
-                    assert "on_conflict=user_id,date" in url
-                    headers = call_args.kwargs.get("headers", {})
-                    assert "merge-duplicates" in headers.get("Prefer", "")
+    @pytest.mark.asyncio
+    async def test_sync_omits_null_fields_so_partial_days_dont_clobber(self):
+        """A partial day (e.g. today, before steps exist) must NOT send null
+        fields. merge-duplicates overwrites every column in the payload, so a
+        `steps=None` would wipe a value an earlier sync already stored. Null
+        fields are dropped; real values are kept."""
+        records = [
+            {
+                "user_id": "chris", "date": "2026-05-02", "source": "garmin",
+                "sleep_hours": 7.2, "sleep_score": 69, "resting_hr": 58,
+                "hrv_last_night": 33, "steps": None,  # today — steps not in yet
+            },
+        ]
+
+        with patch("httpx.AsyncClient") as mock_cls, patch(
+            "domains.nutrition.services.garmin.daily_summary_records",
+            AsyncMock(return_value=records),
+        ):
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=Mock(status_code=201, text="ok"))
+            mock_cls.return_value.__aenter__.return_value = mock_client
+
+            with patch.dict(os.environ, {"SUPABASE_URL": "https://test.co", "SUPABASE_KEY": "k"}):
+                import config as cfg_mod
+                with (
+                    patch.object(cfg_mod, "SUPABASE_URL", "https://test.co", create=True),
+                    patch.object(cfg_mod, "SUPABASE_KEY", "k", create=True),
+                ):
+                    from domains.peterbot.data_fetchers import _sync_garmin_to_supabase
+
+                    await _sync_garmin_to_supabase("2026-05-02")
+
+                    posted = mock_client.post.call_args.kwargs.get("json")
+                    assert "steps" not in posted          # null dropped — won't clobber
+                    assert posted["sleep_hours"] == 7.2   # real values kept
+                    assert posted["user_id"] == "chris"
+                    assert posted["date"] == "2026-05-02"
 
     @pytest.mark.asyncio
     async def test_sync_noop_when_no_records(self):

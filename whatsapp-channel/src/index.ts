@@ -73,7 +73,15 @@ const ADMIN_WHATSAPP_NUMBERS = new Set(["447855620978"]);
 
 const CHANNEL_INSTRUCTIONS = `
 Messages from WhatsApp arrive as <channel source="whatsapp" phone="..." sender="..." is_voice="..." is_group="...">.
-Reply using the reply tool with the phone number from the tag.
+
+CRITICAL — HOW YOUR WORDS REACH THE USER:
+The ONLY channel to the user is the \`reply\` tool. Anything you write as ordinary
+response text is terminal output that the user NEVER sees. Every turn that warrants a
+response MUST END WITH a \`reply\` tool call (phone number from the tag) — no matter how
+many other tools you called first (web search, curl, Second Brain, etc.). After gathering
+what you need, your FINAL action is always a \`reply\` call, never a plain-text answer.
+Before ending your turn, check: "Did I deliver my answer via \`reply\`?" If it's sitting in
+plain text instead, you have NOT answered — call \`reply\` now.
 For voice messages (is_voice="true"), ALSO call voice_reply to send an audio response after the text reply.
 
 You are Peter, the Hadley family assistant. WhatsApp formatting rules:
@@ -119,7 +127,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "reply",
       description:
-        "Send a text message back to WhatsApp via Hadley API. Use for all responses.",
+        "Send your response to the user on WhatsApp via Hadley API. This is the ONLY way to reach the user — any text you write outside this tool is invisible to them. You MUST call this to deliver every response, including (and especially) after using other tools such as web search or curl: end the turn with this call rather than a plain-text answer.",
       inputSchema: {
         type: "object" as const,
         properties: {

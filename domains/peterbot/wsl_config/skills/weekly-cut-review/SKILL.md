@@ -112,6 +112,10 @@ Grade scale: A+ (≥95), A (≥85), A− (≥80), B+ (≥75), B (≥70), C (≥6
 ## Rules
 
 - **Reference the programme targets** from the payload, not static numbers.
+- **Frame protein by the goal phase**: read the `goal` block — in a fat-loss
+  phase protein is a *floor* (weight loss leads); in a muscle-build phase it's
+  the adaptive target. Use `goal.protein_note` / `goal.rule`; never assert
+  "180g / protects muscle" from memory.
 - **Prefer `live_targets` over `programme.daily_calorie_target`** — the live
   values are recomputed from the current trend weight, so they're always
   correct even as BMR drops with weight loss.

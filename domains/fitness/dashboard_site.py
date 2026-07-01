@@ -248,14 +248,17 @@ def _status_from_delta(delta_pct, good_up=True):
 # ── AI summary via jobs-channel ────────────────────────────────────────
 
 async def _ai_summary(facts: dict) -> str:
+    g = facts.get("goal", {})
     prompt = (
         "You are Pete, Chris's expert personal trainer and nutrition coach. "
         "Write a concise expert summary (4–6 sentences, plain text, NO markdown headings) "
-        "of his reset cut using the data below. Cover: progress vs the 75kg/15% target and "
+        "of his cut using the data below. Frame everything around his CURRENT goal/phase "
+        f"(\"{g.get('label','')}\": {g.get('focus','')}). Cover: progress vs his target weight and "
         "this week's trend-weight line; what's going well; the ONE thing to focus on this week; "
         "and a calm, encouraging close. He is tapering sertraline (GP-supervised) so keep the "
         "tone supportive, never guilt-trippy; frame walking as stress relief. Be specific with his "
-        "numbers. When done, call the reply tool with the job_id and your summary text only.\n\n"
+        "numbers and use the protein target from the data — never invent a different one. When "
+        "done, call the reply tool with the job_id and your summary text only.\n\n"
         f"DATA:\n{json.dumps(facts, default=str)}"
     )
     try:
@@ -269,14 +272,18 @@ async def _ai_summary(facts: dict) -> str:
             logger.warning(f"Dashboard AI summary: channel returned {r.status_code}/empty")
     except Exception as e:
         logger.warning(f"Dashboard AI summary via channel failed: {e}")
-    # Fallback — deterministic, still useful
+    # Fallback — deterministic, still useful. Protein line comes from the goal
+    # phase (its protein_note), so it tracks the current target, never 180g.
     h = facts.get("hero", {})
+    protein_line = g.get("protein_note") or (
+        f"hold protein around {g.get('protein_target','?')}g"
+    )
     return (
-        f"You're {h.get('current_weight','?')}kg, down {h.get('cumulative_loss','?')}kg toward 75kg "
-        f"({h.get('progress_pct','?')}% there) with {h.get('days_remaining','?')} days to go. "
-        "Trend is the only number that matters week to week — keep protein at 180g to protect muscle, "
-        "and treat the daily walk as much for your head as your waistline. Lock breakfast and lunch, "
-        "let dinner flex with the family, and keep showing up. Steady wins this."
+        f"You're {h.get('current_weight','?')}kg, down {h.get('cumulative_loss','?')}kg toward "
+        f"{h.get('target_weight','?')}kg ({h.get('progress_pct','?')}% there) with "
+        f"{h.get('days_remaining','?')} days to go. Trend is the only number that matters week to "
+        f"week — {protein_line}, and treat the daily walk as much for your head as your waistline. "
+        "Lock breakfast and lunch, let dinner flex with the family, and keep showing up. Steady wins this."
     )
 
 
@@ -305,7 +312,15 @@ async def _build_data() -> dict:
     _wt = compute_trend(_hist)
     current = _wt.trend_7d or _wt.latest_raw
     latest_raw = _wt.latest_raw  # today's actual scale reading (vs the smoothed trend headline)
-    slope = _wt.slope_kg_per_week
+    # The kg/wk rate MUST match what the check-in/advisor report, so take it from
+    # the programme-start-filtered trend (compute_dashboard), not this unfiltered
+    # 45-day line. They used to disagree — e.g. check-in "−1.3/wk" vs hero
+    # "+0.3/wk" — because one filtered to programme start and one didn't. Early
+    # on, that filtered slope is None (too few days to call a rate); fall back to
+    # the unfiltered line only before the programme has started.
+    slope = w.get("slope_kg_per_week")
+    if slope is None and (not programme or week_no < 1):
+        slope = _wt.slope_kg_per_week
     # Date of the most recent raw reading, for the "latest scale" line.
     latest_date = None
     try:
@@ -357,8 +372,18 @@ async def _build_data() -> dict:
         "on_track": on_track, "on_track_label": on_label,
     }
 
+    # Resolve the active goal phase — it drives the protein target and all the
+    # framing below, so nothing here is hardcoded to a specific number/phase.
+    goal = fit.resolve_goal(programme, current) if programme else {
+        "phase": {}, "effective_phase": "default", "current_phase": "default",
+    }
+    phase = goal.get("phase") or {}
+    protein_spec = phase.get("protein") or {}
+
     tgt_cal = nut.get("target_calories") or (programme["daily_calorie_target"] if programme else 2050)
-    tgt_pro = nut.get("target_protein") or (programme["daily_protein_g"] if programme else 180)
+    # No-programme fallback (120) mirrors the nutrition domain's documented
+    # default; the live value comes from nut["target_protein"] in practice.
+    tgt_pro = nut.get("target_protein") or (programme["daily_protein_g"] if programme else 120)
 
     def sleep_status(v):
         return "neutral" if v is None else "good" if v >= 70 else "watch" if v >= 50 else "bad"
@@ -375,11 +400,12 @@ async def _build_data() -> dict:
          "sub": (f"as of {bodyfat['date']} · goal 15%" if bodyfat else "re-weigh on Body scale"),
          "status": "neutral"},
         {"label": "Protein today", "value": f"{int(nut.get('protein_g') or 0)} / {tgt_pro} g",
-         "sub": "lean-mass insurance", "status": "good" if (nut.get('protein_g') or 0) >= tgt_pro * 0.95 else "watch"},
+         "sub": ("protein floor" if protein_spec.get("mode") == "fixed" else "lean-mass fuel"),
+         "status": "good" if (nut.get('protein_g') or 0) >= tgt_pro * 0.95 else "watch"},
         {"label": "Calories today", "value": f"{int(nut.get('calories') or 0)} / {tgt_cal}",
          "sub": "deficit auto-eases as you lean out", "status": "good" if (nut.get('calories') or 0) <= tgt_cal * 1.05 else "watch"},
         {"label": "Steps", "value": f"{int(steps.get('today') or 0):,}",
-         "sub": f"7-day avg {int(steps.get('avg_7d') or 0):,} · aim 15k", "status": "good" if (steps.get('avg_7d') or 0) >= 10000 else "watch"},
+         "sub": f"7-day avg {int(steps.get('avg_7d') or 0):,} · aim {(int(programme['daily_steps_target'])//1000) if programme else 15}k", "status": "good" if (steps.get('avg_7d') or 0) >= 10000 else "watch"},
         {"label": "Sleep score", "value": (f"{sc:.0f}" if sc else "—"),
          "sub": "14-day avg", "status": sleep_status(sc)},
         {"label": "HRV", "value": (f"{hrv:.0f} ms" if hrv else "—"),
@@ -422,28 +448,34 @@ async def _build_data() -> dict:
                      "type": s.get("session_type"), "is_rest": bool(s.get("is_rest")),
                      "note": s.get("notes") or "", "exercises": exs})
 
+    strength_n = int(programme["weekly_strength_sessions"]) if programme else 4
+    steps_aim_k = (int(programme["daily_steps_target"]) // 1000) if programme else 15
+    if protein_spec.get("mode") == "fixed":
+        protein_target_str = f"{tgt_pro} g"
+    else:
+        _gpk = protein_spec.get("g_per_kg")
+        protein_target_str = f"~{_gpk:g} g/kg (~{tgt_pro} g)" if _gpk else f"{tgt_pro} g"
+
     rationale = {
         "targets": [
-            ["Calories", "~2,050 kcal"], ["Protein", "180 g"],
-            ["Water", "3 L (3.5 L training days)"], ["Steps", "15k aim · 10k floor"],
-            ["Strength", "4 × 30 min / week"], ["Mobility", "10 min daily"],
+            ["Calories", f"~{int(tgt_cal):,} kcal"], ["Protein", protein_target_str],
+            ["Water", "3 L (3.5 L training days)"], ["Steps", f"{steps_aim_k}k/day"],
+            ["Strength", f"{strength_n} × 30 min / week"], ["Mobility", "10 min daily"],
             ["Sleep", "8h · 22:30–06:30"],
         ],
         "paras": [
-            "Goal: 75 kg and ~15% body fat by 23 October — about 0.8 kg/week, the upper edge of a safe rate. "
-            "75 kg is very achievable; 15% is the stretch, so the plan optimises toward it with high protein and strength.",
-            "The two targets only line up if lean mass is protected — that's why protein (180g, ~2 g/kg) and lifting "
-            "4× a week are non-negotiable, not optional extras. Without them you'd end up light but soft.",
-            "Calories are ~2,050 now and auto-ease as you lose weight (the deficit stays honest as BMR drops). "
-            "Steps are the accelerator, not the foundation: a sedentary day still loses ~0.5 kg/wk, an active one ~0.9 — "
-            "so a low-step day is never a failure.",
+            f"Current goal: reach {hero['target_weight']} kg. " + (phase.get("focus") or ""),
+            phase.get("protein_note") or "",
+            f"Calories are ~{int(tgt_cal):,} now and auto-ease as you lose weight (the deficit stays honest "
+            "as BMR drops). Steps are the accelerator, not the foundation: a sedentary day still loses fat, "
+            "an active one loses more — so a low-step day is never a failure.",
             "Training is bodyweight + bands + light (<5 kg) loads, hip- and sciatica-friendly (no running, no loaded "
             "spinal flexion). Breakfast and lunch are locked for simplicity; dinner flexes with the family.",
         ],
         "rules": [
-            "Hit 180g protein — it protects muscle. Non-negotiable.",
+            phase.get("rule") or f"Hit ~{tgt_pro} g protein.",
             "Log everything (the coach tracks it).",
-            "Walk daily, lift 4×, 10-min hip mobility every day.",
+            f"Walk daily, lift {strength_n}×, 10-min hip mobility every day.",
             "Bed 22:30, caffeine before noon, last food ≥2h before bed.",
             "Weigh in each Monday on the Withings Body scale — that's your checkpoint.",
         ],
@@ -453,7 +485,10 @@ async def _build_data() -> dict:
     }
 
     facts = {"hero": hero, "metrics": [{k: m[k] for k in ("label", "value", "sub", "status")} for m in metrics],
-             "trends_summary": summ}
+             "trends_summary": summ,
+             "goal": {"phase": goal.get("effective_phase"), "label": phase.get("label"),
+                      "focus": phase.get("focus"), "protein_target": tgt_pro,
+                      "protein_note": phase.get("protein_note")}}
     summary = await _ai_summary(facts)
 
     return {

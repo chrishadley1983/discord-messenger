@@ -15,6 +15,8 @@ Endpoints powering the 13-week post-Japan fat-loss programme:
 - POST /fitness/programme/start        — one-shot init: TDEE, programme, accountability goals
 - POST /fitness/programme/recalibrate  — recompute calories/protein from latest weight
 - POST /fitness/weekly-checkin         — persist a Sunday check-in snapshot
+- GET  /fitness/goal                   — resolved goal phase + live targets
+- PUT  /fitness/goal                   — update the active programme's goal/phase config
 """
 
 from __future__ import annotations
@@ -82,6 +84,15 @@ class RecalibrateRequest(BaseModel):
     avg_steps: Optional[float] = None
     # None -> use the programme's own deficit (falls back to 550 if unset)
     deficit_kcal: Optional[int] = None
+
+
+class UpdateGoalRequest(BaseModel):
+    # Either replace the whole config, or send convenience partials that are
+    # merged into the existing goal_config.
+    goal_config: Optional[dict] = None       # full replacement
+    current_phase: Optional[str] = None      # flip the active phase (must exist)
+    phases: Optional[dict] = None            # merge/replace named phase definitions
+    auto_switch: Optional[dict] = None       # replace the auto-switch rule
 
 
 # ── Read endpoints ──────────────────────────────────────────────────────
@@ -380,6 +391,91 @@ async def recalibrate_programme(req: RecalibrateRequest):
         deficit_kcal=req.deficit_kcal,
     )
     return {"status": "recalibrated", **result}
+
+
+@router.get("/goal")
+async def get_goal():
+    """Resolved goal phase (label/focus/protein framing) + live targets.
+
+    The goal_config on the active programme is the source of truth for the
+    protein target and coaching framing; this resolves the effective phase
+    (applying any BMI auto-switch) and returns the live numbers alongside it.
+    """
+    programme = await fit.get_active_programme()
+    if not programme:
+        return {"goal": None, "message": "No active programme"}
+
+    history = await fit.fetch_weight_history(30)
+    trend = compute_trend(history)
+    weight = trend.trend_7d or trend.latest_raw
+    goal = fit.resolve_goal(programme, weight)
+
+    out = {
+        "programme_id": programme["id"],
+        "current_phase": goal["current_phase"],
+        "effective_phase": goal["effective_phase"],
+        "transitioned": goal["transitioned"],
+        "bmi": round(goal["bmi"], 1) if goal["bmi"] is not None else None,
+        "phase": goal["phase"],
+        "config": goal["config"],
+    }
+    if weight:
+        steps_hist = await fit.fetch_steps_history(7)
+        steps_avg = (
+            sum(p["value"] for p in steps_hist) / len(steps_hist)
+            if steps_hist else float(programme["daily_steps_target"])
+        )
+        live = fit.compute_current_targets(
+            programme, float(weight),
+            max(steps_avg, float(programme["daily_steps_target"])),
+        )
+        out["live_targets"] = {
+            "target_calories": live.target_calories,
+            "target_protein_g": live.target_protein_g,
+            "weight_used_kg": round(float(weight), 2),
+        }
+    return out
+
+
+@router.put("/goal", dependencies=[Depends(require_auth)])
+async def put_goal(req: UpdateGoalRequest):
+    """Update the active programme's goal_config (Peter's goal editor).
+
+    Send `goal_config` to replace it wholesale, or any of `current_phase`,
+    `phases`, `auto_switch` to merge a partial change. The live protein target
+    + dashboard framing follow from the resulting config on the next rebuild.
+    """
+    programme = await fit.get_active_programme()
+    if not programme:
+        return JSONResponse(status_code=400, content={"error": "No active programme"})
+
+    config = dict(req.goal_config) if req.goal_config is not None else dict(programme.get("goal_config") or {})
+    if req.phases is not None:
+        config.setdefault("phases", {})
+        config["phases"].update(req.phases)
+    if req.auto_switch is not None:
+        config["auto_switch"] = req.auto_switch
+    if req.current_phase is not None:
+        if req.current_phase not in (config.get("phases") or {}):
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Unknown phase '{req.current_phase}'"},
+            )
+        config["current_phase"] = req.current_phase
+
+    if not config.get("phases"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "goal_config must define at least one phase under 'phases'"},
+        )
+
+    updated = await fit.update_goal_config(programme["id"], config)
+    goal = fit.resolve_goal(updated, None)
+    return {
+        "status": "updated",
+        "current_phase": goal["current_phase"],
+        "config": updated.get("goal_config"),
+    }
 
 
 @router.post("/weekly-checkin", dependencies=[Depends(require_auth)])

@@ -106,6 +106,11 @@ Mobility: morning ❌ | evening ❌
 
 ## Rules
 
+- **Targets + goal phase**: read `nutrition.target_protein` / `target_calories`
+  and the `goal` block from the payload — never hardcode a protein number or a
+  "protect muscle" line. `goal.protein_mode` says whether protein is a fat-loss
+  *floor* (`fixed`) or an adaptive muscle target (`adaptive`); frame the protein
+  line with `goal.protein_note` / `goal.rule`, not from memory.
 - **Weight display**: ALWAYS show the 7-day trend first, raw second. Day-to-day variance is noise.
 - **Targets remaining**: Show what's left to hit, not what's already consumed — Chris responds to gaps better than totals.
 - **Today's session**: Full exercise list with the week-adjusted reps/holds. Do NOT show generic defaults.

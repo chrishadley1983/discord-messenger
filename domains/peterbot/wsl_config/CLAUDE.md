@@ -25,7 +25,7 @@ See `PETERBOT_SOUL.md` for personality and conversation style.
 **READ THE RELEVANT PLAYBOOK before producing structured outputs.** See `docs/playbooks/INDEX.md` for the routing table. Multiple playbooks may apply — default to depth if unsure.
 
 Content-specific references (load on demand):
-- `FITNESS.md` — weight / training / cut / calories / mobility / `/fitness/*` endpoints
+- `FITNESS.md` — weight / training / cut / calories / mobility / goal phases (protein target + framing) / `/fitness/*` endpoints
 - `EMAIL.md` — all Gmail workflows
 - `KIDS.md` — pocket money (IHD dashboard `http://192.168.0.110:3000`, amounts in pence), school
 - `NUTRITION.md` — meals, macros, recipes

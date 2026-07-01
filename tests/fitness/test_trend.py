@@ -112,3 +112,22 @@ class TestComputeTrend:
         ]
         r = compute_trend(readings)
         assert r.readings_count == 2
+
+    def test_short_window_reports_no_slope(self):
+        # 5 daily readings spanning only 4 days (e.g. first week of a programme
+        # once history is filtered to the start). The day-to-day swing must NOT
+        # be extrapolated into a scary weekly rate.
+        start = date(2026, 6, 22)
+        r = compute_trend(_gen(start, [91.4, 91.1, 90.7, 91.0, 90.5]))
+        assert r.readings_count == 5
+        assert r.slope_kg_per_week is None
+        assert r.stalled is False
+        assert "settling" in r.message.lower()
+
+    def test_slope_appears_once_window_is_long_enough(self):
+        # 11 readings spanning 10 days clears the floor → a real slope is reported.
+        start = date(2026, 6, 1)
+        values = [90.0 - 0.05 * i for i in range(11)]  # gentle loss over 10 days
+        r = compute_trend(_gen(start, values))
+        assert r.slope_kg_per_week is not None
+        assert r.slope_kg_per_week < 0

@@ -13,12 +13,14 @@ race prep), read `TRAINING.md` instead. They coexist.
 - Weekly review bundle: `GET /fitness/weekly-review`
 - Exercise library: `GET /fitness/exercises`
 - **Recalibrate targets:** `POST /fitness/programme/recalibrate`
+- **Goal/phase (protein target + framing):** `GET /fitness/goal` · update with `PUT /fitness/goal`
 
 Daily targets (calories, protein, steps) are **programme-specific** — read them
 from the programme row, never guess. But note: `/fitness/dashboard` returns
 **live** targets (recomputed from current weight) under `nutrition.target_calories`
-and `live_targets`. Those are the authoritative numbers for "what can I eat
-today", not the static programme row.
+and `live_targets`, plus a `goal` block (current phase + protein framing). Those
+are the authoritative numbers for "what can I eat today" and how to frame protein
+— not the static programme row, and never a hardcoded number.
 
 ## The 13-Week Cut — What Chris Is Doing
 
@@ -26,9 +28,10 @@ today", not the static programme row.
 - **Height:** 178 cm (used for BMR — do not guess)
 - **Target:** −10kg on a 7-day weight trend (not single reading)
 - **Daily calories:** TDEE − 550 kcal (auto-computed from Mifflin-St Jeor + step activity)
-- **Protein:** 1.67 g per kg bodyweight (rounded to 5g) — research floor is
-  1.6 g/kg; 1.67 balances muscle-retention with Chris's real-world struggle
-  to hit very high protein
+- **Protein:** goal-phase driven — see **Goal Phases** below. Currently a flat
+  **fat-loss floor** (weight loss leads); it auto-switches to the adaptive g/kg
+  multiplier once Chris reaches a healthy BMI. Always read the live number from
+  `nutrition.target_protein` / `GET /fitness/goal` — never hardcode it.
 - **Steps:** 15k baseline (NEAT is the biggest fat-loss lever)
 - **Training:** 5x/week, 20-min bodyweight sessions
 - **Mobility:** daily 10-min routine
@@ -75,6 +78,43 @@ The system handles this automatically:
 
 **Never** recalibrate based on a single scale reading — always use the 7-day
 trend. That's what `/fitness/programme/recalibrate` does by default.
+
+## Goal Phases — Protein Target & Framing
+
+The protein target AND all coaching framing come from the active programme's
+`goal_config` (jsonb), never from hardcoded numbers. Read it via `GET /fitness/goal`
+or the `goal` block on `/fitness/dashboard`:
+
+- `current_phase` — stored phase (e.g. `fat_loss`).
+- `effective_phase` — phase after the auto-switch (what's live right now).
+- `phase` — `{label, focus, protein:{mode, g|g_per_kg}, protein_note, rule}`.
+- `auto_switch` — e.g. `{metric: "bmi", below: 25.0, to_phase: "muscle_build"}`.
+
+**Two phases today:**
+
+| Phase | Protein | Framing |
+|---|---|---|
+| `fat_loss` (now) | **fixed 125 g** | Weight loss first; protein is a satiety/muscle *floor*, not a max |
+| `muscle_build` | **adaptive** (programme's `protein_g_per_kg`, currently 2.0 g/kg) | Healthy weight reached — protect/build lean mass |
+
+**Auto-switch:** when the 7-day-trend **BMI drops below 25** (~79 kg at 178 cm),
+the effective phase flips `fat_loss → muscle_build` (forward-only). It's applied
+live on every dashboard build and persisted (with a `phase_changed` note) the next
+time recalibrate runs. **Calories are unaffected** — the deficit keeps running
+toward target weight; only the protein target + framing change.
+
+**Peter editing the goal (with Chris's approval):**
+- Flip phase: `PUT /fitness/goal {"current_phase": "muscle_build"}`
+- Retune the floor: `PUT /fitness/goal {"phases": {"fat_loss": {"protein": {"mode":"fixed","g":140}}}}`
+- Change the switch: `PUT /fitness/goal {"auto_switch": {"metric":"bmi","below":24.0,"to_phase":"muscle_build"}}`
+
+Never assert "180 g" or "protein protects muscle, non-negotiable" — that framing
+is phase-specific and now lives in `goal.rule` / `goal.protein_note`.
+
+**New programmes** (`POST /fitness/programme/start`) are seeded with this
+fat-loss-first config automatically: the floor is ~1.4 g/kg of starting weight
+(e.g. ~125 g at 90 kg), with the BMI-25 auto-switch to muscle-build. Tune it any
+time via `PUT /fitness/goal`.
 
 ### Training Split (5x_short)
 | Day | Session | Focus |
