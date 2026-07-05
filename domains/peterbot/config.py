@@ -60,7 +60,13 @@ CLI_MAX_TURNS = 80            # Max agentic turns for conversations (browser flo
 CLI_SCHEDULED_MAX_TURNS = 50  # Max agentic turns for scheduled jobs (same as conversations)
 # No --max-budget-usd flag needed: CLI runs on subscription, not API billing.
 # The subscription's own rate limits are the safety net.
-CLI_MODEL = "claude-opus-4-8"            # Opus 4.8 for conversations (fallback path)
+# Conversations reverted to Opus 4.6 (2026-07-05): Opus 4.7/4.8/5 under-call the
+# custom `reply` tool → silently dropped replies in the conversational channels
+# (the "regular no answers" regression that started with the Jun 30–Jul 1 model
+# migration off 4.6). 4.6 reliably calls the tool. Scheduled jobs stay on 4.8:
+# they use a synchronous reply pattern (no undercall drops) and 4.8 is ~3x cheaper.
+# See memory peter-sonnet5-reply-tool-undercall.
+CLI_MODEL = "claude-opus-4-6"            # Opus 4.6 for conversations (fallback path)
 CLI_SCHEDULED_MODEL = "claude-opus-4-8"  # Opus 4.8 for scheduled jobs (fallback path)
 CLI_COMMAND = os.environ.get("PETERBOT_CLI_COMMAND", "claude")  # CLI binary
 CLI_WORKING_DIR = PETERBOT_SESSION_PATH  # ~/peterbot (where CLAUDE.md lives)

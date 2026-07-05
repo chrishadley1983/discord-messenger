@@ -82,7 +82,7 @@ while true; do
   claude \
     --mcp-config /tmp/peter-channel-mcp.json \
     --dangerously-load-development-channels server:peter-channel \
-    --model claude-opus-4-8 \
+    --model claude-opus-4-6 \
     --effort medium \
     --permission-mode bypassPermissions
   EXIT_CODE=$?
