@@ -1,7 +1,7 @@
 import DashboardShell from "@/components/DashboardShell";
 import EventsWidget from "@/components/home/EventsWidget";
 import FoodWidget from "@/components/home/FoodWidget";
-import TripWidget from "@/components/home/TripWidget";
+import CountdownWidget from "@/components/home/CountdownWidget";
 import KidsWidget from "@/components/home/KidsWidget";
 import EnergyWidget from "@/components/home/EnergyWidget";
 import SensorWidget from "@/components/home/SensorWidget";
@@ -25,10 +25,10 @@ export default function HomePage() {
         </div>
         {/* Col 2, Row 1 */}
         <FoodWidget />
-        {/* Col 3, Row 1: trip + compact business strip */}
+        {/* Col 3, Row 1: countdowns + compact business strip */}
         <div className="flex flex-col gap-3 min-h-0">
           <div className="flex-1 min-h-0 flex flex-col [&>*]:flex-1 [&>*]:min-h-0 [&>*]:overflow-hidden">
-            <TripWidget />
+            <CountdownWidget />
           </div>
           <HadleyWidget />
         </div>
