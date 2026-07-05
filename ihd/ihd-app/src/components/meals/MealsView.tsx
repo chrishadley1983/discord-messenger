@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import RecipePopup from "./RecipePopup";
 import { Card } from "../ui/Card";
+import Icon from "../ui/Icon";
+import EmptyState from "../ui/EmptyState";
 
 const SOURCE_BADGE: Record<string, { bg: string; label: string }> = {
   gousto: { bg: "var(--calendar-tint)", label: "Gousto" },
@@ -13,7 +15,6 @@ const SOURCE_BADGE: Record<string, { bg: string; label: string }> = {
 };
 
 const SLOT_LABELS: Record<number, string> = { 1: "Lunch", 2: "Dinner" };
-const SLOT_ICON: Record<number, string> = { 1: "🥪", 2: "🍽️" };
 
 interface MealItem {
   id: string;
@@ -67,6 +68,23 @@ function isToday(dateStr: string): boolean {
   return dateStr === new Date().toISOString().slice(0, 10);
 }
 
+/** Mon–Sun dates for the current week — used as a fallback day-nav when no plan exists yet. */
+function getCurrentWeekDates(): string[] {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const day = now.getDay(); // 0=Sun..6=Sat
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now);
+  monday.setDate(monday.getDate() + mondayOffset);
+  const result: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    result.push(d.toISOString().slice(0, 10));
+  }
+  return result;
+}
+
 function SourceBadge({ tag }: { tag: string }) {
   const cfg = SOURCE_BADGE[tag] || {
     bg: "var(--surface-alt)",
@@ -101,14 +119,11 @@ function MealCard({
   item: MealItem;
   onRecipeClick: (name: string) => void;
 }) {
-  const isLeftover = item.adults_meal.toLowerCase().includes("leftover");
-  const icon = isLeftover ? "♻️" : SLOT_ICON[item.meal_slot] || "🍽️";
-
   return (
     <Card
       section="meals"
       chip={SLOT_LABELS[item.meal_slot] || `Slot ${item.meal_slot}`}
-      chipIcon={<span>{icon}</span>}
+      chipIcon={<Icon name="utensils" size={16} />}
       headerRight={<SourceBadge tag={item.source_tag} />}
       onClick={() => onRecipeClick(item.adults_meal)}
       className="w-full"
@@ -186,12 +201,16 @@ export default function MealsView() {
     }
   }
   const dates = Object.keys(byDate).sort();
+  const hasPlan = dates.length > 0;
+  // When there's no plan yet, still show a full week of day-nav pills
+  // (all 7 days, today selected) rather than collapsing to one message.
+  const weekDates = hasPlan ? dates : getCurrentWeekDates();
 
   // Auto-select today on first load
   useEffect(() => {
-    if (dates.length === 0) return;
+    if (weekDates.length === 0) return;
     const todayStr = new Date().toISOString().slice(0, 10);
-    const todayIdx = dates.indexOf(todayStr);
+    const todayIdx = weekDates.indexOf(todayStr);
     if (todayIdx >= 0) setCurrentIndex(todayIdx);
   }, [plan]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -200,8 +219,8 @@ export default function MealsView() {
   }, []);
 
   const goRight = useCallback(() => {
-    setCurrentIndex((i) => Math.min(dates.length - 1, i + 1));
-  }, [dates.length]);
+    setCurrentIndex((i) => Math.min(weekDates.length - 1, i + 1));
+  }, [weekDates.length]);
 
   // Touch swipe handling
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -221,7 +240,7 @@ export default function MealsView() {
     [goLeft, goRight]
   );
 
-  if (!plan) {
+  if (!loaded) {
     return (
       <div className="h-full flex items-center justify-center">
         <div
@@ -233,47 +252,16 @@ export default function MealsView() {
             color: "var(--ink-60)",
           }}
         >
-          {loaded ? (
-            <>
-              🍽 No meal plan this week
-              <div className="text-base mt-2" style={{ fontFamily: "var(--font-body), sans-serif", fontWeight: 400 }}>
-                Plan one and it&apos;ll show up here.
-              </div>
-            </>
-          ) : (
-            "Loading meal plan..."
-          )}
+          Loading meal plan...
         </div>
       </div>
     );
   }
 
-  if (dates.length === 0) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <Card section="meals" tinted className="text-center items-center" style={{ padding: "40px 48px" }}>
-          <div className="text-4xl mb-3">🍽️</div>
-          <div
-            style={{
-              fontFamily: "var(--font-display), sans-serif",
-              fontWeight: 700,
-              fontSize: 24,
-            }}
-          >
-            No meal plan today
-          </div>
-          <div className="text-base mt-2" style={{ color: "var(--ink-60)" }}>
-            Nothing planned for this week yet.
-          </div>
-        </Card>
-      </div>
-    );
-  }
-
-  const currentDate = dates[currentIndex] || dates[0];
-  const currentItems = (byDate[currentDate] || []).sort(
-    (a, b) => a.meal_slot - b.meal_slot
-  );
+  const currentDate = weekDates[currentIndex] ?? weekDates[0];
+  const currentItems = hasPlan
+    ? (byDate[currentDate] || []).sort((a, b) => a.meal_slot - b.meal_slot)
+    : [];
   const today = isToday(currentDate);
 
   return (
@@ -307,7 +295,7 @@ export default function MealsView() {
 
         {/* Day pills */}
         <div className="flex-1 flex items-center justify-center gap-2 overflow-x-auto">
-          {dates.map((d, i) => {
+          {weekDates.map((d, i) => {
             const isCurrent = i === currentIndex;
             const isT = isToday(d);
             const dt = new Date(d + "T00:00:00");
@@ -360,7 +348,7 @@ export default function MealsView() {
 
         <button
           onClick={goRight}
-          disabled={currentIndex === dates.length - 1}
+          disabled={currentIndex === weekDates.length - 1}
           aria-label="Next day"
           className="pressable flex items-center justify-center shrink-0"
           style={{
@@ -371,8 +359,8 @@ export default function MealsView() {
             background: "var(--surface)",
             fontSize: 22,
             fontWeight: 700,
-            cursor: currentIndex === dates.length - 1 ? "default" : "pointer",
-            opacity: currentIndex === dates.length - 1 ? 0.3 : 1,
+            cursor: currentIndex === weekDates.length - 1 ? "default" : "pointer",
+            opacity: currentIndex === weekDates.length - 1 ? 0.3 : 1,
           }}
         >
           ›
@@ -406,16 +394,12 @@ export default function MealsView() {
           </div>
 
           {currentItems.length === 0 ? (
-            <Card section="meals" tinted className="text-center items-center" style={{ padding: "32px 24px" }}>
-              <div
-                style={{
-                  fontFamily: "var(--font-display), sans-serif",
-                  fontWeight: 700,
-                  fontSize: 20,
-                }}
-              >
-                No meal plan today
-              </div>
+            <Card section="meals" tinted className="items-center" style={{ padding: "32px 24px" }}>
+              <EmptyState
+                icon="utensils"
+                headline={hasPlan ? "No meal plan today" : "No meal plan this week"}
+                subtext={hasPlan ? undefined : "Plan one and it'll show up here."}
+              />
             </Card>
           ) : (
             <>

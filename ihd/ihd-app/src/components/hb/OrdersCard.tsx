@@ -2,6 +2,8 @@
 
 import type { ReactNode } from "react";
 import { Card } from "@/components/ui/Card";
+import Icon from "@/components/ui/Icon";
+import EmptyState from "@/components/ui/EmptyState";
 
 interface OrdersPlatform {
   count: number;
@@ -45,7 +47,7 @@ function StickerBadge({
 export default function OrdersCard({ orders }: { orders: OrdersData | null }) {
   if (!orders) {
     return (
-      <Card section="hb" chip="Dispatch" chipIcon={"\u{1F4E6}"} className="min-h-0">
+      <Card section="hb" chip="Dispatch" chipIcon={<Icon name="package" size={16} />} className="min-h-0">
         <div className="flex-1 flex items-center justify-center">
           <span className="text-sm" style={{ color: "var(--ink-60)" }}>
             Orders unavailable
@@ -56,13 +58,12 @@ export default function OrdersCard({ orders }: { orders: OrdersData | null }) {
   }
 
   const { platforms, totalOrders, totalOverdue, totalUrgent } = orders;
-  const hasIssues = totalOverdue > 0 || totalUrgent > 0;
 
   return (
     <Card
       section="hb"
       chip="Dispatch"
-      chipIcon={"\u{1F4E6}"}
+      chipIcon={<Icon name="package" size={16} />}
       className="min-h-0"
       headerRight={
         <span
@@ -72,7 +73,7 @@ export default function OrdersCard({ orders }: { orders: OrdersData | null }) {
             fontWeight: 800,
             fontSize: "44px",
             lineHeight: 1,
-            color: hasIssues ? "var(--bad)" : "var(--good)",
+            color: totalOverdue > 0 ? "var(--bad)" : "var(--good)",
           }}
         >
           {totalOrders}
@@ -80,9 +81,7 @@ export default function OrdersCard({ orders }: { orders: OrdersData | null }) {
       }
     >
       {totalOrders === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-sm text-center" style={{ color: "var(--ink-60)" }}>
-          All clear — no orders pending
-        </div>
+        <EmptyState icon="package" headline="All clear" subtext="No orders pending" compact />
       ) : (
         <div className="flex-1 overflow-y-auto flex flex-col gap-2 min-h-0">
           {(totalOverdue > 0 || totalUrgent > 0) && (

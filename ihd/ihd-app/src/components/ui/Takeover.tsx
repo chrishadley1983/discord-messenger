@@ -59,7 +59,7 @@ export default function Takeover({
       {/* Fixed header — back button always reachable */}
       <div
         className="flex items-center gap-4 shrink-0 px-3"
-        style={{ height: 72, background: accent, borderBottom: "2px solid var(--ink)" }}
+        style={{ height: 84, background: accent, borderBottom: "2px solid var(--ink)" }}
       >
         <button
           onClick={onClose}
@@ -67,7 +67,7 @@ export default function Takeover({
           className="pressable flex items-center justify-center gap-1 shrink-0"
           style={{
             width: 72,
-            height: 56,
+            height: 72,
             borderRadius: 16,
             border: "2px solid var(--ink)",
             background: "var(--surface)",

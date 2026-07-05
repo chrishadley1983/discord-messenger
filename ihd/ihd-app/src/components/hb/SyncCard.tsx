@@ -1,6 +1,8 @@
 "use client";
 
 import { Card } from "@/components/ui/Card";
+import Icon from "@/components/ui/Icon";
+import EmptyState from "@/components/ui/EmptyState";
 
 interface SyncEntry {
   status: string;
@@ -22,7 +24,7 @@ function timeAgo(dateStr: string | null): string {
 export default function SyncCard({ sync }: { sync: Record<string, SyncEntry> | null }) {
   if (!sync) {
     return (
-      <Card section="hb" chip="Sync" chipIcon={"\u{1F504}"} className="min-h-0">
+      <Card section="hb" chip="Sync" chipIcon={<Icon name="refresh" size={16} />} className="min-h-0">
         <div className="flex-1 flex items-center justify-center">
           <span className="text-sm" style={{ color: "var(--ink-60)" }}>
             Sync unavailable
@@ -35,11 +37,9 @@ export default function SyncCard({ sync }: { sync: Record<string, SyncEntry> | n
   const entries = Object.entries(sync);
 
   return (
-    <Card section="hb" chip="Sync" chipIcon={"\u{1F504}"} className="min-h-0">
+    <Card section="hb" chip="Sync" chipIcon={<Icon name="refresh" size={16} />} className="min-h-0">
       {entries.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-sm" style={{ color: "var(--ink-60)" }}>
-          No sync data
-        </div>
+        <EmptyState icon="refresh" headline="No sync data" compact />
       ) : (
         <div className="flex-1 overflow-y-auto flex flex-col gap-2 min-h-0">
           {entries.map(([type, entry]) => {

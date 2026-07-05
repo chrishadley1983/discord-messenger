@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Card } from "@/components/ui/Card";
 import EventPopup from "./EventPopup";
 
@@ -125,7 +125,7 @@ function EventRow({
       </div>
       <div className="flex-1 min-w-0">
         <div
-          className={`font-semibold truncate ${large ? "text-lg" : "text-base"}`}
+          className={`font-semibold line-clamp-2 ${large ? "text-lg" : "text-base"}`}
           style={{ textDecoration: past ? "line-through" : "none" }}
         >
           {event.title}
@@ -206,6 +206,13 @@ function DayColumn({
 export default function CalendarView() {
   const [data, setData] = useState<WeekData | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<CalEvent | null>(null);
+  const restColRef = useRef<HTMLDivElement>(null);
+  const [restOverflow, setRestOverflow] = useState(false);
+
+  const checkRestOverflow = useCallback(() => {
+    const el = restColRef.current;
+    if (el) setRestOverflow(el.scrollHeight > el.clientHeight + 2);
+  }, []);
 
   const fetchCalendar = useCallback(async () => {
     try {
@@ -224,6 +231,12 @@ export default function CalendarView() {
     const t = setInterval(fetchCalendar, 10 * 60 * 1000); // 10 min
     return () => clearInterval(t);
   }, [fetchCalendar]);
+
+  useEffect(() => {
+    checkRestOverflow();
+    window.addEventListener("resize", checkRestOverflow);
+    return () => window.removeEventListener("resize", checkRestOverflow);
+  }, [data, checkRestOverflow]);
 
   if (!data) {
     return (
@@ -276,26 +289,42 @@ export default function CalendarView() {
         </div>
 
         {/* Right column — Rest of week */}
-        <div
-          className="flex-[2] min-w-0 flex flex-col gap-3 overflow-y-auto"
-          style={{ paddingBottom: 24 }}
-        >
-          {restDates.length === 0 ? (
-            <Card section="calendar" className="flex-1 flex items-center justify-center">
-              <EmptyState text="Rest of the week is wide open! 🎉" />
-            </Card>
-          ) : (
-            restDates.map((dateStr) => (
-              <DayColumn
-                key={dateStr}
-                dateStr={dateStr}
-                events={data.events_by_day[dateStr] || []}
-                isMain={false}
-                standalone={false}
-                emptyText="Nothing scheduled"
-                onSelectEvent={setSelectedEvent}
-              />
-            ))
+        <div className="flex-[2] min-w-0 flex flex-col relative">
+          <div
+            ref={restColRef}
+            onScroll={checkRestOverflow}
+            className="flex-1 min-h-0 flex flex-col gap-3 overflow-y-auto"
+            style={{ paddingBottom: 24 }}
+          >
+            {restDates.length === 0 ? (
+              <Card section="calendar" className="flex-1 flex items-center justify-center">
+                <EmptyState text="Rest of the week is wide open! 🎉" />
+              </Card>
+            ) : (
+              restDates.map((dateStr) => (
+                <DayColumn
+                  key={dateStr}
+                  dateStr={dateStr}
+                  events={data.events_by_day[dateStr] || []}
+                  isMain={false}
+                  standalone={false}
+                  emptyText="Nothing scheduled"
+                  onSelectEvent={setSelectedEvent}
+                />
+              ))
+            )}
+          </div>
+          {restOverflow && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute bottom-0 left-0 right-0 flex items-end justify-center"
+              style={{
+                height: 44,
+                background: "linear-gradient(to bottom, transparent, var(--surface))",
+              }}
+            >
+              <span style={{ color: "var(--ink-30)", fontSize: 18, lineHeight: 1, marginBottom: 4 }}>▾</span>
+            </div>
           )}
         </div>
       </div>

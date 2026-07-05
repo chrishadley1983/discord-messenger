@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import SensorHistoryPopup from "./SensorHistoryPopup";
 import { Card } from "../ui/Card";
+import Icon from "../ui/Icon";
 
 interface SensorReading {
   temperature: number | null;
@@ -17,9 +18,9 @@ interface SensorResponse {
   sensors: Record<string, SensorReading>;
 }
 
-const SENSOR_CONFIG: { key: string; label: string; color: string }[] = [
-  { key: "sensor_kitchen", label: "Kitchen", color: "var(--warn)" },
-  { key: "sensor_bedroom", label: "Bedroom", color: "var(--calendar)" },
+const SENSOR_CONFIG: { key: string; label: string }[] = [
+  { key: "sensor_kitchen", label: "Kitchen" },
+  { key: "sensor_bedroom", label: "Bedroom" },
 ];
 
 export default function SensorWidget() {
@@ -49,7 +50,7 @@ export default function SensorWidget() {
       <Card
         section="calendar"
         chip="Sensors"
-        chipIcon="🌡️"
+        chipIcon={<Icon name="thermometer" size={16} />}
         onClick={() => setShowHistory(true)}
         headerRight={<span className="text-[13px] font-semibold text-ink/40">History ▸</span>}
       >
@@ -67,7 +68,7 @@ export default function SensorWidget() {
                 </div>
                 <div
                   className="font-bold"
-                  style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 26, color: cfg.color }}
+                  style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 26, color: "var(--ink)" }}
                 >
                   {s?.temperature ?? "--"}
                   <span className="text-base">°C</span>

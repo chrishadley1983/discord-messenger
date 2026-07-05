@@ -1,6 +1,7 @@
 "use client";
 
 import { Card } from "../ui/Card";
+import Icon from "../ui/Icon";
 
 interface Transaction {
   id: string;
@@ -55,14 +56,14 @@ export default function BalanceCard({ child, balance, onAddMoney, onViewHistory,
         </span>
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col p-4">
+      <div className="flex-1 min-h-0 flex flex-col px-4 py-3">
         {/* Big balance */}
         <div className="flex-1 flex items-center justify-center">
           <span
             style={{
               fontFamily: "var(--font-display), sans-serif",
               fontWeight: 800,
-              fontSize: 52,
+              fontSize: 44,
               color: config.color,
               fontVariantNumeric: "tabular-nums",
               animation: "coinBounce 0.4s ease",
@@ -75,9 +76,9 @@ export default function BalanceCard({ child, balance, onAddMoney, onViewHistory,
         {/* Weekly Grid button */}
         <button
           onClick={onViewGrid}
-          className="pressable mb-3 w-full rounded-2xl font-bold cursor-pointer flex items-center justify-center gap-2"
+          className="pressable mb-2 w-full rounded-2xl font-bold cursor-pointer flex items-center justify-center gap-2 shrink-0"
           style={{
-            height: 64,
+            height: 56,
             fontSize: 16,
             border: "2px solid var(--ink)",
             color: config.color,
@@ -85,16 +86,16 @@ export default function BalanceCard({ child, balance, onAddMoney, onViewHistory,
             boxShadow: "3px 3px 0 var(--ink-08)",
           }}
         >
-          {"\u{1F4CB}"} Weekly Grid
+          <Icon name="clipboard" size={18} /> Weekly Grid
         </button>
 
         {/* Action buttons */}
-        <div className="flex gap-3">
+        <div className="flex gap-3 shrink-0">
           <button
             onClick={onAddMoney}
             className="pressable flex-1 rounded-2xl font-bold cursor-pointer"
             style={{
-              height: 64,
+              height: 56,
               fontSize: 16,
               background: config.color,
               color: "white",
@@ -106,9 +107,9 @@ export default function BalanceCard({ child, balance, onAddMoney, onViewHistory,
           </button>
           <button
             onClick={onViewHistory}
-            className="pressable flex-1 rounded-2xl font-bold cursor-pointer"
+            className="pressable flex-1 rounded-2xl font-bold cursor-pointer flex items-center justify-center gap-2"
             style={{
-              height: 64,
+              height: 56,
               fontSize: 16,
               border: "2px solid var(--ink)",
               color: config.color,
@@ -116,7 +117,7 @@ export default function BalanceCard({ child, balance, onAddMoney, onViewHistory,
               boxShadow: "3px 3px 0 var(--ink-08)",
             }}
           >
-            History
+            <Icon name="history" size={18} /> History
           </button>
         </div>
       </div>

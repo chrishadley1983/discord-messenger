@@ -1,6 +1,7 @@
 "use client";
 
 import { Card } from "@/components/ui/Card";
+import Icon from "@/components/ui/Icon";
 
 interface MetricsData {
   listedValue: number;
@@ -52,7 +53,7 @@ function ProgressRow({ label, current, target }: { label: string; current: numbe
 export default function TargetsCard({ metrics }: { metrics: MetricsData | null }) {
   if (!metrics) {
     return (
-      <Card section="hb" chip="Targets" chipIcon={"\u{1F3AF}"} className="min-h-0">
+      <Card section="hb" chip="Targets" chipIcon={<Icon name="target" size={16} />} className="min-h-0">
         <div className="flex-1 flex items-center justify-center">
           <span className="text-sm" style={{ color: "var(--ink-60)" }}>
             Targets unavailable
@@ -72,7 +73,7 @@ export default function TargetsCard({ metrics }: { metrics: MetricsData | null }
     <Card
       section="hb"
       chip="This Week"
-      chipIcon={"\u{1F3AF}"}
+      chipIcon={<Icon name="target" size={16} />}
       className="min-h-0"
       headerRight={
         <span className="text-sm font-semibold" style={{ color: "var(--ink-60)" }}>

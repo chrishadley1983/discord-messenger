@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card } from "../ui/Card";
 import Takeover from "../ui/Takeover";
+import Icon from "../ui/Icon";
 
 const SLEEP_START = 20;
 const SLEEP_END = 7;
@@ -330,33 +331,61 @@ export default function PetWidget() {
 
   return (
     <>
-      <Card
-        section="kids"
-        chip="Pets"
-        chipIcon="🐾"
-        onClick={() => setShowPlayground(true)}
-        headerRight={
-          sleeping ? <span className="text-[13px] text-ink/50">💤 Sleeping</span> : undefined
+      <div className="pet-widget-chip-rotate h-full flex flex-col min-h-0">
+        <Card
+          section="kids"
+          chip="Pets"
+          chipIcon={<Icon name="paw" size={16} />}
+          className="flex-1 min-h-0"
+          onClick={() => setShowPlayground(true)}
+          headerRight={
+            sleeping ? <span className="text-[13px] text-ink/50">💤 Sleeping</span> : undefined
+          }
+        >
+          {loading ? (
+            <div className="flex items-center justify-center py-4">
+              <span className="text-2xl">🥚</span>
+            </div>
+          ) : !hasPets ? (
+            <div
+              className="flex-1 flex flex-col items-center justify-center text-center py-3 rounded-2xl"
+              style={{
+                backgroundImage: "radial-gradient(circle, var(--kids-tint) 1.5px, transparent 1.5px)",
+                backgroundSize: "28px 28px",
+              }}
+            >
+              <div
+                className="flex items-center justify-center mb-2"
+                style={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: "50%",
+                  background: "#fff",
+                  border: "2px solid var(--ink)",
+                  boxShadow: "3px 3px 0 var(--ink-08)",
+                  transform: "rotate(2deg)",
+                  fontSize: 34,
+                }}
+              >
+                🥚
+              </div>
+              <p className="text-sm text-ink/50 mt-1">Tap to hatch a pet!</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {pets.max && <PetMiniCard pet={pets.max} sleeping={sleeping} />}
+              {pets.emmie && (
+                <PetMiniCard pet={pets.emmie} sleeping={sleeping} />
+              )}
+            </div>
+          )}
+        </Card>
+      </div>
+      <style jsx global>{`
+        .pet-widget-chip-rotate .chip-v2 {
+          transform: rotate(-1.5deg);
         }
-      >
-        {loading ? (
-          <div className="flex items-center justify-center py-4">
-            <span className="text-2xl">🥚</span>
-          </div>
-        ) : !hasPets ? (
-          <div className="text-center py-3">
-            <span className="text-3xl">🥚</span>
-            <p className="text-sm text-ink/50 mt-1">Tap to hatch a pet!</p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {pets.max && <PetMiniCard pet={pets.max} sleeping={sleeping} />}
-            {pets.emmie && (
-              <PetMiniCard pet={pets.emmie} sleeping={sleeping} />
-            )}
-          </div>
-        )}
-      </Card>
+      `}</style>
 
       {showPlayground && (
         <Takeover onClose={() => setShowPlayground(false)} accent="var(--kids)" title="Pet Pals">

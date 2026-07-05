@@ -1,21 +1,22 @@
 "use client";
 
 import { Card } from "@/components/ui/Card";
+import Icon, { type IconName } from "@/components/ui/Icon";
 
 const HB_URL = "https://hadley-bricks-inventory-management.vercel.app";
 
-const ACTIONS = [
-  { label: "Workflow", icon: "\u{1F4CB}", path: "/workflow" },
-  { label: "Inventory", icon: "\u{1F4E6}", path: "/inventory" },
-  { label: "New Listing", icon: "\u{2795}", path: "/inventory/new" },
-  { label: "Orders", icon: "\u{1F6D2}", path: "/orders" },
-  { label: "Reports", icon: "\u{1F4CA}", path: "/reports" },
-  { label: "Settings", icon: "\u{2699}", path: "/settings" },
+const ACTIONS: { label: string; icon: IconName; path: string }[] = [
+  { label: "Workflow", icon: "clipboard", path: "/workflow" },
+  { label: "Inventory", icon: "package", path: "/inventory" },
+  { label: "New Listing", icon: "plus", path: "/inventory/new" },
+  { label: "Orders", icon: "cart", path: "/orders" },
+  { label: "Reports", icon: "chart", path: "/reports" },
+  { label: "Settings", icon: "gear", path: "/settings" },
 ];
 
 export default function QuickActions() {
   return (
-    <Card section="hb" chip="Quick Actions" chipIcon={"⚡"} className="min-h-0">
+    <Card section="hb" chip="Quick Actions" chipIcon={<Icon name="zap" size={16} />} className="min-h-0">
       <div className="flex-1 grid grid-cols-3 gap-2.5 content-start min-h-0">
         {ACTIONS.map((a) => (
           <a
@@ -32,7 +33,7 @@ export default function QuickActions() {
               boxShadow: "3px 3px 0 var(--ink-08)",
             }}
           >
-            <span className="text-2xl">{a.icon}</span>
+            <Icon name={a.icon} size={22} style={{ color: "var(--hb)" }} />
             <span className="text-sm font-semibold text-center" style={{ color: "var(--ink)" }}>
               {a.label}
             </span>

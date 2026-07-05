@@ -8,6 +8,7 @@
 import { useEffect, useState, useCallback } from "react";
 import DashboardShell from "@/components/DashboardShell";
 import { Card } from "@/components/ui/Card";
+import Icon from "@/components/ui/Icon";
 
 /* ---------- shared bits ---------- */
 
@@ -64,8 +65,8 @@ function ActionButton({
         minHeight: 64,
         borderRadius: 16,
         border: "2px solid var(--ink)",
-        background: variant === "solid" ? "var(--control)" : "var(--surface)",
-        color: "var(--ink)",
+        background: variant === "solid" ? "var(--ink)" : "var(--surface)",
+        color: variant === "solid" ? "#fff" : "var(--ink)",
         fontFamily: "var(--font-display), sans-serif",
         fontWeight: 700,
         fontSize: 15,
@@ -135,7 +136,7 @@ function ScreenCard() {
   const label = data ? (isActive ? "Active" : data.state === "dim" ? "Dim" : data.state) : "…";
 
   return (
-    <Card section="control" chip="Screen" chipIcon="🖥️" headerRight={<StatusBadge tone={tone}>{label}</StatusBadge>}>
+    <Card section="control" chip="Screen" chipIcon={<Icon name="monitor" size={16} />} headerRight={<StatusBadge tone={tone}>{label}</StatusBadge>}>
       <div className="flex-1 flex flex-col justify-center gap-1 mb-4">
         <span className="text-sm" style={{ color: "var(--ink-60)" }}>
           Idle for
@@ -153,7 +154,10 @@ function ScreenCard() {
         </span>
       </div>
       <ActionButton onClick={wake} disabled={waking}>
-        {woken ? "Woken ✓" : waking ? "Waking…" : "☀️ Wake screen"}
+        <span className="inline-flex items-center gap-2">
+          {!woken && <Icon name="sun" size={16} />}
+          {woken ? "Woken ✓" : waking ? "Waking…" : "Wake screen"}
+        </span>
       </ActionButton>
     </Card>
   );
@@ -213,13 +217,21 @@ function PlugCard() {
   };
 
   const tone: BadgeTone = !data ? "neutral" : !reachable ? "bad" : isOn ? "good" : "neutral";
-  const label = !data ? "…" : !reachable ? "Unreachable" : isOn ? "On" : "Off";
+  const label = !data ? "…" : !reachable ? "OFFLINE" : isOn ? "On" : "Off";
+
+  const handleAction = () => {
+    if (!reachable) {
+      poll();
+      return;
+    }
+    toggle();
+  };
 
   return (
-    <Card section="control" chip="Kitchen Plug" chipIcon="🔌" headerRight={<StatusBadge tone={tone}>{label}</StatusBadge>}>
+    <Card section="control" chip="Kitchen Plug" chipIcon={<Icon name="plug" size={16} />} headerRight={<StatusBadge tone={tone}>{label}</StatusBadge>}>
       <div className="flex-1 flex flex-col justify-center gap-1 mb-4">
         <span className="text-sm" style={{ color: "var(--ink-60)" }}>
-          {reachable ? data?.friendly_name || "Sonoff plug" : "Zigbee bridge unreachable"}
+          {reachable ? data?.friendly_name || "Sonoff plug" : "Can't reach the Zigbee bridge — check the hub is powered"}
         </span>
         {toggleError && (
           <span className="text-xs font-semibold" style={{ color: "var(--bad)" }}>
@@ -227,8 +239,8 @@ function PlugCard() {
           </span>
         )}
       </div>
-      <ActionButton onClick={toggle} disabled={!reachable || toggling}>
-        {toggling ? "Switching…" : !reachable ? "Unreachable" : isOn ? "Turn off" : "Turn on"}
+      <ActionButton onClick={handleAction} disabled={toggling}>
+        {toggling ? "Switching…" : !reachable ? "Retry" : isOn ? "Turn off" : "Turn on"}
       </ActionButton>
     </Card>
   );
@@ -258,14 +270,17 @@ function MediaCard() {
   };
 
   return (
-    <Card section="control" chip="Media" chipIcon="📺">
+    <Card section="control" chip="Media" chipIcon={<Icon name="tv" size={16} />}>
       <div className="flex-1 flex flex-col justify-center gap-1 mb-4">
         <span className="text-sm" style={{ color: "var(--ink-60)" }}>
           Stops Netflix, YouTube or Now TV playback on the lounge TV
         </span>
       </div>
       <ActionButton onClick={close} disabled={closing}>
-        {closed ? "Closed ✓" : closing ? "Closing…" : "⏹ Close running app"}
+        <span className="inline-flex items-center gap-2">
+          {!closed && <Icon name="stop" size={16} />}
+          {closed ? "Closed ✓" : closing ? "Closing…" : "Close running app"}
+        </span>
       </ActionButton>
     </Card>
   );
@@ -278,7 +293,7 @@ function ComingSoonCard() {
     <Card
       section="control"
       chip="Coming Soon"
-      chipIcon="✨"
+      chipIcon={<Icon name="sparkle" size={16} />}
       headerRight={
         <span
           className="inline-block"

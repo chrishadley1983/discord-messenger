@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import RecipePopup from "../meals/RecipePopup";
 import { Card } from "../ui/Card";
+import Icon from "../ui/Icon";
+import EmptyState from "../ui/EmptyState";
 
 const SOURCE_COLOURS: Record<string, { bg: string; text: string }> = {
   gousto: { bg: "#dbeafe", text: "#1d4ed8" },
@@ -114,7 +116,7 @@ export default function FoodWidget() {
 
   if (loading) {
     return (
-      <Card section="meals" chip="Today's Meals" chipIcon="🍽">
+      <Card section="meals" chip="Today's Meals" chipIcon={<Icon name="utensils" size={16} />}>
         <div className="text-base text-ink/60 text-center py-4">Loading...</div>
       </Card>
     );
@@ -122,16 +124,14 @@ export default function FoodWidget() {
 
   if (!dinner && !lunch && prepNotes.length === 0) {
     return (
-      <Card section="meals" chip="Today's Meals" chipIcon="🍽">
-        <div className="text-base text-ink/60 text-center py-4">
-          No meal plan for today
-        </div>
+      <Card section="meals" chip="Today's Meals" chipIcon={<Icon name="utensils" size={16} />}>
+        <EmptyState icon="utensils" headline="No meal plan today" compact />
       </Card>
     );
   }
 
   return (
-    <Card section="meals" chip="Today's Meals" chipIcon="🍽">
+    <Card section="meals" chip="Today's Meals" chipIcon={<Icon name="utensils" size={16} />}>
       <div className="flex flex-col gap-2">
         {/* Prep notes from today's meals */}
         {prepNotes.map((note, i) => (

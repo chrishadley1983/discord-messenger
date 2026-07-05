@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import EventPopup from "../calendar/EventPopup";
 import { Card } from "../ui/Card";
+import Icon from "../ui/Icon";
 
 const PERSON_COLOURS: Record<string, string> = {
   Chris: "#c47f0a",
@@ -57,11 +58,15 @@ export default function EventsWidget() {
 
   const fetchEvents = useCallback(async () => {
     try {
-      const res = await fetch("/api/calendar?view=today");
+      // Fetch the same week window the Calendar screen uses, then derive
+      // today's events client-side — keeps the two screens agreed on
+      // times/past-status instead of trusting a separate ?view=today path.
+      const res = await fetch("/api/calendar?view=week");
       if (res.ok) {
         const data = await res.json();
-        if (data.events) {
-          setEvents(data.events);
+        if (data.events_by_day) {
+          const todayStr = new Date().toISOString().slice(0, 10);
+          setEvents(data.events_by_day[todayStr] || []);
         }
       }
     } catch {
@@ -79,7 +84,7 @@ export default function EventsWidget() {
 
   return (
     <>
-      <Card section="calendar" chip="Today's Events" chipIcon="📅" className="flex-1 min-h-0">
+      <Card section="calendar" chip="Today's Events" chipIcon={<Icon name="calendar" size={16} />} className="flex-1 min-h-0">
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col gap-2">
           {loading ? (
             <div className="text-base text-ink/60 text-center py-4">

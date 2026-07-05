@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Card } from "../ui/Card";
+import Icon from "../ui/Icon";
 
 interface EnergyData {
   status: string;
@@ -67,7 +68,7 @@ export default function EnergyWidget() {
     <Card
       section="control"
       chip="Energy"
-      chipIcon="⚡"
+      chipIcon={<Icon name="zap" size={16} />}
       headerRight={
         data?.dateLabel ? (
           <span className="text-[13px] font-semibold text-ink/50">{data.dateLabel}</span>

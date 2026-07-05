@@ -1,6 +1,8 @@
 "use client";
 
 import { Card } from "@/components/ui/Card";
+import Icon from "@/components/ui/Icon";
+import EmptyState from "@/components/ui/EmptyState";
 
 interface PnlMonth {
   month: string;
@@ -100,18 +102,14 @@ function StudStrip() {
 export default function PnlCard({ pnl }: { pnl: PnlData | null }) {
   if (!pnl) {
     return (
-      <Card section="hb" chip="Profit & Loss" chipIcon={"\u{1F4B0}"} className="min-h-0">
-        <div className="flex-1 flex items-center justify-center">
-          <span className="text-sm" style={{ color: "var(--ink-60)" }}>
-            P&L unavailable
-          </span>
-        </div>
+      <Card section="hb" chip="Profit & Loss" chipIcon={<Icon name="coins" size={16} />} className="min-h-0">
+        <EmptyState icon="coins" headline="P&L unavailable" compact />
       </Card>
     );
   }
 
   return (
-    <Card section="hb" chip="Profit & Loss" chipIcon={"\u{1F4B0}"} className="min-h-0">
+    <Card section="hb" chip="Profit & Loss" chipIcon={<Icon name="coins" size={16} />} className="min-h-0">
       <div className="flex-1 flex gap-4 min-h-0">
         <PnlColumn data={pnl.lastMonth} label={monthLabel(pnl.lastMonth.month)} />
         <div className="w-px" style={{ background: "var(--ink-12)" }} />

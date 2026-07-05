@@ -135,7 +135,7 @@ export default function Header() {
         style={{
           border: "2px solid var(--ink)",
           borderRadius: 18,
-          background: "var(--home-tint)",
+          background: "var(--surface)",
           padding: "6px 16px",
           minHeight: 56,
           boxShadow: "3px 3px 0 var(--ink-08)",

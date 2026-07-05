@@ -8,21 +8,22 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { CSSProperties } from "react";
+import Icon, { type IconName } from "./ui/Icon";
 
 const NAV_ITEMS: {
   href: string;
-  icon: string;
+  icon: IconName;
   label: string;
   color: string;
   inkText?: boolean;
 }[] = [
-  { href: "/", icon: "🏠", label: "Home", color: "var(--home)", inkText: true },
-  { href: "/calendar", icon: "📅", label: "Calendar", color: "var(--calendar)" },
-  { href: "/meals", icon: "🍽", label: "Meals", color: "var(--meals)" },
-  { href: "/kids", icon: "🎒", label: "Kids", color: "var(--kids)" },
-  { href: "/media", icon: "🎬", label: "Media", color: "var(--media)" },
-  { href: "/control", icon: "💡", label: "Control", color: "var(--control)", inkText: true },
-  { href: "/chris", icon: "🧱", label: "HB", color: "var(--hb)" },
+  { href: "/", icon: "home", label: "Home", color: "var(--home)", inkText: true },
+  { href: "/calendar", icon: "calendar", label: "Calendar", color: "var(--calendar)" },
+  { href: "/meals", icon: "utensils", label: "Meals", color: "var(--meals)" },
+  { href: "/kids", icon: "backpack", label: "Kids", color: "var(--kids)" },
+  { href: "/media", icon: "film", label: "Media", color: "var(--media)" },
+  { href: "/control", icon: "bulb", label: "Control", color: "var(--control)", inkText: true },
+  { href: "/chris", icon: "brick", label: "HB", color: "var(--hb)" },
 ];
 
 export default function BottomNav() {
@@ -67,7 +68,7 @@ export default function BottomNav() {
               ...style,
             }}
           >
-            <span className="text-xl leading-none">{item.icon}</span>
+            <Icon name={item.icon} size={22} />
             <span>{item.label}</span>
           </Link>
         );

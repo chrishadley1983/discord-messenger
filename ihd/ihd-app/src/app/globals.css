@@ -33,8 +33,9 @@
   --hb: #D01012;
   --hb-tint: #FBE2E2;
 
-  /* Status */
-  --good: #06D6A0;
+  /* Status — --good is deliberately DISTINCT from --control mint so the
+     Control screen's chip / status / CTA don't collapse into one wash */
+  --good: #1AA053;
   --warn: #FFB703;
   --bad: #EF4444;
 

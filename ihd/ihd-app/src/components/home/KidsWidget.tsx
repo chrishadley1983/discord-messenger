@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Card } from "../ui/Card";
 import Takeover from "../ui/Takeover";
+import Icon from "../ui/Icon";
+import EmptyState from "../ui/EmptyState";
 
 const CHILD_COLOURS: Record<string, string> = {
   Emmie: "#7040b8",
@@ -224,7 +226,7 @@ export default function KidsWidget() {
 
   if (loading) {
     return (
-      <Card section="kids" chip="Kids Learning" chipIcon="🎒" className="flex-1 min-h-0">
+      <Card section="kids" chip="Kids Learning" chipIcon={<Icon name="backpack" size={16} />} className="flex-1 min-h-0">
         <div className="text-base text-ink/60 text-center py-4">Loading...</div>
       </Card>
     );
@@ -232,7 +234,7 @@ export default function KidsWidget() {
 
   if (!data) {
     return (
-      <Card section="kids" chip="Kids Learning" chipIcon="🎒" className="flex-1 min-h-0">
+      <Card section="kids" chip="Kids Learning" chipIcon={<Icon name="backpack" size={16} />} className="flex-1 min-h-0">
         <div className="text-base text-ink/60 text-center py-4">No data</div>
       </Card>
     );
@@ -273,7 +275,7 @@ export default function KidsWidget() {
 
   return (
     <>
-      <Card section="kids" chip="Kids Learning" chipIcon="🎒" className="flex-1 min-h-0"
+      <Card section="kids" chip="Kids Learning" chipIcon={<Icon name="backpack" size={16} />} className="flex-1 min-h-0"
         headerRight={<span className="text-sm text-ink/60 font-semibold">Week {data.weekNumber}</span>}
       >
         {/* Two-column: one per child */}
@@ -287,6 +289,10 @@ export default function KidsWidget() {
               >
                 {name}
               </div>
+
+              {slots.length === 0 && !spelling && (
+                <EmptyState icon="backpack" headline="Nothing set today" compact />
+              )}
 
               {/* Today's practice — show allocated papers if available, fallback to schedule slots */}
               {slots.length > 0 && (() => {
@@ -392,10 +398,6 @@ export default function KidsWidget() {
             </div>
           ))}
         </div>
-
-        {data.spellings.length === 0 && (
-          <div className="text-sm text-ink/40 text-center py-2">No spellings this week</div>
-        )}
       </Card>
 
       {iframeUrl && (

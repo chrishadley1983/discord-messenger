@@ -8,6 +8,7 @@
 
 import { useState } from "react";
 import { SectionChip } from "@/components/ui/Card";
+import Icon from "@/components/ui/Icon";
 
 function NetflixLogo({ size = 48 }: { size?: number }) {
   return (
@@ -108,7 +109,7 @@ export default function MediaView() {
   return (
     <div className="h-full flex flex-col items-center justify-center gap-10 stagger-in">
       <div className="flex flex-col items-center gap-2">
-        <SectionChip section="media" icon="📺">
+        <SectionChip section="media" icon={<Icon name="tv" size={16} />}>
           Media
         </SectionChip>
         <span className="text-sm" style={{ color: "var(--ink-60)" }}>
