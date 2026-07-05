@@ -7,7 +7,8 @@
  * - single-modal rule via ModalManager
  */
 
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useModalManager } from "./ModalManager";
 
 interface ModalProps {
@@ -30,7 +31,9 @@ export default function Modal({
   const id = useId();
   const backdropRef = useRef<HTMLDivElement>(null);
   const { register } = useModalManager();
+  const [mounted, setMounted] = useState(false);
 
+  useEffect(() => setMounted(true), []);
   useEffect(() => register(id, onClose), [id, onClose, register]);
 
   useEffect(() => {
@@ -41,7 +44,9 @@ export default function Modal({
     return () => document.removeEventListener("keydown", h);
   }, [onClose]);
 
-  return (
+  // Portal to <body>: immune to transformed-ancestor containing blocks
+  if (!mounted) return null;
+  return createPortal(
     <div
       ref={backdropRef}
       className="fixed inset-0 flex items-center justify-center"
@@ -114,6 +119,7 @@ export default function Modal({
           {children}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -11,7 +11,8 @@
  * - body fills the rest; iframes/games live INSIDE the body
  */
 
-import { useEffect, useId, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useModalManager } from "./ModalManager";
 
 interface TakeoverProps {
@@ -36,7 +37,9 @@ export default function Takeover({
 }: TakeoverProps) {
   const id = useId();
   const { register } = useModalManager();
+  const [mounted, setMounted] = useState(false);
 
+  useEffect(() => setMounted(true), []);
   useEffect(() => register(id, onClose), [id, onClose, register]);
 
   useEffect(() => {
@@ -47,7 +50,10 @@ export default function Takeover({
     return () => document.removeEventListener("keydown", h);
   }, [onClose]);
 
-  return (
+  // Portal to <body>: position:fixed is otherwise trapped by any transformed
+  // ancestor (e.g. a stagger-animated card) — E2E finding.
+  if (!mounted) return null;
+  return createPortal(
     <div
       className="fixed inset-0 flex flex-col"
       style={{
@@ -94,6 +100,7 @@ export default function Takeover({
       </div>
       {/* Body */}
       <div className="flex-1 min-h-0 relative">{children}</div>
-    </div>
+    </div>,
+    document.body
   );
 }

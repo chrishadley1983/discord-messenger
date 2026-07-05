@@ -39,7 +39,10 @@ interface WeatherData {
 }
 
 export default function Header() {
-  const [now, setNow] = useState(new Date());
+  // null until mounted: rendering new Date() during SSR/prerender bakes the
+  // build-time clock into the HTML and causes React hydration error #418
+  // (E2E finding — server HTML never matches the client's current time).
+  const [now, setNow] = useState<Date | null>(null);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [showForecast, setShowForecast] = useState(false);
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
@@ -56,6 +59,7 @@ export default function Header() {
   }, []);
 
   useEffect(() => {
+    setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
@@ -66,13 +70,12 @@ export default function Header() {
     return () => clearInterval(t);
   }, [fetchWeather]);
 
-  const hours = now.getHours().toString().padStart(2, "0");
-  const minutes = now.getMinutes().toString().padStart(2, "0");
-  const dayStr = now.toLocaleDateString("en-GB", { weekday: "long" });
-  const dateStr = now.toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "long",
-  });
+  const hours = now ? now.getHours().toString().padStart(2, "0") : "--";
+  const minutes = now ? now.getMinutes().toString().padStart(2, "0") : "--";
+  const dayStr = now ? now.toLocaleDateString("en-GB", { weekday: "long" }) : "";
+  const dateStr = now
+    ? now.toLocaleDateString("en-GB", { day: "numeric", month: "long" })
+    : "";
 
   const w = weather || {
     temp: "--" as unknown as number,

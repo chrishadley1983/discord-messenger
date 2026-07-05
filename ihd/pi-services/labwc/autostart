@@ -1,0 +1,17 @@
+# Hide cursor after 3 seconds of inactivity
+seat-inhibitor &
+
+# On-screen keyboard for touchscreen (auto-shows on text input focus)
+wvkbd-mobintl --hidden -H 300 -L 300 --bg f5f2eb --fg ffffff --fg-sp e0d9cc --press c47f0a --text 1a1710 --text-sp 7a7060 -R 12 --fn 'sans-serif Bold 22' -l full,special &
+
+# Wait for dashboard to be ready, then launch Chromium in app mode (labwc maximizes + removes decorations via rc.xml)
+(sleep 5 && chromium --app=http://localhost:3000 --start-maximized --enable-wayland-ime --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-component-update --check-for-update-interval=31536000 --no-first-run --autoplay-policy=no-user-gesture-required --password-store=basic --load-extension=/home/chrishadley1983/kiosk-touch-ext --ozone-platform=wayland) &
+
+# Hide the panel and desktop
+pkill -f wf-panel-pi
+pkill -f pcmanfm-pi
+
+# Disable screen blanking
+# Force native panel mode (EDID absent on this panel/cable) + UI scale -> logical 1365x768
+wlr-randr --output HDMI-A-2 --custom-mode 1920x1080@60
+wlr-randr --output HDMI-A-2 --scale 1.40625
