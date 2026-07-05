@@ -67,6 +67,8 @@ from the channel tag. This holds no matter how many other tools you called first
 FINAL action is always a \`reply\` call — never a plain-text answer. Before ending your
 turn, check yourself: "Did I deliver my answer via \`reply\`?" If the answer is sitting
 in plain text instead of a \`reply\` call, you have NOT answered the user — call \`reply\` now.
+Put your COMPLETE answer inside the \`reply\` tool's \`text\` argument. Do NOT write the
+answer as plain text and then call \`reply\` with empty text — that delivers nothing.
 
 You are Peter, the Hadley family assistant. When replying via Discord:
 - No markdown tables (Discord cannot render them) — use bullet lists instead
@@ -106,6 +108,7 @@ const messageStartTime = new Map<string, number>();
 // Message volume tracking for cost visibility
 let messagesIn = 0;   // Messages received from Discord
 let messagesOut = 0;  // Messages sent via reply tool
+let messagesEmptyRejected = 0;  // reply calls rejected for empty text (dropped-answer signal)
 const sessionStart = new Date().toISOString();
 
 // Hadley API base URL (accessible from WSL via host gateway)
@@ -137,7 +140,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "reply",
       description:
-        "Send your response to the user in the Discord channel. This is the ONLY way to reach the user — any text you write outside this tool is invisible to them. You MUST call this to deliver every response, including (and especially) after using other tools such as web search: end the turn with this call rather than a plain-text answer. Handles chunking for messages over 2000 characters automatically.",
+        "Send your response to the user in the Discord channel. This is the ONLY way to reach the user — any text you write outside this tool is invisible to them. You MUST call this to deliver every response, including (and especially) after using other tools such as web search: end the turn with this call rather than a plain-text answer. The `text` argument MUST contain your COMPLETE answer — never call this with empty or whitespace text; an empty call delivers nothing and is rejected as an error. Handles chunking for messages over 2000 characters automatically.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -167,7 +170,26 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   };
 
   if (!text || text.trim().length === 0) {
-    return { content: [{ type: "text" as const, text: "empty message, skipped" }] };
+    // The model called reply with no text — it almost always wrote the answer as
+    // plain assistant text (which the user never sees) and fired reply as an
+    // empty formality. Previously this returned success ("empty message,
+    // skipped"), so the model never learned the answer wasn't delivered and it
+    // was silently dropped (the "regular no answers" bug — incident 2026-07-05,
+    // reply completed in 17ms with messages_out stuck at 0). Return an ERROR so
+    // Claude Code feeds it back and the model resends with the real content.
+    messagesEmptyRejected++;
+    log(`reply called with EMPTY text (chat ${chat_id}) — rejecting so the model resends`);
+    return {
+      isError: true,
+      content: [{
+        type: "text" as const,
+        text:
+          "ERROR: your `reply` call had an EMPTY `text` argument, so NOTHING was " +
+          "delivered to the user. Anything you wrote as plain assistant text is " +
+          "invisible to them. Call `reply` again RIGHT NOW with your COMPLETE " +
+          `answer in the \`text\` argument (chat_id "${chat_id}").`,
+      }],
+    };
   }
 
   const channel = await discord.channels.fetch(chat_id);
@@ -624,6 +646,7 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
       session_start: sessionStart,
       messages_in: messagesIn,
       messages_out: messagesOut,
+      messages_empty_rejected: messagesEmptyRejected,
     }));
     return;
   }

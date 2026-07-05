@@ -195,10 +195,14 @@ CHANNEL_RECYCLE_GRACE_SECONDS = 120
 CHANNEL_IDLE_CLEAR_SECONDS = 2 * 3600          # 2h no inbound → recycle (primary)
 CHANNEL_MAX_TURNS_BEFORE_CLEAR = 30            # backstop: recycle after N turns…
 CHANNEL_TURN_BACKSTOP_MIN_IDLE = 300           # …but only once ≥5min quiet (between turns)
-# (name, health_port) for the user-facing conversation channels. jobs-channel is
-# excluded: its turns are independent/synchronous and it is rarely idle, so
-# recycling it risks interrupting a job for little benefit.
-IDLE_CLEAR_CHANNELS = [("peter-channel", 8104), ("whatsapp-channel", 8102)]
+# (name, health_port) for channels eligible for idle-clear. Only peter-channel:
+# it is the bloat-prone conversational session AND the only one that re-injects
+# recent Discord history on every turn (src/index.ts limit:12), so a recycle
+# there loses no active thread. whatsapp-channel is intentionally excluded — it
+# has no recent-history re-injection, so recycling it would silently drop its
+# in-Claude context. jobs-channel is excluded too (independent synchronous turns,
+# rarely idle; recycling risks interrupting a job).
+IDLE_CLEAR_CHANNELS = [("peter-channel", 8104)]
 # name -> (messages_in observed, monotonic ts when it last changed)
 _channel_activity: dict[str, tuple[int, float]] = {}
 # name -> messages_in at the last clear (turn-count backstop baseline)
@@ -351,13 +355,20 @@ def _channel_idle_clear_watchdog():
     """Recycle a conversation channel once its Claude context has bloated, so it
     stops silently dropping the reply tool (incident 2026-07-05).
 
-    Polls each channel's /health messages_in counter. A session that hasn't seen
-    a new inbound message for CHANNEL_IDLE_CLEAR_SECONDS (or has run
+    Polls each channel's /health counters. A session that hasn't seen a new
+    inbound message for CHANNEL_IDLE_CLEAR_SECONDS (or has run
     CHANNEL_MAX_TURNS_BEFORE_CLEAR turns and is momentarily quiet) is recycled by
     killing its tmux session; _launch_channel_sessions() then relaunches it with
-    fresh context. Only ever fires when the session is between turns, so it can't
-    interrupt a live exchange, and peter-channel re-injects the last 12 Discord
-    messages on the next turn so the active thread survives the reset.
+    fresh context, and peter-channel re-injects the last 12 Discord messages on
+    the next turn so the active thread survives the reset.
+
+    Mid-turn safety: 'idle' is derived from messages_in, which increments on
+    message ARRIVAL, not turn completion — so a single long tool-heavy turn looks
+    idle. To guarantee we never SIGKILL an in-flight turn, we additionally require
+    messages_in == messages_out (every received message has been replied to → no
+    reply pending). While a turn runs, in > out, so recycling is skipped. We also
+    skip when nothing has accumulated since the last clear (turns_since_clear==0),
+    which stops a perpetually-idle fresh session from being recycled every 2h.
     """
     import json
     import subprocess
@@ -376,8 +387,11 @@ def _channel_idle_clear_watchdog():
             # doesn't reset the idle clock) and let the health watchdog heal it.
             continue
 
+        if "messages_in" not in data or "messages_out" not in data:
+            continue  # malformed health — skip rather than misread a 0
         try:
-            messages_in = int(data.get("messages_in", 0))
+            messages_in = int(data["messages_in"])
+            messages_out = int(data["messages_out"])
         except (TypeError, ValueError):
             continue
 
@@ -388,8 +402,16 @@ def _channel_idle_clear_watchdog():
             _channel_clear_baseline.setdefault(name, messages_in)
             continue
 
+        # Never recycle while a turn is in flight (a received message has no reply
+        # yet). This is the guard that makes a long single turn safe to leave
+        # alone even though messages_in has gone static.
+        if messages_in != messages_out:
+            continue
+
         idle = now - prev[1]
         turns_since_clear = messages_in - _channel_clear_baseline.get(name, messages_in)
+        if turns_since_clear <= 0:
+            continue  # nothing accumulated since last clear — no bloat to reset
 
         reason = None
         if idle >= CHANNEL_IDLE_CLEAR_SECONDS:
