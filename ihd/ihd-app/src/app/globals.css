@@ -162,9 +162,12 @@ body {
   border: 2px solid var(--ink);
 }
 
-/* Staggered mount: add .stagger-in to a container; direct children animate in */
+/* Staggered mount: add .stagger-in to a container; direct children animate in.
+   fill-mode backwards (NOT both): a forwards/both fill leaves a computed
+   transform on the card forever, which turns it into a containing block and
+   traps position:fixed takeovers inside the card (E2E finding). */
 .stagger-in > * {
-  animation: cardIn 300ms ease-out both;
+  animation: cardIn 300ms ease-out backwards;
 }
 .stagger-in > *:nth-child(1) { animation-delay: 0ms; }
 .stagger-in > *:nth-child(2) { animation-delay: 60ms; }
