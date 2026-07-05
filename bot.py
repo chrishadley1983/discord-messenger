@@ -177,6 +177,33 @@ _ready_initialized = False  # Guard against multiple on_ready calls
 _channel_last_relaunch: dict[str, float] = {}
 CHANNEL_RECYCLE_GRACE_SECONDS = 120
 
+# Idle auto-clear: recycle a conversation channel whose Claude Code context has
+# bloated so it stops silently dropping the reply-tool call. A single long-lived
+# session accumulates context across days (observed 259k tokens / 39 turns before
+# replies started slipping — incident 2026-07-05); the bigger the context, the
+# more often the model ends a turn without calling the `reply` tool. A recycle
+# resets it. Safe because peter-channel re-injects the last 12 Discord messages
+# on every turn (src/index.ts), so a clear drops only the stale long tail, not
+# the active thread — and the smart-fallback in bot.py answers anything that
+# lands during the ~cold-start gap via router_v2.
+#
+# Trigger is idle-first (clear at a natural conversation boundary, never mid-
+# thread) with a turn-count backstop for a busy day that never goes fully idle.
+# These channels share one Claude session across their Discord channels, so
+# "idle" means the whole session saw no inbound message — tracked via the
+# monotonic messages_in counter on /health (no per-message TS plumbing needed).
+CHANNEL_IDLE_CLEAR_SECONDS = 2 * 3600          # 2h no inbound → recycle (primary)
+CHANNEL_MAX_TURNS_BEFORE_CLEAR = 30            # backstop: recycle after N turns…
+CHANNEL_TURN_BACKSTOP_MIN_IDLE = 300           # …but only once ≥5min quiet (between turns)
+# (name, health_port) for the user-facing conversation channels. jobs-channel is
+# excluded: its turns are independent/synchronous and it is rarely idle, so
+# recycling it risks interrupting a job for little benefit.
+IDLE_CLEAR_CHANNELS = [("peter-channel", 8104), ("whatsapp-channel", 8102)]
+# name -> (messages_in observed, monotonic ts when it last changed)
+_channel_activity: dict[str, tuple[int, float]] = {}
+# name -> messages_in at the last clear (turn-count backstop baseline)
+_channel_clear_baseline: dict[str, int] = {}
+
 
 def _channel_http_healthy(name: str, port: int) -> bool:
     """Probe a channel's HTTP /health endpoint (Windows → WSL localhost forward).
@@ -295,6 +322,105 @@ def _channel_auth_watchdog():
         )
     except Exception as e:
         logger.warning(f"channel_auth watchdog tick failed: {e}")
+
+
+def _record_idle_clear(name: str, reason: str, messages_in: int):
+    """Append an idle-clear recycle event to channel_restarts.jsonl (dashboard
+    visibility). Same file the launch.sh context-exhaustion path writes to."""
+    import json
+    import time as _time
+    from datetime import datetime, timezone
+
+    events_file = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "data", "channel_restarts.jsonl"
+    )
+    try:
+        with open(events_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "channel": name,
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "reason": "idle_clear",
+                "detail": reason,
+                "messages_in": messages_in,
+            }) + "\n")
+    except Exception as e:
+        logger.debug(f"Failed to record idle-clear event for {name}: {e}")
+
+
+def _channel_idle_clear_watchdog():
+    """Recycle a conversation channel once its Claude context has bloated, so it
+    stops silently dropping the reply tool (incident 2026-07-05).
+
+    Polls each channel's /health messages_in counter. A session that hasn't seen
+    a new inbound message for CHANNEL_IDLE_CLEAR_SECONDS (or has run
+    CHANNEL_MAX_TURNS_BEFORE_CLEAR turns and is momentarily quiet) is recycled by
+    killing its tmux session; _launch_channel_sessions() then relaunches it with
+    fresh context. Only ever fires when the session is between turns, so it can't
+    interrupt a live exchange, and peter-channel re-injects the last 12 Discord
+    messages on the next turn so the active thread survives the reset.
+    """
+    import json
+    import subprocess
+    import time
+    import urllib.request
+
+    now = time.monotonic()
+    for name, port in IDLE_CLEAR_CHANNELS:
+        try:
+            with urllib.request.urlopen(
+                f"http://localhost:{port}/health", timeout=3
+            ) as r:
+                data = json.loads(r.read().decode("utf-8"))
+        except Exception:
+            # Unreachable/dead — leave idle state untouched (so a transient blip
+            # doesn't reset the idle clock) and let the health watchdog heal it.
+            continue
+
+        try:
+            messages_in = int(data.get("messages_in", 0))
+        except (TypeError, ValueError):
+            continue
+
+        prev = _channel_activity.get(name)
+        if prev is None or prev[0] != messages_in:
+            # First sighting, or activity since last poll → reset the idle clock.
+            _channel_activity[name] = (messages_in, now)
+            _channel_clear_baseline.setdefault(name, messages_in)
+            continue
+
+        idle = now - prev[1]
+        turns_since_clear = messages_in - _channel_clear_baseline.get(name, messages_in)
+
+        reason = None
+        if idle >= CHANNEL_IDLE_CLEAR_SECONDS:
+            reason = f"idle {idle / 3600:.1f}h"
+        elif (turns_since_clear >= CHANNEL_MAX_TURNS_BEFORE_CLEAR
+              and idle >= CHANNEL_TURN_BACKSTOP_MIN_IDLE):
+            reason = f"{turns_since_clear} turns since clear (quiet {idle / 60:.0f}m)"
+        if reason is None:
+            continue
+
+        logger.warning(
+            f"Idle-clear: recycling channel '{name}' ({reason}) to reset context"
+        )
+        try:
+            subprocess.run(
+                ["wsl", "bash", "-c", f"tmux kill-session -t {name} 2>/dev/null"],
+                capture_output=True, timeout=10,
+            )
+        except Exception as e:
+            logger.warning(f"Idle-clear: failed to kill '{name}': {e}")
+            continue
+        # Clear per-session state and let the launch path relaunch immediately
+        # with a fresh cold-start grace window.
+        _channel_activity.pop(name, None)
+        _channel_clear_baseline.pop(name, None)
+        _channel_last_relaunch.pop(name, None)
+        _record_idle_clear(name, reason, messages_in)
+        try:
+            _launch_channel_sessions()  # idempotent; relaunches the killed session now
+        except Exception as e:
+            logger.warning(f"Idle-clear: relaunch after recycling '{name}' failed: {e}")
 
 
 def _create_logged_task(coro, name: str = None):
@@ -481,6 +607,21 @@ async def on_ready():
         replace_existing=True,
     )
     logger.info("Channel auth watchdog registered (every 1 min)")
+
+    # Channel idle-clear watchdog — recycle a conversation channel once its
+    # Claude context bloats (2h idle, or 30-turn backstop when quiet), so it
+    # stops silently dropping the reply tool (incident 2026-07-05). Only acts
+    # between turns; peter-channel re-injects the last 12 messages so the active
+    # thread survives the reset.
+    scheduler.add_job(
+        _channel_idle_clear_watchdog,
+        "interval",
+        minutes=5,
+        id="channel_idle_clear_watchdog",
+        max_instances=1,
+        replace_existing=True,
+    )
+    logger.info("Channel idle-clear watchdog registered (every 5 min)")
 
     # WhatsApp watchdog — restart Evolution API container if it hangs (event
     # loop stalls but container stays 'Up'; no Docker healthcheck exists).

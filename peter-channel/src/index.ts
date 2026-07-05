@@ -438,11 +438,15 @@ discord.on(Events.MessageCreate, async (message) => {
 
   // Fetch recent channel history so Claude has context of what was previously
   // said in this channel — critical for replies to scheduled job output that
-  // bypasses Claude's session (posted directly via HTTP :8104).
+  // bypasses Claude's session (posted directly via HTTP :8104). Also the sole
+  // continuity bridge across an idle-clear session recycle (bot.py
+  // _channel_idle_clear_watchdog): after a recycle the session's own memory is
+  // gone, so these re-injected messages ARE the recent thread. 12 (was 6) keeps
+  // a longer tail so a clear mid-topic doesn't drop context the user relies on.
   let recentHistory = "";
   try {
     const channel = message.channel as TextChannel;
-    const history = await channel.messages.fetch({ limit: 6, before: message.id });
+    const history = await channel.messages.fetch({ limit: 12, before: message.id });
     if (history.size > 0) {
       const lines: string[] = [];
       // Reverse to chronological order (oldest first)
