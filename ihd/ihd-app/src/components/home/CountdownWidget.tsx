@@ -95,13 +95,13 @@ export default function CountdownWidget() {
                   {next.dateLabel}
                 </div>
               </div>
-              <div className="text-right shrink-0">
+              <div className="text-right shrink-0 flex items-baseline gap-1.5">
                 <span
                   className="leading-none"
                   style={{
                     fontFamily: "var(--font-display), sans-serif",
                     fontWeight: 800,
-                    fontSize: next.days === 0 ? 26 : 40,
+                    fontSize: next.days === 0 ? 24 : 34,
                     color: next.days <= 7 ? "var(--meals)" : "var(--ink)",
                     fontVariantNumeric: "tabular-nums",
                   }}
@@ -109,8 +109,8 @@ export default function CountdownWidget() {
                   {next.days === 0 ? "TODAY!" : next.days}
                 </span>
                 {next.days > 0 && (
-                  <span className="block text-xs" style={{ color: "var(--text-mid)" }}>
-                    {next.days === 1 ? "day to go" : "days to go"}
+                  <span className="text-xs" style={{ color: "var(--text-mid)" }}>
+                    {next.days === 1 ? "day" : "days"}
                   </span>
                 )}
               </div>
