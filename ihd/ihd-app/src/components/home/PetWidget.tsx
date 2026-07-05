@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { Card } from "../ui/Card";
+import Takeover from "../ui/Takeover";
+import Icon from "../ui/Icon";
 
 const SLEEP_START = 20;
 const SLEEP_END = 7;
@@ -262,18 +265,18 @@ function PetMiniCard({
       <MiniSprite species={pet.species} stage={pet.stage} mood={mood} size={48} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <p className="text-sm font-bold text-text truncate">{pet.name}</p>
-          <span className="text-xs">{moodInfo.face}</span>
+          <p className="text-base font-bold text-ink truncate">{pet.name}</p>
+          <span className="text-base">{moodInfo.face}</span>
         </div>
-        <div className="flex gap-1 mt-1">
+        <div className="flex gap-1.5 mt-1.5">
           {[
             { emoji: "🍕", val: decayed.hunger },
             { emoji: "💜", val: decayed.happiness },
             { emoji: "✨", val: decayed.cleanliness },
           ].map(({ emoji, val }) => (
-            <div key={emoji} className="flex items-center gap-0.5 flex-1">
-              <span className="text-[10px]">{emoji}</span>
-              <div className="flex-1 h-1.5 bg-surface-alt rounded-full overflow-hidden">
+            <div key={emoji} className="flex items-center gap-1 flex-1">
+              <span className="text-sm">{emoji}</span>
+              <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: "var(--surface-alt)" }}>
                 <div
                   className="h-full rounded-full transition-all"
                   style={{
@@ -328,60 +331,71 @@ export default function PetWidget() {
 
   return (
     <>
-      <div
-        onClick={() => setShowPlayground(true)}
-        className="bg-surface border border-border rounded-2xl p-4 shadow-sm cursor-pointer hover:border-accent/30 transition-all active:scale-[0.98]"
-      >
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-xs font-bold uppercase tracking-widest text-text-mid">
-            Pets
-          </div>
-          {sleeping && (
-            <span className="text-xs text-text-dim">💤 Sleeping</span>
+      <div className="pet-widget-chip-rotate h-full flex flex-col min-h-0">
+        <Card
+          section="kids"
+          chip="Pets"
+          chipIcon={<Icon name="paw" size={16} />}
+          className="flex-1 min-h-0"
+          onClick={() => setShowPlayground(true)}
+          headerRight={
+            sleeping ? <span className="text-[13px] text-ink/50">💤 Sleeping</span> : undefined
+          }
+        >
+          {loading ? (
+            <div className="flex items-center justify-center py-4">
+              <span className="text-2xl">🥚</span>
+            </div>
+          ) : !hasPets ? (
+            <div
+              className="flex-1 flex flex-col items-center justify-center text-center py-3 rounded-2xl"
+              style={{
+                backgroundImage: "radial-gradient(circle, var(--kids-tint) 1.5px, transparent 1.5px)",
+                backgroundSize: "28px 28px",
+              }}
+            >
+              <div
+                className="flex items-center justify-center mb-2"
+                style={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: "50%",
+                  background: "#fff",
+                  border: "2px solid var(--ink)",
+                  boxShadow: "3px 3px 0 var(--ink-08)",
+                  transform: "rotate(2deg)",
+                  fontSize: 34,
+                }}
+              >
+                🥚
+              </div>
+              <p className="text-sm text-ink/50 mt-1">Tap to hatch a pet!</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {pets.max && <PetMiniCard pet={pets.max} sleeping={sleeping} />}
+              {pets.emmie && (
+                <PetMiniCard pet={pets.emmie} sleeping={sleeping} />
+              )}
+            </div>
           )}
-        </div>
-
-        {loading ? (
-          <div className="flex items-center justify-center py-4">
-            <span className="text-2xl">🥚</span>
-          </div>
-        ) : !hasPets ? (
-          <div className="text-center py-3">
-            <span className="text-3xl">🥚</span>
-            <p className="text-xs text-text-dim mt-1">Tap to hatch a pet!</p>
-          </div>
-        ) : (
-          <div className="space-y-2.5">
-            {pets.max && <PetMiniCard pet={pets.max} sleeping={sleeping} />}
-            {pets.emmie && (
-              <PetMiniCard pet={pets.emmie} sleeping={sleeping} />
-            )}
-          </div>
-        )}
+        </Card>
       </div>
+      <style jsx global>{`
+        .pet-widget-chip-rotate .chip-v2 {
+          transform: rotate(-1.5deg);
+        }
+      `}</style>
 
       {showPlayground && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowPlayground(false);
-          }}
-        >
-          <button
-            onClick={() => setShowPlayground(false)}
-            className="absolute top-4 right-4 z-[60] w-12 h-12 rounded-full bg-surface shadow-lg hover:bg-surface-alt flex items-center justify-center text-text text-xl font-bold transition-all active:scale-90"
-          >
-            ✕
-          </button>
-          <div className="bg-white rounded-2xl overflow-hidden shadow-2xl" style={{ width: "70vw", height: "85vh" }}>
-            <iframe
-              src="/pets-standalone.html"
-              className="w-full h-full border-0"
-              title="Pet Playground"
-              allow="autoplay"
-            />
-          </div>
-        </div>
+        <Takeover onClose={() => setShowPlayground(false)} accent="var(--kids)" title="Pet Pals">
+          <iframe
+            src="/pets-standalone.html"
+            style={{ width: "100%", height: "100%", border: 0 }}
+            title="Pet Playground"
+            allow="autoplay"
+          />
+        </Takeover>
       )}
     </>
   );

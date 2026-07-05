@@ -2,14 +2,16 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import RecipePopup from "./RecipePopup";
+import { Card } from "../ui/Card";
+import Icon from "../ui/Icon";
+import EmptyState from "../ui/EmptyState";
 
-const SOURCE_COLOURS: Record<string, { bg: string; text: string }> = {
-  gousto: { bg: "#dbeafe", text: "#1d4ed8" },
-  familyfuel: { bg: "#fef3c7", text: "#92400e" },
-  family_fuel: { bg: "#fef3c7", text: "#92400e" },
-  homemade: { bg: "#dcfce7", text: "#166534" },
-  leftovers: { bg: "#f3e8ff", text: "#7c3aed" },
-  lunch: { bg: "#e0f2fe", text: "#0369a1" },
+const SOURCE_BADGE: Record<string, { bg: string; label: string }> = {
+  gousto: { bg: "var(--calendar-tint)", label: "Gousto" },
+  familyfuel: { bg: "var(--kids-tint)", label: "Family Fuel" },
+  family_fuel: { bg: "var(--kids-tint)", label: "Family Fuel" },
+  homemade: { bg: "var(--control-tint)", label: "Homemade" },
+  leftovers: { bg: "var(--home-tint)", label: "Leftovers" },
 };
 
 const SLOT_LABELS: Record<number, string> = { 1: "Lunch", 2: "Dinner" };
@@ -66,6 +68,50 @@ function isToday(dateStr: string): boolean {
   return dateStr === new Date().toISOString().slice(0, 10);
 }
 
+/** Mon–Sun dates for the current week — used as a fallback day-nav when no plan exists yet. */
+function getCurrentWeekDates(): string[] {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const day = now.getDay(); // 0=Sun..6=Sat
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now);
+  monday.setDate(monday.getDate() + mondayOffset);
+  const result: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    result.push(d.toISOString().slice(0, 10));
+  }
+  return result;
+}
+
+function SourceBadge({ tag }: { tag: string }) {
+  const cfg = SOURCE_BADGE[tag] || {
+    bg: "var(--surface-alt)",
+    label: tag.replace(/_/g, " "),
+  };
+  return (
+    <span
+      className="inline-block whitespace-nowrap"
+      style={{
+        background: cfg.bg,
+        color: "var(--ink)",
+        border: "2px solid var(--ink)",
+        borderRadius: 999,
+        transform: "rotate(-1.5deg)",
+        fontFamily: "var(--font-display), sans-serif",
+        fontWeight: 700,
+        fontSize: 13,
+        letterSpacing: "0.03em",
+        textTransform: "uppercase",
+        padding: "5px 12px",
+      }}
+    >
+      {cfg.label}
+    </span>
+  );
+}
+
 function MealCard({
   item,
   onRecipeClick,
@@ -73,61 +119,54 @@ function MealCard({
   item: MealItem;
   onRecipeClick: (name: string) => void;
 }) {
-  const source = SOURCE_COLOURS[item.source_tag] || {
-    bg: "#f3f4f6",
-    text: "#374151",
-  };
-  const isLeftover = item.adults_meal.toLowerCase().includes("leftover");
-
   return (
-    <button
+    <Card
+      section="meals"
+      chip={SLOT_LABELS[item.meal_slot] || `Slot ${item.meal_slot}`}
+      chipIcon={<Icon name="utensils" size={16} />}
+      headerRight={<SourceBadge tag={item.source_tag} />}
       onClick={() => onRecipeClick(item.adults_meal)}
-      className="w-full text-left bg-surface border border-border cursor-pointer p-5 rounded-2xl hover:bg-surface-alt transition-colors shadow-sm"
+      className="w-full"
     >
-      <div className="flex items-start gap-4">
-        <span className="text-3xl mt-1">
-          {isLeftover ? "♻️" : item.meal_slot === 1 ? "🥪" : "🍽"}
-        </span>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1.5">
-            <span className="text-sm font-bold uppercase text-text-dim tracking-wide">
-              {SLOT_LABELS[item.meal_slot] || `Slot ${item.meal_slot}`}
-            </span>
-            <span
-              className="inline-block px-2 py-0.5 rounded text-xs font-bold uppercase"
-              style={{ background: source.bg, color: source.text }}
-            >
-              {item.source_tag}
-            </span>
-          </div>
-          <div className="text-xl font-semibold leading-tight">
-            {item.adults_meal}
-          </div>
-          {item.kids_meal && item.kids_meal !== item.adults_meal && (
-            <div className="text-sm text-text-mid mt-1.5">
-              Kids: {item.kids_meal}
-            </div>
-          )}
-          <div className="flex items-center gap-4 mt-2 text-sm text-text-dim">
-            {formatCookTime(item.cook_time_mins) && (
-              <span>🕐 {formatCookTime(item.cook_time_mins)}</span>
-            )}
-            {item.servings && <span>👥 Serves {item.servings}</span>}
-          </div>
-          {item.notes && (
-            <div className="text-sm text-accent font-semibold mt-2">
-              ⚡ {item.notes}
-            </div>
-          )}
-        </div>
-        <span className="text-text-dim text-lg mt-1">›</span>
+      <div
+        style={{
+          fontFamily: "var(--font-display), sans-serif",
+          fontWeight: 700,
+          fontSize: 24,
+          lineHeight: 1.2,
+        }}
+      >
+        {item.adults_meal}
       </div>
-    </button>
+      {item.kids_meal && item.kids_meal !== item.adults_meal && (
+        <div className="text-base mt-1.5" style={{ color: "var(--ink-60)" }}>
+          Kids: {item.kids_meal}
+        </div>
+      )}
+      <div
+        className="flex items-center gap-4 mt-2 text-base font-semibold"
+        style={{ color: "var(--ink-60)" }}
+      >
+        {formatCookTime(item.cook_time_mins) && (
+          <span>🕐 {formatCookTime(item.cook_time_mins)}</span>
+        )}
+        {item.servings && <span>👥 Serves {item.servings}</span>}
+      </div>
+      {item.notes && (
+        <div
+          className="text-base font-bold mt-2"
+          style={{ color: "var(--meals)" }}
+        >
+          ⚡ {item.notes}
+        </div>
+      )}
+    </Card>
   );
 }
 
 export default function MealsView() {
   const [plan, setPlan] = useState<MealPlan | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedRecipe, setSelectedRecipe] = useState<string | null>(null);
   const touchStartX = useRef<number | null>(null);
@@ -142,6 +181,8 @@ export default function MealsView() {
       }
     } catch {
       // keep last known
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
@@ -160,12 +201,16 @@ export default function MealsView() {
     }
   }
   const dates = Object.keys(byDate).sort();
+  const hasPlan = dates.length > 0;
+  // When there's no plan yet, still show a full week of day-nav pills
+  // (all 7 days, today selected) rather than collapsing to one message.
+  const weekDates = hasPlan ? dates : getCurrentWeekDates();
 
   // Auto-select today on first load
   useEffect(() => {
-    if (dates.length === 0) return;
+    if (weekDates.length === 0) return;
     const todayStr = new Date().toISOString().slice(0, 10);
-    const todayIdx = dates.indexOf(todayStr);
+    const todayIdx = weekDates.indexOf(todayStr);
     if (todayIdx >= 0) setCurrentIndex(todayIdx);
   }, [plan]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -174,8 +219,8 @@ export default function MealsView() {
   }, []);
 
   const goRight = useCallback(() => {
-    setCurrentIndex((i) => Math.min(dates.length - 1, i + 1));
-  }, [dates.length]);
+    setCurrentIndex((i) => Math.min(weekDates.length - 1, i + 1));
+  }, [weekDates.length]);
 
   // Touch swipe handling
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -195,79 +240,107 @@ export default function MealsView() {
     [goLeft, goRight]
   );
 
-  if (!plan) {
+  if (!loaded) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-text-mid text-sm">Loading meal plan...</div>
+      <div className="h-full flex items-center justify-center">
+        <div
+          className="text-center"
+          style={{
+            fontFamily: "var(--font-display), sans-serif",
+            fontWeight: 700,
+            fontSize: 22,
+            color: "var(--ink-60)",
+          }}
+        >
+          Loading meal plan...
+        </div>
       </div>
     );
   }
 
-  if (dates.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-text-mid text-sm">No meal plan this week</div>
-      </div>
-    );
-  }
-
-  const currentDate = dates[currentIndex] || dates[0];
-  const currentItems = (byDate[currentDate] || []).sort(
-    (a, b) => a.meal_slot - b.meal_slot
-  );
+  const currentDate = weekDates[currentIndex] ?? weekDates[0];
+  const currentItems = hasPlan
+    ? (byDate[currentDate] || []).sort((a, b) => a.meal_slot - b.meal_slot)
+    : [];
   const today = isToday(currentDate);
 
   return (
     <div
       ref={containerRef}
-      className="h-full flex flex-col"
+      className="h-full flex flex-col stagger-in"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
-      style={{ animation: "fadeIn .2s ease both" }}
     >
       {/* Day navigation bar */}
-      <div className="flex items-center justify-between px-2 pt-3 pb-2">
+      <div className="flex items-center gap-2 pb-3 shrink-0">
         <button
           onClick={goLeft}
           disabled={currentIndex === 0}
-          className="w-10 h-10 rounded-full flex items-center justify-center text-xl bg-transparent border border-border cursor-pointer disabled:opacity-20 disabled:cursor-default hover:bg-surface-alt transition-colors"
+          aria-label="Previous day"
+          className="pressable flex items-center justify-center shrink-0"
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 16,
+            border: "2px solid var(--ink)",
+            background: "var(--surface)",
+            fontSize: 22,
+            fontWeight: 700,
+            cursor: currentIndex === 0 ? "default" : "pointer",
+            opacity: currentIndex === 0 ? 0.3 : 1,
+          }}
         >
           ‹
         </button>
 
-        {/* Day dots / labels */}
-        <div className="flex items-center gap-1.5">
-          {dates.map((d, i) => {
+        {/* Day pills */}
+        <div className="flex-1 flex items-center justify-center gap-2 overflow-x-auto">
+          {weekDates.map((d, i) => {
             const isCurrent = i === currentIndex;
             const isT = isToday(d);
+            const dt = new Date(d + "T00:00:00");
             return (
               <button
                 key={d}
                 onClick={() => setCurrentIndex(i)}
-                className="flex flex-col items-center gap-0.5 bg-transparent border-none cursor-pointer px-2 py-1 rounded-lg hover:bg-surface-alt transition-colors"
+                className="pressable flex flex-col items-center justify-center shrink-0"
+                style={{
+                  minWidth: 56,
+                  minHeight: 56,
+                  borderRadius: 16,
+                  padding: "6px 14px",
+                  background: isCurrent ? "var(--meals)" : "var(--surface)",
+                  color: isCurrent ? "#fff" : "var(--ink)",
+                  border: "2px solid var(--ink)",
+                  boxShadow: isCurrent ? "3px 3px 0 var(--ink)" : "none",
+                  cursor: "pointer",
+                }}
               >
-                <div
-                  className={`text-xs font-bold uppercase tracking-wide ${
-                    isCurrent
-                      ? isT
-                        ? "text-accent"
-                        : "text-text"
-                      : "text-text-dim"
-                  }`}
+                <span
+                  style={{
+                    fontFamily: "var(--font-display), sans-serif",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.03em",
+                    opacity: isCurrent ? 0.9 : 0.6,
+                  }}
                 >
-                  {new Date(d + "T00:00:00").toLocaleDateString("en-GB", {
-                    weekday: "short",
-                  })}
-                </div>
-                <div
-                  className={`w-2 h-2 rounded-full transition-all ${
-                    isCurrent
-                      ? isT
-                        ? "bg-accent scale-125"
-                        : "bg-text scale-125"
-                      : "bg-border"
-                  }`}
-                />
+                  {dt.toLocaleDateString("en-GB", { weekday: "short" })}
+                </span>
+                <span
+                  style={{
+                    fontFamily: "var(--font-display), sans-serif",
+                    fontSize: 18,
+                    fontWeight: 800,
+                    lineHeight: 1.2,
+                  }}
+                >
+                  {dt.getDate()}
+                  {!isCurrent && isT && (
+                    <span style={{ color: "var(--meals)" }}>•</span>
+                  )}
+                </span>
               </button>
             );
           })}
@@ -275,68 +348,100 @@ export default function MealsView() {
 
         <button
           onClick={goRight}
-          disabled={currentIndex === dates.length - 1}
-          className="w-10 h-10 rounded-full flex items-center justify-center text-xl bg-transparent border border-border cursor-pointer disabled:opacity-20 disabled:cursor-default hover:bg-surface-alt transition-colors"
+          disabled={currentIndex === weekDates.length - 1}
+          aria-label="Next day"
+          className="pressable flex items-center justify-center shrink-0"
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 16,
+            border: "2px solid var(--ink)",
+            background: "var(--surface)",
+            fontSize: 22,
+            fontWeight: 700,
+            cursor: currentIndex === weekDates.length - 1 ? "default" : "pointer",
+            opacity: currentIndex === weekDates.length - 1 ? 0.3 : 1,
+          }}
         >
           ›
         </button>
       </div>
 
       {/* Current day content */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
+      <div className="flex-1 min-h-0 overflow-y-auto pb-6">
         <div
-          className="max-w-[700px] mx-auto"
+          className="max-w-[720px] mx-auto flex flex-col gap-3 stagger-in"
           key={currentDate}
-          style={{ animation: "fadeIn .15s ease both" }}
         >
           {/* Day header */}
-          <div className="text-center mb-4">
+          <div className="text-center mb-1">
             <div
-              className={`text-2xl font-semibold ${
-                today ? "text-accent" : ""
-              }`}
+              style={{
+                fontFamily: "var(--font-display), sans-serif",
+                fontWeight: 800,
+                fontSize: 28,
+                color: today ? "var(--meals)" : "var(--ink)",
+              }}
             >
               {formatDayLabel(currentDate)}
             </div>
-            <div className="text-sm text-text-mid">
+            <div className="text-base font-semibold" style={{ color: "var(--ink-60)" }}>
               {formatDateFull(currentDate)}
             </div>
-            <div className="text-xs text-text-dim mt-1">
+            <div className="text-[13px] font-bold uppercase tracking-wide mt-1" style={{ color: "var(--ink-30)" }}>
               {currentItems.length} meal{currentItems.length !== 1 ? "s" : ""}
             </div>
           </div>
 
-          {/* Meal cards */}
-          <div className="flex flex-col gap-3">
-            {/* Notes/prep for the day */}
-            {currentItems
-              .filter((item) => item.notes)
-              .map((item) => (
-                <div
-                  key={`note-${item.id}`}
-                  className="flex items-center gap-3 p-4 rounded-2xl"
-                  style={{ background: "var(--accent-glow, #c47f0a15)" }}
-                >
-                  <span className="text-2xl">⚡</span>
-                  <div>
-                    <div className="text-xs font-bold uppercase text-accent tracking-wide">
-                      Prep
-                    </div>
-                    <div className="text-sm font-semibold mt-0.5">
-                      {item.notes}
+          {currentItems.length === 0 ? (
+            <Card section="meals" tinted className="items-center" style={{ padding: "32px 24px" }}>
+              <EmptyState
+                icon="utensils"
+                headline={hasPlan ? "No meal plan today" : "No meal plan this week"}
+                subtext={hasPlan ? undefined : "Plan one and it'll show up here."}
+              />
+            </Card>
+          ) : (
+            <>
+              {/* Notes/prep for the day */}
+              {currentItems
+                .filter((item) => item.notes)
+                .map((item) => (
+                  <div
+                    key={`note-${item.id}`}
+                    className="card-v2 flex items-center gap-3"
+                    style={{ padding: 16, background: "var(--meals-tint)" }}
+                  >
+                    <span className="text-2xl">⚡</span>
+                    <div>
+                      <div
+                        style={{
+                          fontFamily: "var(--font-display), sans-serif",
+                          fontWeight: 700,
+                          fontSize: 13,
+                          textTransform: "uppercase",
+                          letterSpacing: "0.04em",
+                          color: "var(--meals)",
+                        }}
+                      >
+                        Prep
+                      </div>
+                      <div className="text-base font-bold mt-0.5">
+                        {item.notes}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
 
-            {currentItems.map((item) => (
-              <MealCard
-                key={item.id}
-                item={item}
-                onRecipeClick={setSelectedRecipe}
-              />
-            ))}
-          </div>
+              {currentItems.map((item) => (
+                <MealCard
+                  key={item.id}
+                  item={item}
+                  onRecipeClick={setSelectedRecipe}
+                />
+              ))}
+            </>
+          )}
         </div>
       </div>
 

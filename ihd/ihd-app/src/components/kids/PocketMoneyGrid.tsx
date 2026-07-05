@@ -1,16 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
+import Takeover from "../ui/Takeover";
 
 const CATEGORIES = [
-  { key: "room_tidy", label: "Room Tidy", emoji: "\u{1F6CF}\uFE0F" },
-  { key: "behaviour", label: "Behaviour", emoji: "\u2B50" },
-  { key: "homework", label: "Homework", emoji: "\u{1F4DA}" },
-  { key: "special_boost", label: "Boost", emoji: "\u{1F680}" },
+  { key: "room_tidy", label: "Room Tidy", emoji: "\u{1F6CF}️", rate: 40 },
+  { key: "behaviour", label: "Behaviour", emoji: "⭐", rate: 20 },
+  { key: "homework", label: "Homework", emoji: "\u{1F4DA}", rate: 20 },
+  { key: "special_boost", label: "Boost", emoji: "\u{1F680}", rate: 200 },
 ] as const;
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
-const DAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 type Grid = Record<string, Record<string, boolean>>;
 
@@ -20,14 +21,16 @@ interface PocketMoneyGridProps {
 }
 
 const CHILD_CONFIG = {
-  emmie: { name: "Emmie", color: "#8B5CF6" },
-  max: { name: "Max", color: "#3B82F6" },
+  emmie: { name: "Emmie", color: "var(--emmie)" },
+  max: { name: "Max", color: "var(--max)" },
 };
+
+function formatPence(pence: number): string {
+  return `£${(pence / 100).toFixed(2)}`;
+}
 
 export default function PocketMoneyGrid({ child, onClose }: PocketMoneyGridProps) {
   const [grid, setGrid] = useState<Grid | null>(null);
-  const [week, setWeek] = useState("");
-  const overlayRef = useRef<HTMLDivElement>(null);
 
   // Which day index is today (0=Mon, 6=Sun)
   const todayIdx = (() => { const d = new Date().getDay(); return d === 0 ? 6 : d - 1; })();
@@ -38,18 +41,11 @@ export default function PocketMoneyGrid({ child, onClose }: PocketMoneyGridProps
       if (res.ok) {
         const data = await res.json();
         setGrid(data[child]);
-        setWeek(data.week);
       }
     } catch { /* ignore */ }
   }, [child]);
 
   useEffect(() => { fetchGrid(); }, [fetchGrid]);
-
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", h);
-    return () => document.removeEventListener("keydown", h);
-  }, [onClose]);
 
   const toggle = async (category: string, day: string, currentValue: boolean) => {
     // Optimistic update
@@ -72,137 +68,113 @@ export default function PocketMoneyGrid({ child, onClose }: PocketMoneyGridProps
 
   const config = CHILD_CONFIG[child];
 
-  // Count ticks for summary
+  // Count ticks + earnings for the footer summary
   const tickCount = grid
     ? CATEGORIES.reduce((sum, cat) => sum + DAYS.filter((d) => grid[cat.key]?.[d]).length, 0)
     : 0;
   const totalDays = CATEGORIES.length * 7;
+  const earnedPence = grid
+    ? CATEGORIES.reduce((sum, cat) => sum + cat.rate * DAYS.filter((d) => grid[cat.key]?.[d]).length, 0)
+    : 0;
 
   return (
-    <div
-      ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: "rgba(26,23,16,0.5)" }}
-      onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
-    >
-      <div
-        className="bg-white rounded-3xl shadow-2xl w-[520px] max-w-[95vw] p-5"
-        style={{ animation: "fadeIn 0.2s ease" }}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold" style={{ color: config.color }}>
-            {config.name}&apos;s Weekly Grid
-          </h2>
-          <button
-            onClick={onClose}
-            className="text-2xl text-text-dim cursor-pointer p-1"
-            style={{ minWidth: "44px", minHeight: "44px" }}
-          >
-            &times;
-          </button>
-        </div>
+    <Takeover onClose={onClose} accent={config.color} title={`${config.name}'s Weekly Grid`}>
+      <div className="h-full flex flex-col min-h-0">
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 flex items-start justify-center">
+          {!grid ? (
+            <div className="text-center text-lg py-12" style={{ color: "var(--ink-60)" }}>Loading...</div>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "170px repeat(7, 64px)",
+                gridAutoRows: "min-content",
+                gap: 10,
+              }}
+            >
+              {/* Header row */}
+              <div />
+              {DAY_LABELS.map((label, i) => (
+                <div
+                  key={label}
+                  className="flex flex-col items-center justify-center"
+                  style={{
+                    fontFamily: "var(--font-display), sans-serif",
+                    fontWeight: 700,
+                    fontSize: 16,
+                    color: i === todayIdx ? config.color : "var(--ink-60)",
+                  }}
+                >
+                  {label}
+                  {i === todayIdx && (
+                    <span
+                      className="rounded-full mt-1"
+                      style={{ width: 6, height: 6, background: config.color }}
+                    />
+                  )}
+                </div>
+              ))}
 
-        {!grid ? (
-          <div className="text-center text-text-dim py-8">Loading...</div>
-        ) : (
-          <>
-            {/* Grid */}
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr>
-                    <th className="text-left text-xs text-text-dim pb-2 pr-2 w-24" />
-                    {DAY_LABELS.map((label, i) => (
-                      <th
-                        key={i}
-                        className="text-center text-xs font-bold pb-2 px-0.5"
+              {/* Category rows */}
+              {CATEGORIES.map((cat) => (
+                <Fragment key={cat.key}>
+                  <div className="flex items-center gap-2" style={{ fontSize: 16, fontWeight: 700 }}>
+                    <span className="text-2xl">{cat.emoji}</span>
+                    {cat.label}
+                  </div>
+                  {DAYS.map((day, i) => {
+                    const checked = grid[cat.key]?.[day] ?? false;
+                    const isToday = i === todayIdx;
+                    return (
+                      <button
+                        key={day}
+                        onClick={() => toggle(cat.key, day, checked)}
+                        aria-label={`${cat.label} — ${DAY_LABELS[i]}`}
+                        className="pressable flex items-center justify-center rounded-2xl cursor-pointer"
                         style={{
-                          color: i === todayIdx ? config.color : "#7a7060",
-                          width: "13%",
+                          width: 64,
+                          height: 64,
+                          background: checked ? config.color : "var(--surface)",
+                          border: `2px solid ${isToday ? config.color : "var(--ink)"}`,
+                          boxShadow: isToday
+                            ? `0 0 0 3px ${config.color}33, 3px 3px 0 var(--ink-08)`
+                            : "3px 3px 0 var(--ink-08)",
                         }}
                       >
-                        {label}
-                        {i === todayIdx && (
-                          <div
-                            className="mx-auto mt-0.5 rounded-full"
-                            style={{ width: 4, height: 4, background: config.color }}
-                          />
+                        {checked && (
+                          <span style={{ color: "#fff", fontSize: 28, fontWeight: 800 }}>✓</span>
                         )}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {CATEGORIES.map((cat) => (
-                    <tr key={cat.key}>
-                      <td className="text-xs font-medium text-text-mid pr-2 py-1.5 whitespace-nowrap">
-                        <span className="mr-1">{cat.emoji}</span>
-                        {cat.label}
-                      </td>
-                      {DAYS.map((day, i) => {
-                        const checked = grid[cat.key]?.[day] ?? false;
-                        const isFuture = i > todayIdx;
-                        return (
-                          <td key={day} className="text-center py-1.5 px-0.5">
-                            <button
-                              onClick={() => toggle(cat.key, day, checked)}
-                              className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer transition-all active:scale-90"
-                              style={{
-                                background: checked
-                                  ? `${config.color}18`
-                                  : isFuture
-                                    ? "#f8f7f4"
-                                    : "#fef2f2",
-                                border: `2px solid ${
-                                  checked
-                                    ? config.color
-                                    : isFuture
-                                      ? "#e5e2d9"
-                                      : "#fecaca"
-                                }`,
-                              }}
-                            >
-                              {checked ? (
-                                <span className="text-lg font-bold" style={{ color: config.color }}>
-                                  {"\u2713"}
-                                </span>
-                              ) : isFuture ? (
-                                <span className="text-text-dim text-xs">{"\u2022"}</span>
-                              ) : (
-                                <span className="text-red-300 text-lg">{"\u2717"}</span>
-                              )}
-                            </button>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </button>
+                    );
+                  })}
+                </Fragment>
+              ))}
             </div>
+          )}
+        </div>
 
-            {/* Summary bar */}
-            <div className="mt-4 pt-3 border-t border-border flex items-center justify-between">
-              <span className="text-xs text-text-mid">
-                {tickCount} / {totalDays} this week
-              </span>
-              <div className="h-2 flex-1 mx-3 rounded-full bg-surface-alt overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{
-                    width: `${(tickCount / totalDays) * 100}%`,
-                    background: config.color,
-                  }}
-                />
-              </div>
-              <span className="text-xs font-bold" style={{ color: config.color }}>
-                {tickCount >= totalDays * 0.8 ? "\u{1F31F}" : tickCount >= totalDays * 0.5 ? "\u{1F44D}" : "\u{1F4AA}"}
-              </span>
-            </div>
-          </>
+        {/* Footer summary bar */}
+        {grid && (
+          <div
+            className="shrink-0 flex items-center justify-between px-6 py-4"
+            style={{ borderTop: "2px solid var(--ink)", background: "var(--surface-alt)" }}
+          >
+            <span style={{ fontSize: 16, fontWeight: 700 }}>
+              {tickCount} / {totalDays} ticked this week
+            </span>
+            <span
+              style={{
+                fontFamily: "var(--font-display), sans-serif",
+                fontWeight: 800,
+                fontSize: 28,
+                color: config.color,
+              }}
+            >
+              {formatPence(earnedPence)} earned
+            </span>
+          </div>
         )}
       </div>
-    </div>
+    </Takeover>
   );
 }

@@ -1,48 +1,101 @@
-export default function HadleyWidget() {
-  const stats = [
-    { label: "Orders", value: "7", color: "var(--green)" },
-    { label: "Revenue", value: "£142.50", color: "var(--accent)" },
-  ];
+"use client";
 
-  const platforms = [
-    { name: "eBay", count: 4 },
-    { name: "Amazon", count: 2 },
-    { name: "BrickLink", count: 1 },
-  ];
+import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { Card } from "../ui/Card";
+import Icon from "../ui/Icon";
+
+interface HbOrders {
+  platforms: Record<string, { count: number; overdue: number; urgent: number }>;
+  totalOrders: number;
+  totalOverdue: number;
+  totalUrgent: number;
+}
+
+interface HbPnl {
+  thisMonth: { month: string; revenue: number };
+}
+
+interface HbResponse {
+  orders: HbOrders | null;
+  metrics: unknown;
+  sync: unknown;
+  pnl: HbPnl | null;
+}
+
+export default function HadleyWidget() {
+  const router = useRouter();
+  const [data, setData] = useState<HbResponse | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  const fetchHb = useCallback(async () => {
+    try {
+      const res = await fetch("/api/hb");
+      if (res.ok) {
+        setData(await res.json());
+        setFailed(false);
+      } else {
+        setFailed(true);
+      }
+    } catch {
+      setFailed(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHb();
+    const t = setInterval(fetchHb, 5 * 60 * 1000); // 5 min
+    return () => clearInterval(t);
+  }, [fetchHb]);
+
+  const orders = data?.orders;
+  const revenue = data?.pnl?.thisMonth?.revenue;
+  const noData = !data && failed;
 
   return (
-    <div className="bg-surface border border-border rounded-2xl p-4 shadow-sm">
-      <div className="text-xs font-bold uppercase tracking-widest text-text-mid mb-2.5">
-        Hadley Bricks — Today
-      </div>
-      <div className="grid grid-cols-2 gap-2.5 mb-2.5">
-        {stats.map((s) => (
+    <Card
+      section="hb"
+      chip="Hadley Bricks"
+      chipIcon={<Icon name="brick" size={16} />}
+      onClick={() => router.push("/chris")}
+    >
+      <div className="grid grid-cols-2 gap-2.5">
+        <div className="text-center py-2.5 px-2 rounded-xl" style={{ background: "var(--hb-tint)" }}>
           <div
-            key={s.label}
-            className="text-center py-2.5 px-2 bg-surface-alt rounded-xl"
+            className="font-bold"
+            style={{
+              fontFamily: "var(--font-display), sans-serif",
+              fontSize: 30,
+              color: !orders ? "var(--hb)" : orders.totalOverdue > 0 ? "var(--bad)" : "var(--good)",
+            }}
           >
-            <div className="text-xl font-bold" style={{ color: s.color }}>
-              {s.value}
-            </div>
-            <div className="text-xs text-text-mid mt-0.5 uppercase tracking-wide">
-              {s.label}
-            </div>
+            {orders ? orders.totalOrders : "—"}
           </div>
-        ))}
-      </div>
-      <div className="flex gap-1.5 flex-wrap">
-        {platforms.map((p) => (
-          <span
-            key={p.name}
-            className="text-sm text-text-mid bg-surface-alt px-2 py-0.5 rounded-lg"
+          <div className="text-[13px] text-ink/50 mt-0.5 uppercase tracking-wide font-semibold">
+            To Dispatch
+          </div>
+          {orders && orders.totalOverdue > 0 && (
+            <div className="text-[13px] font-bold text-bad mt-0.5">
+              {orders.totalOverdue} overdue
+            </div>
+          )}
+        </div>
+        <div className="text-center py-2.5 px-2 rounded-xl" style={{ background: "var(--hb-tint)" }}>
+          <div
+            className="font-bold"
+            style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, color: "var(--hb)" }}
           >
-            {p.name} {p.count}
-          </span>
-        ))}
-        <span className="text-sm text-rose bg-rose/10 px-2 py-0.5 rounded-lg">
-          2 offers pending
-        </span>
+            {revenue != null ? `£${Math.round(revenue).toLocaleString()}` : "—"}
+          </div>
+          <div className="text-[13px] text-ink/50 mt-0.5 uppercase tracking-wide font-semibold">
+            This Month
+          </div>
+        </div>
       </div>
-    </div>
+
+      {noData && (
+        <div className="text-sm text-ink/40 text-center mt-2">Hadley Bricks unreachable</div>
+      )}
+    </Card>
   );
 }

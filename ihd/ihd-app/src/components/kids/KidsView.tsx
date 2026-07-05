@@ -81,7 +81,7 @@ export default function KidsView() {
   const max = pocketMoney?.max || { balance: 0, transactions: [] };
 
   return (
-    <div className="h-full flex flex-col min-h-0 p-3" style={{ animation: "fadeIn .2s ease both" }}>
+    <div className="h-full flex flex-col min-h-0 p-3 stagger-in">
       {/* Top row: Balance cards (~55% height) */}
       <div className="flex-[55] min-h-0 grid grid-cols-2 gap-4 mb-4">
         <BalanceCard
@@ -110,47 +110,47 @@ export default function KidsView() {
         <div className="flex flex-col gap-2">
           <button
             onClick={() => setHomeworkMode("emmie")}
-            className="flex-1 rounded-2xl px-4 flex items-center gap-3 cursor-pointer transition-all hover:shadow-md active:scale-[0.98]"
-            style={{ background: "rgba(139,92,246,0.06)", border: "2px solid rgba(139,92,246,0.15)", minHeight: "44px" }}
+            className="pressable flex-1 rounded-2xl px-4 flex items-center gap-3 cursor-pointer"
+            style={{ background: "var(--surface)", border: "2px solid var(--ink)", boxShadow: "3px 3px 0 var(--ink-08)", minHeight: 64 }}
           >
-            <span className="text-2xl">{"\u{1F984}"}</span>
+            <span className="text-3xl">{"\u{1F984}"}</span>
             <div className="flex-1 text-left">
-              <div className="text-sm font-semibold" style={{ color: "#8B5CF6" }}>Emmie&apos;s Homework</div>
-              <div className="text-xs text-text-mid">
+              <div className="font-bold" style={{ color: "var(--emmie)", fontSize: 16 }}>Emmie&apos;s Homework</div>
+              <div className="text-sm" style={{ color: "var(--ink-60)" }}>
                 {hw.emmie.total > 0 ? `${hw.emmie.done}/${hw.emmie.total} done today` : "No tasks today"}
               </div>
             </div>
-            <span className="text-text-dim">{"\u25B8"}</span>
+            <span style={{ color: "var(--ink-30)" }}>{"\u25B8"}</span>
           </button>
 
           <button
             onClick={() => setHomeworkMode("max")}
-            className="flex-1 rounded-2xl px-4 flex items-center gap-3 cursor-pointer transition-all hover:shadow-md active:scale-[0.98]"
-            style={{ background: "rgba(59,130,246,0.06)", border: "2px solid rgba(59,130,246,0.15)", minHeight: "44px" }}
+            className="pressable flex-1 rounded-2xl px-4 flex items-center gap-3 cursor-pointer"
+            style={{ background: "var(--surface)", border: "2px solid var(--ink)", boxShadow: "3px 3px 0 var(--ink-08)", minHeight: 64 }}
           >
-            <span className="text-2xl">{"\u{1F988}"}</span>
+            <span className="text-3xl">{"\u{1F988}"}</span>
             <div className="flex-1 text-left">
-              <div className="text-sm font-semibold" style={{ color: "#3B82F6" }}>Max&apos;s Homework</div>
-              <div className="text-xs text-text-mid">
+              <div className="font-bold" style={{ color: "var(--max)", fontSize: 16 }}>Max&apos;s Homework</div>
+              <div className="text-sm" style={{ color: "var(--ink-60)" }}>
                 {hw.max.total > 0 ? `${hw.max.done}/${hw.max.total} done today` : "No tasks today"}
               </div>
             </div>
-            <span className="text-text-dim">{"\u25B8"}</span>
+            <span style={{ color: "var(--ink-30)" }}>{"\u25B8"}</span>
           </button>
 
           <button
             onClick={() => setHomeworkMode("spellings")}
-            className="flex-1 rounded-2xl px-4 flex items-center gap-3 cursor-pointer transition-all hover:shadow-md active:scale-[0.98]"
-            style={{ background: "rgba(234,179,8,0.06)", border: "2px solid rgba(234,179,8,0.15)", minHeight: "44px" }}
+            className="pressable flex-1 rounded-2xl px-4 flex items-center gap-3 cursor-pointer"
+            style={{ background: "var(--surface)", border: "2px solid var(--ink)", boxShadow: "3px 3px 0 var(--ink-08)", minHeight: 64 }}
           >
-            <span className="text-2xl">{"\u{1F4DD}"}</span>
+            <span className="text-3xl">{"\u{1F4DD}"}</span>
             <div className="flex-1 text-left">
-              <div className="text-sm font-semibold text-amber-700">Spellings</div>
-              <div className="text-xs text-text-mid">
+              <div className="font-bold" style={{ color: "#B45309", fontSize: 16 }}>Spellings</div>
+              <div className="text-sm" style={{ color: "var(--ink-60)" }}>
                 {hw.spellingsDue ? "Tests due" : "Up to date"}
               </div>
             </div>
-            <span className="text-text-dim">{"\u25B8"}</span>
+            <span style={{ color: "var(--ink-30)" }}>{"\u25B8"}</span>
           </button>
         </div>
       </div>

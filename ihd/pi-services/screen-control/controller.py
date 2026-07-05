@@ -8,8 +8,11 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import paho.mqtt.client as mqtt
 
 # --- Config ---
-DIM_TIMEOUT = 120       # seconds of no motion → dim
-OFF_TIMEOUT = 900       # seconds of no motion → off
+# The lounge motion sensor (motion_lounge) has been dead since ~Mar 2026, so
+# this is touch-driven only. Resting state is the clock face ("dim"), never a
+# fully-black "off" screen — that was indistinguishable from a crashed kiosk and
+# gave no power saving anyway (the LCD backlight stays on regardless of content).
+REST_TIMEOUT = 180      # seconds of no touch → revert to clock face
 NIGHT_START = 23        # 23:00
 NIGHT_END = 6           # 06:00
 DISPLAY = "HDMI-A-1"
@@ -39,15 +42,15 @@ def is_night():
     return h >= NIGHT_START or h < NIGHT_END
 
 def get_target_state(idle_secs):
-    """Determine what state we should be in based on idle time."""
-    if idle_secs < DIM_TIMEOUT:
-        if is_night():
-            return "dim"  # night mode: skip active, stay dim
+    """Show the dashboard while in use; rest on the clock face after REST_TIMEOUT.
+
+    Never returns "off" — the screen always shows at least the clock, so a black
+    frame unambiguously means a crashed/frozen kiosk (which the kiosk-watchdog
+    recovers). A touch resets the idle timer and brings the dashboard back.
+    """
+    if idle_secs < REST_TIMEOUT:
         return "active"
-    elif idle_secs < OFF_TIMEOUT:
-        return "dim"
-    else:
-        return "off"
+    return "dim"  # clock face
 
 def transition(new_state):
     """Transition to a new screen state."""

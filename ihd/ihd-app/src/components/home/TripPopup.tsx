@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
+import Takeover from "../ui/Takeover";
 
 interface Venue {
   id: string;
@@ -47,38 +48,68 @@ function VenueCard({
   return (
     <button
       onClick={onSelect}
-      className={`w-full text-left border cursor-pointer p-4 rounded-xl transition-all ${
-        selected
-          ? "bg-accent-glow border-accent shadow-md"
-          : "bg-surface border-border hover:bg-surface-alt"
+      className={`pressable w-full text-left border-2 cursor-pointer p-3 rounded-xl transition-all ${
+        selected ? "shadow-md" : "hover:bg-[var(--surface-alt)]"
       }`}
+      style={{
+        minHeight: 64,
+        background: selected ? "var(--ink-08)" : "var(--surface)",
+        borderColor: selected ? "var(--ink)" : "var(--ink-12)",
+      }}
     >
       <div className="flex items-start gap-3">
         <span className="text-2xl">{venue.emoji}</span>
         <div className="flex-1 min-w-0">
-          <div className="text-[15px] font-semibold leading-tight truncate">
+          <div className="text-base font-semibold leading-tight truncate">
             {venue.name}
           </div>
           <div className="flex items-center gap-2 mt-1">
             <span
-              className="inline-block w-2 h-2 rounded-full"
+              className="inline-block w-2.5 h-2.5 rounded-full"
               style={{ background: cityCol }}
             />
-            <span className="text-sm text-text-mid">{venue.area}</span>
+            <span className="text-sm text-ink/60">{venue.area}</span>
           </div>
           <div className="flex items-center gap-2 mt-1.5">
             <span
-              className="inline-block px-1.5 py-0.5 rounded text-xs font-bold uppercase"
+              className="inline-block px-1.5 py-0.5 rounded text-[13px] font-bold uppercase"
               style={{ background: rating.bg, color: rating.text }}
             >
               {rating.label}
             </span>
             {venue.price && (
-              <span className="text-xs text-text-dim">{venue.price}</span>
+              <span className="text-[13px] text-ink/50">{venue.price}</span>
             )}
           </div>
         </div>
       </div>
+    </button>
+  );
+}
+
+function FilterPill({
+  active,
+  onClick,
+  children,
+  color,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  color?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="pressable px-3 rounded-full text-[13px] font-bold uppercase cursor-pointer border-2 transition-colors"
+      style={{
+        minHeight: 40,
+        background: active ? (color || "var(--ink)") : "var(--surface)",
+        color: active ? "#fff" : "var(--ink)",
+        borderColor: active ? (color || "var(--ink)") : "var(--ink-12)",
+      }}
+    >
+      {children}
     </button>
   );
 }
@@ -96,7 +127,6 @@ export default function TripPopup({
   siteUrl: string;
   onClose: () => void;
 }) {
-  const overlayRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Venue | null>(venue);
   const [filterCity, setFilterCity] = useState<string | null>(null);
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
@@ -118,8 +148,6 @@ export default function TripPopup({
     },
     [selected, venuesWithGuides]
   );
-
-
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -150,90 +178,43 @@ export default function TripPopup({
   const guideUrl = selected?.guide ? `${siteUrl}/${selected.guide}` : null;
 
   return (
-    <div
-      ref={overlayRef}
-      className="fixed inset-0 z-50 flex"
-      onClick={(e) => {
-        if (e.target === overlayRef.current) onClose();
-      }}
-      style={{ background: "rgba(26, 23, 16, 0.5)" }}
+    <Takeover
+      onClose={onClose}
+      accent="var(--ink)"
+      accentText="#fff"
+      title="Japan 2026"
+      actions={
+        <span className="text-sm font-bold text-white">{daysToGo} days to go</span>
+      }
     >
-      <div className="bg-bg m-3 rounded-2xl shadow-xl flex overflow-hidden w-full">
-        {/* Left panel — venue list */}
-        <div className="w-[380px] flex-shrink-0 bg-surface border-r border-border flex flex-col">
-          {/* Header */}
-          <div className="p-4 border-b border-border">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-baseline gap-2">
-                <span className="text-lg font-semibold">Japan 2026</span>
-                <span className="font-serif text-xl text-accent font-extralight">
-                  {daysToGo}d
-                </span>
-              </div>
-              <button
-                onClick={onClose}
-                className="text-text-dim hover:text-text text-xl cursor-pointer bg-transparent border-none p-1"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* City filter */}
-            <div className="flex gap-1.5 mb-2">
-              <button
-                onClick={() => setFilterCity(null)}
-                className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase cursor-pointer border-none transition-colors ${
-                  !filterCity ? "bg-accent text-white" : "bg-surface-alt text-text-mid hover:bg-border"
-                }`}
-              >
-                All
-              </button>
+      <div className="flex h-full overflow-hidden">
+        {/* Left panel — filters + venue list */}
+        <div className="w-[380px] flex-shrink-0 border-r-2 border-ink/10 flex flex-col" style={{ background: "var(--surface)" }}>
+          {/* Filters */}
+          <div className="p-3 border-b-2 border-ink/10">
+            <div className="flex gap-1.5 mb-2 flex-wrap">
+              <FilterPill active={!filterCity} onClick={() => setFilterCity(null)}>All</FilterPill>
               {cities.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => setFilterCity(filterCity === c ? null : c)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase cursor-pointer border-none transition-colors ${
-                    filterCity === c ? "text-white" : "text-text-mid hover:bg-border"
-                  }`}
-                  style={{
-                    background: filterCity === c ? CITY_COLOURS[c] || "#888" : undefined,
-                  }}
-                >
+                <FilterPill key={c} active={filterCity === c} onClick={() => setFilterCity(filterCity === c ? null : c)} color={CITY_COLOURS[c]}>
                   {c}
-                </button>
+                </FilterPill>
               ))}
             </div>
-
-            {/* Category filter */}
-            <div className="flex gap-1 flex-wrap">
-              <button
-                onClick={() => setFilterCategory(null)}
-                className={`px-2 py-0.5 rounded text-xs font-bold uppercase cursor-pointer border-none transition-colors ${
-                  !filterCategory ? "bg-accent/20 text-accent" : "bg-surface-alt text-text-dim hover:bg-border"
-                }`}
-              >
-                All
-              </button>
+            <div className="flex gap-1.5 flex-wrap">
+              <FilterPill active={!filterCategory} onClick={() => setFilterCategory(null)}>All</FilterPill>
               {categories.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setFilterCategory(filterCategory === cat ? null : cat)}
-                  className={`px-2 py-0.5 rounded text-xs font-bold uppercase cursor-pointer border-none transition-colors ${
-                    filterCategory === cat ? "bg-accent/20 text-accent" : "bg-surface-alt text-text-dim hover:bg-border"
-                  }`}
-                >
+                <FilterPill key={cat} active={filterCategory === cat} onClick={() => setFilterCategory(filterCategory === cat ? null : cat)}>
                   {formatCategory(cat)}
-                </button>
+                </FilterPill>
               ))}
             </div>
-
-            <div className="text-xs text-text-dim mt-2">
+            <div className="text-[13px] text-ink/50 mt-2">
               {sorted.length} of {venues.length} venues
             </div>
           </div>
 
           {/* Scrollable venue list */}
-          <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-1.5">
+          <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2">
             {sorted.map((v) => (
               <VenueCard
                 key={v.id}
@@ -250,27 +231,30 @@ export default function TripPopup({
           {selected && showGuide && guideUrl ? (
             /* Embedded guide iframe with swipe navigation */
             <div className="flex-1 flex flex-col relative">
-              <div className="flex items-center gap-3 p-3 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-3 p-3 border-b-2 border-ink/10 flex-shrink-0">
                 <button
                   onClick={() => setShowGuide(false)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-surface-alt border border-border cursor-pointer hover:bg-border transition-colors"
+                  className="pressable flex items-center gap-1.5 px-3 rounded-lg text-sm font-semibold border-2 border-ink/15 cursor-pointer"
+                  style={{ minHeight: 56, background: "var(--surface-alt)" }}
                 >
                   ‹ Back
                 </button>
-                <span className="text-sm text-text-mid truncate flex-1">
+                <span className="text-sm text-ink/60 truncate flex-1">
                   {selected.emoji} {selected.name} — Full Guide
                 </span>
                 {/* Nav arrows */}
-                <div className="flex gap-1">
+                <div className="flex gap-1.5">
                   <button
                     onClick={() => navigateVenue("prev")}
-                    className="w-8 h-8 rounded-lg bg-surface-alt border border-border flex items-center justify-center cursor-pointer hover:bg-border transition-colors text-text-mid"
+                    className="pressable rounded-lg border-2 border-ink/15 flex items-center justify-center cursor-pointer text-ink/60"
+                    style={{ width: 56, height: 56, background: "var(--surface-alt)" }}
                   >
                     ‹
                   </button>
                   <button
                     onClick={() => navigateVenue("next")}
-                    className="w-8 h-8 rounded-lg bg-surface-alt border border-border flex items-center justify-center cursor-pointer hover:bg-border transition-colors text-text-mid"
+                    className="pressable rounded-lg border-2 border-ink/15 flex items-center justify-center cursor-pointer text-ink/60"
+                    style={{ width: 56, height: 56, background: "var(--surface-alt)" }}
                   >
                     ›
                   </button>
@@ -294,17 +278,15 @@ export default function TripPopup({
               <div className="flex items-start gap-5 mb-6">
                 <span className="text-6xl">{selected.emoji}</span>
                 <div>
-                  <h1 className="text-3xl font-semibold leading-tight">
+                  <h1 className="text-3xl font-semibold leading-tight" style={{ fontFamily: "var(--font-display), sans-serif" }}>
                     {selected.name}
                   </h1>
                   <div className="flex items-center gap-2 mt-2">
                     <span
                       className="inline-block w-3 h-3 rounded-full"
-                      style={{
-                        background: CITY_COLOURS[selected.city] || "#888",
-                      }}
+                      style={{ background: CITY_COLOURS[selected.city] || "#888" }}
                     />
-                    <span className="text-sm text-text-mid">
+                    <span className="text-sm text-ink/60">
                       {selected.area}
                     </span>
                   </div>
@@ -321,19 +303,19 @@ export default function TripPopup({
                     {rating.label}
                   </span>
                 )}
-                <span className="text-sm text-text-mid">
+                <span className="text-sm text-ink/60">
                   {formatCategory(selected.category)}
                 </span>
                 {selected.price && (
-                  <span className="text-sm text-text-mid">
+                  <span className="text-sm text-ink/60">
                     {selected.price}
                   </span>
                 )}
               </div>
 
               {/* Verdict */}
-              <div className="bg-surface-alt rounded-2xl p-5 mb-5">
-                <div className="text-xs font-bold uppercase tracking-widest text-text-dim mb-2">
+              <div className="rounded-2xl p-5 mb-5" style={{ background: "var(--surface-alt)" }}>
+                <div className="text-[13px] font-bold uppercase tracking-widest text-ink/50 mb-2">
                   Verdict
                 </div>
                 <div className="text-base leading-relaxed">
@@ -343,15 +325,16 @@ export default function TripPopup({
 
               {/* Tags */}
               {selected.tags && (
-                <div className="bg-surface-alt rounded-2xl p-5 mb-5">
-                  <div className="text-xs font-bold uppercase tracking-widest text-text-dim mb-2">
+                <div className="rounded-2xl p-5 mb-5" style={{ background: "var(--surface-alt)" }}>
+                  <div className="text-[13px] font-bold uppercase tracking-widest text-ink/50 mb-2">
                     Tags
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {selected.tags.split(" · ").map((tag, i) => (
                       <span
                         key={i}
-                        className="inline-block px-3 py-1 bg-surface rounded-full text-sm border border-border"
+                        className="inline-block px-3 py-1 rounded-full text-sm border-2 border-ink/12"
+                        style={{ background: "var(--surface)" }}
                       >
                         {tag.trim()}
                       </span>
@@ -364,7 +347,8 @@ export default function TripPopup({
               {guideUrl && (
                 <button
                   onClick={() => setShowGuide(true)}
-                  className="w-full p-4 bg-accent/10 border border-accent/30 rounded-2xl text-accent font-semibold text-sm cursor-pointer hover:bg-accent/20 transition-colors"
+                  className="pressable w-full rounded-2xl font-semibold text-base cursor-pointer border-2"
+                  style={{ minHeight: 56, background: "var(--ink-08)", borderColor: "var(--ink-30)", color: "var(--ink)" }}
                 >
                   View Full Guide
                 </button>
@@ -372,13 +356,13 @@ export default function TripPopup({
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center">
-              <div className="text-text-dim text-sm">
+              <div className="text-ink/50 text-sm">
                 Select a venue to see details
               </div>
             </div>
           )}
         </div>
       </div>
-    </div>
+    </Takeover>
   );
 }
