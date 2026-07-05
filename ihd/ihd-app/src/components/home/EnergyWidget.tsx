@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Card } from "../ui/Card";
 import Icon from "../ui/Icon";
+import EnergyDetail from "./EnergyDetail";
 
 interface EnergyData {
   status: string;
@@ -30,6 +31,7 @@ function demandColor(w: number): string {
 export default function EnergyWidget() {
   const [data, setData] = useState<EnergyData | null>(null);
   const [live, setLive] = useState<LiveData | null>(null);
+  const [showDetail, setShowDetail] = useState(false);
 
   const fetchEnergy = useCallback(async () => {
     try {
@@ -65,13 +67,15 @@ export default function EnergyWidget() {
   const liveOk = live && live.status === "ok" && !live.stale && live.demand_w !== null;
 
   return (
+    <>
     <Card
       section="control"
       chip="Energy"
       chipIcon={<Icon name="zap" size={16} />}
+      onClick={() => setShowDetail(true)}
       headerRight={
         data?.dateLabel ? (
-          <span className="text-[13px] font-semibold text-ink/50">{data.dateLabel}</span>
+          <span className="text-[13px] font-semibold text-ink/50">{data.dateLabel} ▸</span>
         ) : undefined
       }
     >
@@ -161,5 +165,7 @@ export default function EnergyWidget() {
         </div>
       )}
     </Card>
+    {showDetail && <EnergyDetail onClose={() => setShowDetail(false)} />}
+    </>
   );
 }
