@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Card } from "../ui/Card";
 
 interface Joke {
   id: string;
@@ -18,12 +19,13 @@ export default function DadJokeCard({ jokes }: DadJokeCardProps) {
 
   if (count === 0) {
     return (
-      <div className="rounded-3xl p-5 shadow-md flex flex-col items-center justify-center h-full"
-        style={{ background: "rgba(251,191,36,0.06)", border: "2px solid rgba(251,191,36,0.15)" }}>
-        <div className="text-3xl mb-2">{"\u{1F4AC}"}</div>
-        <div className="text-sm font-semibold text-text-mid">Peter says...</div>
-        <div className="text-xs text-text-dim mt-1">No jokes yet! Peter needs to send one.</div>
-      </div>
+      <Card section="kids" chip="Peter Says" chipIcon={"\u{1F4AC}"} className="h-full min-h-0">
+        <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2 text-center">
+          <div className="text-4xl">{"\u{1F4AC}"}</div>
+          <div className="text-base font-semibold" style={{ color: "var(--ink-60)" }}>No jokes yet!</div>
+          <div className="text-sm" style={{ color: "var(--ink-60)" }}>Peter needs to send one.</div>
+        </div>
+      </Card>
     );
   }
 
@@ -31,50 +33,68 @@ export default function DadJokeCard({ jokes }: DadJokeCardProps) {
   const advance = () => setIndex((i) => (i + 1) % count);
 
   return (
-    <div className="rounded-3xl p-5 shadow-md flex flex-col h-full"
-      style={{ background: "rgba(251,191,36,0.06)", border: "2px solid rgba(251,191,36,0.15)" }}>
-
-      {/* Header */}
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-2xl">{"\u{1F4AC}"}</span>
-        <span className="text-sm font-semibold text-amber-700">Peter says...</span>
-        {count > 1 && (
-          <span className="text-xs text-text-dim ml-auto">tap joke to see next</span>
-        )}
-      </div>
-
-      {/* Tappable speech bubble — tap to cycle */}
+    <Card
+      section="kids"
+      chip="Peter Says"
+      chipIcon={"\u{1F4AC}"}
+      className="h-full min-h-0"
+      headerRight={
+        count > 1 ? (
+          <span className="text-sm font-semibold" style={{ color: "var(--ink-60)" }}>tap for next</span>
+        ) : undefined
+      }
+    >
       <div
-        className="flex-1 flex items-center justify-center px-2 cursor-pointer active:opacity-80 transition-opacity"
+        className="flex-1 min-h-0 flex items-center justify-center px-2 cursor-pointer active:opacity-85 transition-opacity"
         onClick={advance}
       >
         <div
           key={joke.id}
-          className="relative bg-white rounded-2xl p-4 shadow-sm w-full"
-          style={{ animation: "jokeReveal 0.3s ease", border: "1px solid rgba(251,191,36,0.2)" }}
+          className="relative w-full rounded-2xl p-5"
+          style={{
+            animation: "jokeReveal 0.3s ease",
+            background: "var(--surface)",
+            border: "2px solid var(--ink)",
+            boxShadow: "4px 4px 0 var(--kids-tint)",
+          }}
         >
-          <p className="text-base leading-relaxed text-center">{joke.text}</p>
-          <div className="absolute -bottom-2 left-8 w-4 h-4 bg-white rotate-45"
-            style={{ border: "1px solid rgba(251,191,36,0.2)", borderTop: "none", borderLeft: "none" }} />
+          <p
+            className="text-center leading-snug"
+            style={{ fontFamily: "var(--font-display), sans-serif", fontWeight: 700, fontSize: 20 }}
+          >
+            {joke.text}
+          </p>
+          <div
+            className="absolute -bottom-2 left-8"
+            style={{
+              width: 16,
+              height: 16,
+              background: "var(--surface)",
+              border: "2px solid var(--ink)",
+              borderTop: "none",
+              borderLeft: "none",
+              transform: "rotate(45deg)",
+            }}
+          />
         </div>
       </div>
 
-      {/* Dot indicators */}
       {count > 1 && (
-        <div className="flex items-center justify-center gap-3 mt-4">
+        <div className="flex items-center justify-center gap-3 mt-4 shrink-0">
           {jokes.map((j, i) => (
             <span
               key={j.id}
               className="rounded-full block transition-all"
               style={{
-                width: i === index ? 24 : 10,
-                height: 10,
-                background: i === index ? "#f59e0b" : "#d1cdc4",
+                width: i === index ? 28 : 12,
+                height: 12,
+                background: i === index ? "var(--kids)" : "var(--surface)",
+                border: `2px solid ${i === index ? "var(--ink)" : "var(--ink-30)"}`,
               }}
             />
           ))}
         </div>
       )}
-    </div>
+    </Card>
   );
 }

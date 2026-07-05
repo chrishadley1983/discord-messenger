@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import EventPopup from "../calendar/EventPopup";
+import { Card } from "../ui/Card";
 
 const PERSON_COLOURS: Record<string, string> = {
   Chris: "#c47f0a",
@@ -26,11 +27,11 @@ function Pill({ who }: { who: string }) {
   const c = PERSON_COLOURS[who] || "#888";
   return (
     <span
-      className="inline-block px-2 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide"
+      className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-bold uppercase tracking-wide"
       style={{
-        background: c + "22",
+        background: "var(--surface)",
         color: c,
-        border: `1px solid ${c}44`,
+        border: `2px solid ${c}`,
       }}
     >
       {who}
@@ -78,17 +79,14 @@ export default function EventsWidget() {
 
   return (
     <>
-      <div className="bg-surface border border-border rounded-2xl p-4 shadow-sm flex-1 flex flex-col min-h-0">
-        <div className="text-xs font-bold uppercase tracking-widest text-text-mid mb-2.5">
-          Today&apos;s Events
-        </div>
-        <div className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col gap-2.5">
+      <Card section="calendar" chip="Today's Events" chipIcon="📅" className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col gap-2">
           {loading ? (
-            <div className="text-xs text-text-dim text-center py-4">
+            <div className="text-base text-ink/60 text-center py-4">
               Loading...
             </div>
           ) : events.length === 0 ? (
-            <div className="text-xs text-text-dim text-center py-4">
+            <div className="text-base text-ink/60 text-center py-4">
               Nothing scheduled today
             </div>
           ) : (
@@ -99,23 +97,24 @@ export default function EventsWidget() {
                 <button
                   key={ev.id}
                   onClick={() => setSelectedEvent(ev)}
-                  className="flex gap-2.5 items-start text-left border-none cursor-pointer bg-transparent rounded-lg p-1 -m-1 hover:bg-surface-alt transition-colors"
+                  className="pressable shrink-0 flex gap-3 items-start text-left border-none cursor-pointer bg-transparent rounded-xl p-2 hover:bg-[var(--calendar-tint)] transition-colors"
                   style={{
-                    opacity: past ? 0.4 : 1,
-                    borderLeft: `2px solid ${c}`,
-                    paddingLeft: 8,
+                    minHeight: 56,
+                    opacity: past ? 0.45 : 1,
+                    borderLeft: `3px solid ${c}`,
                   }}
                 >
                   <div
-                    className="text-sm font-semibold text-text-mid min-w-[42px] pt-0.5"
+                    className="text-base font-semibold text-ink/60 min-w-[52px] pt-0.5"
                     style={{
+                      fontFamily: "var(--font-display), sans-serif",
                       textDecoration: past ? "line-through" : "none",
                     }}
                   >
                     {formatTime(ev.start, ev.all_day)}
                   </div>
-                  <div>
-                    <div className="text-sm font-medium mb-1">{ev.title}</div>
+                  <div className="flex flex-col gap-1.5">
+                    <div className="text-base font-semibold leading-tight">{ev.title}</div>
                     <Pill who={ev.calendar} />
                   </div>
                 </button>
@@ -123,7 +122,7 @@ export default function EventsWidget() {
             })
           )}
         </div>
-      </div>
+      </Card>
 
       {selectedEvent && (
         <EventPopup

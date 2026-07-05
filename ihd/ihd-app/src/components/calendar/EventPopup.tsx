@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import Modal from "@/components/ui/Modal";
 
 const PERSON_COLOURS: Record<string, string> = {
-  Chris: "#c47f0a",
-  Abby: "#c8304c",
-  Max: "#2060b8",
-  Emmie: "#7040b8",
-  Family: "#1e8a50",
+  Chris: "var(--chris)",
+  Abby: "var(--abby)",
+  Max: "var(--max)",
+  Emmie: "var(--emmie)",
+  Family: "var(--family)",
 };
 
 interface CalEvent {
@@ -63,7 +64,7 @@ function linkify(text: string) {
   const parts = text.split(urlRegex);
   return parts.map((part, i) =>
     urlRegex.test(part) ? (
-      <span key={i} className="text-accent break-all">
+      <span key={i} style={{ color: "var(--calendar)" }} className="break-all">
         {part}
       </span>
     ) : (
@@ -79,8 +80,7 @@ export default function EventPopup({
   event: CalEvent;
   onClose: () => void;
 }) {
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const c = PERSON_COLOURS[event.calendar] || "#888";
+  const c = PERSON_COLOURS[event.calendar] || "var(--ink-30)";
   const [detail, setDetail] = useState<EventDetail | null>(null);
 
   // Fetch full event detail for complete description
@@ -94,111 +94,100 @@ export default function EventPopup({
       .catch(() => {});
   }, [event.id]);
 
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [onClose]);
-
   // Use detail data when available, fall back to event data
   const description = detail?.description || event.description || "";
   const location = detail?.location || event.location || "";
   const endTime = detail?.end || event.end;
 
   return (
-    <div
-      ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      onClick={(e) => {
-        if (e.target === overlayRef.current) onClose();
-      }}
-      style={{ background: "rgba(26, 23, 16, 0.4)" }}
-    >
-      <div
-        className="bg-surface rounded-2xl shadow-xl w-[520px] max-h-[80vh] overflow-y-auto"
-        style={{ borderTop: `4px solid ${c}` }}
-      >
-        {/* Header */}
-        <div className="p-6 pb-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1">
-              <div className="text-xl font-semibold leading-tight">
-                {event.title}
+    <Modal onClose={onClose} accent="var(--calendar)" title={event.title}>
+      <div className="px-5 pt-4 flex flex-col gap-4">
+        {/* Who */}
+        <div>
+          <span
+            className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide"
+            style={{
+              color: c,
+              border: `1.5px solid ${c}`,
+              background: "var(--surface-alt)",
+            }}
+          >
+            {event.calendar}
+          </span>
+        </div>
+
+        {/* Time */}
+        <div
+          className="flex items-center gap-3 p-3 rounded-xl"
+          style={{ background: "var(--calendar-tint)" }}
+        >
+          <span className="text-xl" aria-hidden>
+            🕐
+          </span>
+          <div>
+            {event.all_day ? (
+              <div
+                className="text-base font-bold"
+                style={{ fontFamily: "var(--font-display), sans-serif" }}
+              >
+                All day
               </div>
-              <div className="flex items-center gap-2 mt-2">
-                <span
-                  className="inline-block px-2.5 py-0.5 rounded-full text-sm font-bold uppercase tracking-wide"
+            ) : (
+              <>
+                <div
+                  className="text-base font-bold"
                   style={{
-                    background: c + "22",
-                    color: c,
-                    border: `1px solid ${c}44`,
+                    fontFamily: "var(--font-display), sans-serif",
+                    fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  {event.calendar}
-                </span>
-              </div>
-            </div>
-            <button
-              onClick={onClose}
-              className="text-text-dim hover:text-text text-xl cursor-pointer bg-transparent border-none p-1"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-
-        {/* Details */}
-        <div className="px-6 pb-6 flex flex-col gap-4">
-          {/* Time */}
-          <div className="flex items-center gap-3 p-3 bg-surface-alt rounded-xl">
-            <span className="text-lg">🕐</span>
-            <div>
-              {event.all_day ? (
-                <div className="text-sm font-medium">All day</div>
-              ) : (
-                <>
-                  <div className="text-sm font-medium">
-                    {formatTime(event.start)}
-                    {endTime && ` — ${formatTime(endTime)}`}
+                  {formatTime(event.start)}
+                  {endTime && ` — ${formatTime(endTime)}`}
+                </div>
+                {endTime && (
+                  <div className="text-xs mt-0.5" style={{ color: "var(--ink-60)" }}>
+                    {duration(event.start, endTime)}
                   </div>
-                  {endTime && (
-                    <div className="text-sm text-text-mid mt-0.5">
-                      {duration(event.start, endTime)}
-                    </div>
-                  )}
-                </>
-              )}
-              <div className="text-sm text-text-mid mt-0.5">
-                {event.all_day
-                  ? formatDate(event.start + "T00:00:00")
-                  : formatDate(event.start)}
-              </div>
+                )}
+              </>
+            )}
+            <div className="text-xs mt-0.5" style={{ color: "var(--ink-60)" }}>
+              {event.all_day ? formatDate(event.start + "T00:00:00") : formatDate(event.start)}
             </div>
           </div>
-
-          {/* Location */}
-          {location && (
-            <div className="flex items-center gap-3 p-3 bg-surface-alt rounded-xl">
-              <span className="text-lg">📍</span>
-              <div className="text-sm">{location}</div>
-            </div>
-          )}
-
-          {/* Description */}
-          {description && (
-            <div className="p-3 bg-surface-alt rounded-xl">
-              <div className="text-xs font-bold uppercase tracking-widest text-text-mid mb-2">
-                Notes
-              </div>
-              <div className="text-sm text-text-mid leading-relaxed whitespace-pre-wrap">
-                {linkify(description)}
-              </div>
-            </div>
-          )}
         </div>
+
+        {/* Location */}
+        {location && (
+          <div
+            className="flex items-center gap-3 p-3 rounded-xl"
+            style={{ background: "var(--surface-alt)" }}
+          >
+            <span className="text-xl" aria-hidden>
+              📍
+            </span>
+            <div className="text-base">{location}</div>
+          </div>
+        )}
+
+        {/* Description */}
+        {description && (
+          <div className="p-3 rounded-xl" style={{ background: "var(--surface-alt)" }}>
+            <div
+              className="text-xs font-bold uppercase tracking-widest mb-2"
+              style={{ color: "var(--ink-60)" }}
+            >
+              Notes
+            </div>
+            <div
+              className="text-base leading-relaxed whitespace-pre-wrap"
+              style={{ color: "var(--ink-60)" }}
+            >
+              {linkify(description)}
+            </div>
+          </div>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }

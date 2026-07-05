@@ -1,5 +1,7 @@
 "use client";
 
+import { Card } from "@/components/ui/Card";
+
 interface SyncEntry {
   status: string;
   completedAt: string | null;
@@ -17,54 +19,56 @@ function timeAgo(dateStr: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-
 export default function SyncCard({ sync }: { sync: Record<string, SyncEntry> | null }) {
   if (!sync) {
     return (
-      <div className="bg-surface border border-border rounded-2xl p-4 flex items-center justify-center">
-        <span className="text-text-dim text-sm">Sync unavailable</span>
-      </div>
+      <Card section="hb" chip="Sync" chipIcon={"\u{1F504}"} className="min-h-0">
+        <div className="flex-1 flex items-center justify-center">
+          <span className="text-sm" style={{ color: "var(--ink-60)" }}>
+            Sync unavailable
+          </span>
+        </div>
+      </Card>
     );
   }
 
   const entries = Object.entries(sync);
 
   return (
-    <div className="bg-surface border border-border rounded-2xl p-4 flex flex-col min-h-0">
-      <h3 className="text-sm font-semibold text-text-main flex items-center gap-1.5 mb-3">
-        <span>{"\u{1F504}"}</span> Platform Sync
-      </h3>
-
+    <Card section="hb" chip="Sync" chipIcon={"\u{1F504}"} className="min-h-0">
       {entries.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-text-dim text-sm">
+        <div className="flex-1 flex items-center justify-center text-sm" style={{ color: "var(--ink-60)" }}>
           No sync data
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto space-y-1.5">
+        <div className="flex-1 overflow-y-auto flex flex-col gap-2 min-h-0">
           {entries.map(([type, entry]) => {
             const s = entry.status?.toUpperCase();
             const isOk = s === "COMPLETED" || s === "SUCCESS";
             const isStale = entry.completedAt
               ? Date.now() - new Date(entry.completedAt).getTime() > 24 * 60 * 60 * 1000
               : true;
+            const dotColor = isOk && !isStale ? "var(--good)" : isOk && isStale ? "var(--warn)" : "var(--bad)";
 
             return (
               <div key={type} className="flex items-center justify-between px-1 py-1">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-2.5">
                   <span
-                    className="w-2 h-2 rounded-full inline-block"
-                    style={{
-                      background: isOk && !isStale ? "#16A34A" : isOk && isStale ? "#CA8A04" : "#DC2626",
-                    }}
+                    className="inline-block rounded-full shrink-0"
+                    style={{ width: "16px", height: "16px", background: dotColor, border: "2px solid var(--ink)" }}
                   />
-                  <span className="text-xs text-text-mid">{type}</span>
+                  <span className="text-sm" style={{ color: "var(--ink)" }}>
+                    {type}
+                  </span>
                 </div>
-                <span className="text-xs text-text-dim">{timeAgo(entry.completedAt)}</span>
+                <span className="text-sm" style={{ color: "var(--ink-60)" }}>
+                  {timeAgo(entry.completedAt)}
+                </span>
               </div>
             );
           })}
         </div>
       )}
-    </div>
+    </Card>
   );
 }

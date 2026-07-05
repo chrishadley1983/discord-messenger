@@ -86,13 +86,15 @@ export default function HBView() {
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
-        <div className="text-text-dim text-lg">Loading HB data...</div>
+        <div className="text-lg" style={{ color: "var(--ink-60)" }}>
+          Loading HB data...
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col min-h-0 p-3" style={{ animation: "fadeIn .2s ease both" }}>
+    <div className="h-full flex flex-col min-h-0 p-3 stagger-in">
       {/* Top row: Orders | Targets | Sync (~55%) */}
       <div className="flex-[55] min-h-0 grid grid-cols-3 gap-3 mb-3">
         <OrdersCard orders={data?.orders ?? null} />

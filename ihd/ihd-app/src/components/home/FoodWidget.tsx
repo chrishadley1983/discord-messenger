@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import RecipePopup from "../meals/RecipePopup";
+import { Card } from "../ui/Card";
 
 const SOURCE_COLOURS: Record<string, { bg: string; text: string }> = {
   gousto: { bg: "#dbeafe", text: "#1d4ed8" },
@@ -41,25 +42,26 @@ function MealSubCard({
   return (
     <button
       onClick={onClick}
-      className="w-full text-left flex items-center gap-2.5 p-2.5 bg-surface-alt rounded-xl cursor-pointer border-none hover:brightness-95 transition-all"
+      className="pressable w-full text-left flex items-center gap-3 p-2.5 rounded-xl cursor-pointer border-2 border-ink/10"
+      style={{ minHeight: 56, background: "var(--surface-alt)" }}
     >
-      <span className="text-xl">{emoji}</span>
+      <span className="text-2xl">{emoji}</span>
       <div className="min-w-0 flex-1">
-        <div className="text-xs font-bold uppercase text-text-dim tracking-wide">
+        <div className="text-[13px] font-bold uppercase text-ink/50 tracking-wide">
           {label}
         </div>
-        <div className="text-sm font-semibold leading-tight truncate mt-0.5">
+        <div className="text-base font-semibold leading-tight truncate mt-0.5">
           {meal.adults_meal}
         </div>
-        <div className="flex items-center gap-1.5 mt-1">
+        <div className="flex items-center gap-2 mt-1">
           <span
-            className="inline-block px-1.5 py-0.5 rounded text-xs font-bold uppercase"
+            className="inline-block px-1.5 py-0.5 rounded text-[13px] font-bold uppercase"
             style={{ background: source.bg, color: source.text }}
           >
             {meal.source_tag}
           </span>
           {meal.cook_time_mins && (
-            <span className="text-xs text-text-dim">
+            <span className="text-[13px] text-ink/50">
               🕐 {meal.cook_time_mins >= 60
                 ? `${Math.floor(meal.cook_time_mins / 60)}h${meal.cook_time_mins % 60 > 0 ? ` ${meal.cook_time_mins % 60}m` : ""}`
                 : `${meal.cook_time_mins}m`}
@@ -112,48 +114,38 @@ export default function FoodWidget() {
 
   if (loading) {
     return (
-      <div className="bg-surface border border-border rounded-2xl p-4 shadow-sm flex flex-col gap-2">
-        <div className="text-xs font-bold uppercase tracking-widest text-text-mid">
-          Today&apos;s Meals
-        </div>
-        <div className="text-xs text-text-dim text-center py-4">Loading...</div>
-      </div>
+      <Card section="meals" chip="Today's Meals" chipIcon="🍽">
+        <div className="text-base text-ink/60 text-center py-4">Loading...</div>
+      </Card>
     );
   }
 
   if (!dinner && !lunch && prepNotes.length === 0) {
     return (
-      <div className="bg-surface border border-border rounded-2xl p-4 shadow-sm flex flex-col gap-2">
-        <div className="text-xs font-bold uppercase tracking-widest text-text-mid">
-          Today&apos;s Meals
-        </div>
-        <div className="text-xs text-text-dim text-center py-4">
+      <Card section="meals" chip="Today's Meals" chipIcon="🍽">
+        <div className="text-base text-ink/60 text-center py-4">
           No meal plan for today
         </div>
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className="bg-surface border border-border rounded-2xl p-4 shadow-sm flex flex-col gap-2">
-      <div className="text-xs font-bold uppercase tracking-widest text-text-mid">
-        Today&apos;s Meals
-      </div>
-
+    <Card section="meals" chip="Today's Meals" chipIcon="🍽">
       <div className="flex flex-col gap-2">
         {/* Prep notes from today's meals */}
         {prepNotes.map((note, i) => (
           <div
             key={i}
-            className="flex items-center gap-2.5 p-2.5 rounded-xl"
-            style={{ background: "var(--accent-glow, #c47f0a15)" }}
+            className="flex items-center gap-3 p-2.5 rounded-xl"
+            style={{ background: "var(--meals-tint)" }}
           >
-            <span className="text-xl">⚡</span>
+            <span className="text-2xl">⚡</span>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold uppercase text-accent tracking-wide">
+              <div className="text-[13px] font-bold uppercase text-meals tracking-wide">
                 Prep
               </div>
-              <div className="text-sm font-semibold leading-tight mt-0.5">
+              <div className="text-base font-semibold leading-tight mt-0.5">
                 {note}
               </div>
             </div>
@@ -173,6 +165,6 @@ export default function FoodWidget() {
           onClose={() => setSelectedRecipe(null)}
         />
       )}
-    </div>
+    </Card>
   );
 }

@@ -1,5 +1,7 @@
 "use client";
 
+import { Card } from "@/components/ui/Card";
+
 const HB_URL = "https://hadley-bricks-inventory-management.vercel.app";
 
 const ACTIONS = [
@@ -13,26 +15,30 @@ const ACTIONS = [
 
 export default function QuickActions() {
   return (
-    <div className="bg-surface border border-border rounded-2xl p-4 flex flex-col min-h-0">
-      <h3 className="text-sm font-semibold text-text-main flex items-center gap-1.5 mb-3">
-        <span>{"\u{26A1}"}</span> Quick Actions
-      </h3>
-
-      <div className="flex-1 grid grid-cols-3 gap-2 content-start">
+    <Card section="hb" chip="Quick Actions" chipIcon={"⚡"} className="min-h-0">
+      <div className="flex-1 grid grid-cols-3 gap-2.5 content-start min-h-0">
         {ACTIONS.map((a) => (
           <a
             key={a.path}
             href={`${HB_URL}${a.path}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex flex-col items-center justify-center gap-1 rounded-xl py-3 px-2 no-underline transition-all active:scale-[0.96]"
-            style={{ background: "rgba(196,127,10,0.06)", border: "1px solid rgba(196,127,10,0.12)", minHeight: "56px" }}
+            className="pressable flex flex-col items-center justify-center gap-1 no-underline"
+            style={{
+              minHeight: "64px",
+              background: "var(--hb-tint)",
+              border: "2px solid var(--ink)",
+              borderRadius: "16px",
+              boxShadow: "3px 3px 0 var(--ink-08)",
+            }}
           >
-            <span className="text-xl">{a.icon}</span>
-            <span className="text-xs font-medium text-text-mid">{a.label}</span>
+            <span className="text-2xl">{a.icon}</span>
+            <span className="text-sm font-semibold text-center" style={{ color: "var(--ink)" }}>
+              {a.label}
+            </span>
           </a>
         ))}
       </div>
-    </div>
+    </Card>
   );
 }

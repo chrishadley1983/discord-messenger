@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Takeover from "../ui/Takeover";
 
 interface Reading {
   ts: string;
@@ -51,7 +52,7 @@ function MiniChart({
 }) {
   if (data.length < 2) {
     return (
-      <div className="flex items-center justify-center text-text-dim text-xs" style={{ height }}>
+      <div className="flex items-center justify-center text-ink/40 text-sm" style={{ height }}>
         Not enough data yet for {label}
       </div>
     );
@@ -78,8 +79,8 @@ function MiniChart({
   return (
     <div>
       <div className="flex justify-between items-baseline mb-1">
-        <span className="text-xs font-semibold text-text-mid">{label}</span>
-        <span className="text-sm font-bold" style={{ color }}>
+        <span className="text-sm font-semibold text-ink/60">{label}</span>
+        <span className="text-base font-bold" style={{ color }}>
           {latest.toFixed(1)}{unit}
         </span>
       </div>
@@ -90,8 +91,8 @@ function MiniChart({
           const val = minV + f * range;
           return (
             <g key={f}>
-              <line x1={pad} y1={y} x2={width - pad} y2={y} stroke="rgba(0,0,0,0.06)" strokeWidth="1" />
-              <text x={pad - 4} y={y + 3} textAnchor="end" fontSize="8" fill="rgba(0,0,0,0.3)">
+              <line x1={pad} y1={y} x2={width - pad} y2={y} stroke="rgba(34,26,58,0.08)" strokeWidth="1" />
+              <text x={pad - 4} y={y + 3} textAnchor="end" fontSize="10" fill="rgba(34,26,58,0.35)">
                 {val.toFixed(1)}
               </text>
             </g>
@@ -122,7 +123,7 @@ function MiniChart({
 function MotionTimeline({ events, hours }: { events: MotionEvent[]; hours: number }) {
   if (events.length === 0) {
     return (
-      <div className="flex items-center justify-center text-text-dim text-xs py-4">
+      <div className="flex items-center justify-center text-ink/40 text-sm py-4">
         No motion events recorded yet
       </div>
     );
@@ -141,12 +142,12 @@ function MotionTimeline({ events, hours }: { events: MotionEvent[]; hours: numbe
   return (
     <div>
       <div className="flex justify-between items-baseline mb-1">
-        <span className="text-xs font-semibold text-text-mid">Motion (Lounge)</span>
-        <span className="text-xs text-text-dim">{totalEvents} events</span>
+        <span className="text-sm font-semibold text-ink/60">Motion (Lounge)</span>
+        <span className="text-sm text-ink/40">{totalEvents} events</span>
       </div>
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ height: `${height}px` }}>
         {/* Background */}
-        <rect x={pad} y={8} width={width - pad * 2} height={height - 16} rx={4} fill="rgba(0,0,0,0.03)" />
+        <rect x={pad} y={8} width={width - pad * 2} height={height - 16} rx={4} fill="rgba(34,26,58,0.04)" />
         {/* Event dots */}
         {active.map((e, i) => {
           const t = new Date(e.ts).getTime();
@@ -211,101 +212,84 @@ export default function SensorHistoryPopup({ onClose }: { onClose: () => void })
   const latestMotion = motion.slice(-1)[0];
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: "rgba(0,0,0,0.5)" }}
-      onClick={onClose}
+    <Takeover
+      onClose={onClose}
+      accent="var(--calendar)"
+      title="Sensor History"
+      actions={
+        <div className="flex gap-1.5 rounded-xl p-1" style={{ background: "rgba(255,255,255,0.2)" }}>
+          {(Object.entries(RANGE_LABELS) as [TimeRange, string][]).map(([val, label]) => (
+            <button
+              key={val}
+              onClick={() => setRange(val)}
+              className="pressable px-3 rounded-lg text-sm font-bold cursor-pointer border-2"
+              style={{
+                minHeight: 56,
+                background: range === val ? "#fff" : "transparent",
+                color: range === val ? "var(--calendar)" : "#fff",
+                borderColor: range === val ? "#fff" : "rgba(255,255,255,0.4)",
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      }
     >
-      <div
-        className="bg-surface rounded-3xl shadow-xl w-[90vw] max-w-[1200px] max-h-[85vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between p-5 pb-3 border-b border-border">
-          <h2 className="text-lg font-semibold text-text-main">Sensor History</h2>
-          <div className="flex items-center gap-3">
-            {/* Range toggle */}
-            <div className="flex gap-1 bg-surface-alt rounded-xl p-1">
-              {(Object.entries(RANGE_LABELS) as [TimeRange, string][]).map(([val, label]) => (
-                <button
-                  key={val}
-                  onClick={() => setRange(val)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                  style={{
-                    background: range === val ? "var(--accent)" : "transparent",
-                    color: range === val ? "white" : "var(--text-mid)",
-                  }}
-                >
-                  {label}
-                </button>
+      <div className="h-full overflow-y-auto p-5">
+        {loading ? (
+          <div className="flex items-center justify-center py-12 text-ink/50 text-base">
+            Loading sensor data...
+          </div>
+        ) : (
+          <div className="flex flex-col gap-5">
+            {/* Battery row */}
+            <div className="flex gap-4 flex-wrap">
+              {[
+                { label: "Kitchen", battery: latestKitchen?.battery, color: COLORS.kitchen },
+                { label: "Bedroom", battery: latestBedroom?.battery, color: COLORS.bedroom },
+                { label: "Motion", battery: latestMotion?.battery, color: COLORS.motion },
+              ].map((b) => (
+                <div key={b.label} className="flex items-center gap-1.5 text-sm text-ink/60">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full inline-block"
+                    style={{ background: b.color }}
+                  />
+                  {b.label}:
+                  <span className="font-semibold" style={{ color: (b.battery ?? 0) < 20 ? "var(--bad)" : "inherit" }}>
+                    {b.battery != null ? `${b.battery}%` : "--"}
+                  </span>
+                </div>
               ))}
             </div>
-            <button
-              onClick={onClose}
-              className="w-9 h-9 rounded-full flex items-center justify-center text-text-dim text-lg"
-              style={{ background: "rgba(0,0,0,0.05)" }}
-            >
-              {"\u2715"}
-            </button>
+
+            {/* Temperature charts */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="rounded-2xl p-3" style={{ background: "var(--surface-alt)" }}>
+                <MiniChart data={kitchenTemp} color={COLORS.kitchen} label="Kitchen Temp" unit="°C" />
+              </div>
+              <div className="rounded-2xl p-3" style={{ background: "var(--surface-alt)" }}>
+                <MiniChart data={bedroomTemp} color={COLORS.bedroom} label="Bedroom Temp" unit="°C" />
+              </div>
+            </div>
+
+            {/* Humidity charts */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="rounded-2xl p-3" style={{ background: "var(--surface-alt)" }}>
+                <MiniChart data={kitchenHumid} color={COLORS.kitchen} label="Kitchen Humidity" unit="%" />
+              </div>
+              <div className="rounded-2xl p-3" style={{ background: "var(--surface-alt)" }}>
+                <MiniChart data={bedroomHumid} color={COLORS.bedroom} label="Bedroom Humidity" unit="%" />
+              </div>
+            </div>
+
+            {/* Motion timeline */}
+            <div className="rounded-2xl p-3" style={{ background: "var(--surface-alt)" }}>
+              <MotionTimeline events={motion} hours={Number(range)} />
+            </div>
           </div>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-5">
-          {loading ? (
-            <div className="flex items-center justify-center py-12 text-text-dim">
-              Loading sensor data...
-            </div>
-          ) : (
-            <div className="space-y-5">
-              {/* Battery row */}
-              <div className="flex gap-4">
-                {[
-                  { label: "Kitchen", battery: latestKitchen?.battery, color: COLORS.kitchen },
-                  { label: "Bedroom", battery: latestBedroom?.battery, color: COLORS.bedroom },
-                  { label: "Motion", battery: latestMotion?.battery, color: COLORS.motion },
-                ].map((b) => (
-                  <div key={b.label} className="flex items-center gap-1.5 text-xs text-text-mid">
-                    <span
-                      className="w-2 h-2 rounded-full inline-block"
-                      style={{ background: b.color }}
-                    />
-                    {b.label}:
-                    <span className="font-semibold" style={{ color: (b.battery ?? 0) < 20 ? "#DC2626" : "inherit" }}>
-                      {b.battery != null ? `${b.battery}%` : "--"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Temperature charts */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-surface-alt rounded-2xl p-3">
-                  <MiniChart data={kitchenTemp} color={COLORS.kitchen} label="Kitchen Temp" unit={"\u00B0C"} />
-                </div>
-                <div className="bg-surface-alt rounded-2xl p-3">
-                  <MiniChart data={bedroomTemp} color={COLORS.bedroom} label="Bedroom Temp" unit={"\u00B0C"} />
-                </div>
-              </div>
-
-              {/* Humidity charts */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-surface-alt rounded-2xl p-3">
-                  <MiniChart data={kitchenHumid} color={COLORS.kitchen} label="Kitchen Humidity" unit="%" />
-                </div>
-                <div className="bg-surface-alt rounded-2xl p-3">
-                  <MiniChart data={bedroomHumid} color={COLORS.bedroom} label="Bedroom Humidity" unit="%" />
-                </div>
-              </div>
-
-              {/* Motion timeline */}
-              <div className="bg-surface-alt rounded-2xl p-3">
-                <MotionTimeline events={motion} hours={Number(range)} />
-              </div>
-            </div>
-          )}
-        </div>
+        )}
       </div>
-    </div>
+    </Takeover>
   );
 }

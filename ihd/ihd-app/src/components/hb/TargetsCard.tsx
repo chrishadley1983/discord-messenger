@@ -1,5 +1,7 @@
 "use client";
 
+import { Card } from "@/components/ui/Card";
+
 interface MetricsData {
   listedValue: number;
   soldValue: number;
@@ -17,17 +19,27 @@ interface MetricsData {
 
 function ProgressRow({ label, current, target }: { label: string; current: number; target: number }) {
   const pct = target > 0 ? Math.min(100, (current / target) * 100) : 0;
-  const color = pct >= 100 ? "#16A34A" : pct >= 60 ? "#CA8A04" : "#DC2626";
+  const color = pct >= 100 ? "var(--good)" : pct >= 60 ? "var(--warn)" : "var(--bad)";
 
   return (
-    <div className="mb-2.5">
-      <div className="flex justify-between text-xs mb-0.5">
-        <span className="text-text-mid">{label}</span>
-        <span className="font-semibold" style={{ color }}>
-          {"\u00A3"}{current.toLocaleString("en-GB", { maximumFractionDigits: 0 })} / {"\u00A3"}{target.toLocaleString("en-GB", { maximumFractionDigits: 0 })}
+    <div className="mb-3">
+      <div className="flex justify-between items-baseline mb-1 gap-2">
+        <span className="text-sm shrink-0" style={{ color: "var(--ink-60)" }}>
+          {label}
+        </span>
+        <span
+          className="tabular-nums font-bold text-sm text-right"
+          style={{ fontFamily: "var(--font-display)", color }}
+        >
+          {"£"}
+          {current.toLocaleString("en-GB", { maximumFractionDigits: 0 })} / {"£"}
+          {target.toLocaleString("en-GB", { maximumFractionDigits: 0 })}
         </span>
       </div>
-      <div className="h-2.5 rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.06)" }}>
+      <div
+        className="rounded-full overflow-hidden"
+        style={{ height: "14px", background: "var(--ink-08)" }}
+      >
         <div
           className="h-full rounded-full transition-all"
           style={{ width: `${pct}%`, background: color }}
@@ -40,9 +52,13 @@ function ProgressRow({ label, current, target }: { label: string; current: numbe
 export default function TargetsCard({ metrics }: { metrics: MetricsData | null }) {
   if (!metrics) {
     return (
-      <div className="bg-surface border border-border rounded-2xl p-4 flex items-center justify-center">
-        <span className="text-text-dim text-sm">Targets unavailable</span>
-      </div>
+      <Card section="hb" chip="Targets" chipIcon={"\u{1F3AF}"} className="min-h-0">
+        <div className="flex-1 flex items-center justify-center">
+          <span className="text-sm" style={{ color: "var(--ink-60)" }}>
+            Targets unavailable
+          </span>
+        </div>
+      </Card>
     );
   }
 
@@ -53,18 +69,24 @@ export default function TargetsCard({ metrics }: { metrics: MetricsData | null }
   const weeklySoldTarget = targets.dailySoldValue * 7;
 
   return (
-    <div className="bg-surface border border-border rounded-2xl p-4 flex flex-col min-h-0">
-      <h3 className="text-sm font-semibold text-text-main flex items-center gap-1.5 mb-3">
-        <span>{"\u{1F3AF}"}</span> This Week (Day {daysSoFar}/7)
-      </h3>
-
-      <div className="flex-1 overflow-y-auto">
+    <Card
+      section="hb"
+      chip="This Week"
+      chipIcon={"\u{1F3AF}"}
+      className="min-h-0"
+      headerRight={
+        <span className="text-sm font-semibold" style={{ color: "var(--ink-60)" }}>
+          Day {daysSoFar}/7
+        </span>
+      }
+    >
+      <div className="flex-1 overflow-y-auto min-h-0">
         <ProgressRow label="eBay Listed" current={ebayValue} target={targets.ebayValue} />
         <ProgressRow label="Amazon Listed" current={amazonValue} target={targets.amazonValue} />
         <ProgressRow label="BrickLink" current={blValue} target={targets.blWeeklyValue} />
         <ProgressRow label="Week Listed" current={listedValue} target={weeklyListedTarget} />
         <ProgressRow label="Week Sold" current={soldValue} target={weeklySoldTarget} />
       </div>
-    </div>
+    </Card>
   );
 }
