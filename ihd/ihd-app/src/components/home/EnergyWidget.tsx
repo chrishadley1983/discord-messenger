@@ -8,8 +8,9 @@ import EnergyDetail from "./EnergyDetail";
 interface EnergyData {
   status: string;
   dateLabel: string | null;
+  estimated?: boolean;
   electricity: { kwh: number; cost_pounds: number };
-  gas: { kwh: number; cost_pounds: number };
+  gas: { kwh: number; cost_pounds: number; dateLabel?: string | null };
   isEvDay: boolean;
 }
 
@@ -75,7 +76,10 @@ export default function EnergyWidget() {
       onClick={() => setShowDetail(true)}
       headerRight={
         data?.dateLabel ? (
-          <span className="text-[13px] font-semibold text-ink/50">{data.dateLabel} ▸</span>
+          <span className="text-[13px] font-semibold text-ink/50">
+            {data.dateLabel}
+            {data.estimated ? " (est.)" : ""} ▸
+          </span>
         ) : undefined
       }
     >
@@ -124,6 +128,7 @@ export default function EnergyWidget() {
             {
               emoji: "⚡",
               label: "Elec",
+              sub: null as string | null,
               kwh: data!.electricity.kwh,
               cost: data!.electricity.cost_pounds,
               color: "var(--warn)",
@@ -131,6 +136,9 @@ export default function EnergyWidget() {
             {
               emoji: "🔥",
               label: "Gas",
+              // Gas has no Home Mini telemetry so it can lag electricity —
+              // show its own date when it trails the headline date.
+              sub: data!.gas.dateLabel ?? null,
               kwh: data!.gas.kwh,
               cost: data!.gas.cost_pounds,
               color: "var(--calendar)",
@@ -150,6 +158,9 @@ export default function EnergyWidget() {
                   {f.kwh}
                   <span className="text-[13px] text-ink/50 ml-0.5">kWh</span>
                 </div>
+                {f.sub && (
+                  <div className="text-[12px] text-ink/50">{f.sub}</div>
+                )}
               </div>
               <div className="text-base font-bold text-ink">
                 £{f.cost.toFixed(2)}
