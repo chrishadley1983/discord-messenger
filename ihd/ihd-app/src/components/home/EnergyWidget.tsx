@@ -84,34 +84,34 @@ export default function EnergyWidget() {
       }
     >
       {/* Live demand from the Octopus Home Mini (updates every 20s) */}
+      {/* Compact single-line live tile: the card shares half a column with
+          Sensors and clips overflow, so vertical budget is ~130px below the
+          header — the two-line hero tile left no room for the fuel tiles. */}
       {liveOk && (
-        <div className="flex items-center gap-2.5 p-2 rounded-xl mb-1.5" style={{ background: "var(--control-tint)" }}>
+        <div className="flex items-center gap-2 px-2 py-1.5 rounded-xl mb-1.5" style={{ background: "var(--control-tint)" }}>
           <span
-            className="inline-block w-2.5 h-2.5 rounded-full animate-pulse flex-shrink-0"
+            className="inline-block w-2 h-2 rounded-full animate-pulse flex-shrink-0"
             style={{ background: demandColor(live!.demand_w!) }}
           />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-baseline gap-1.5">
-              <span
-                className="font-bold leading-none"
-                style={{
-                  fontFamily: "var(--font-display), sans-serif",
-                  fontSize: 28,
-                  color: demandColor(live!.demand_w!),
-                }}
-              >
-                {live!.demand_w! >= 1000
-                  ? `${(live!.demand_w! / 1000).toFixed(1)}kW`
-                  : `${Math.round(live!.demand_w!)}W`}
-              </span>
-              <span className="text-[13px] text-ink/50">now</span>
-            </div>
-            <div className="text-[13px] text-ink/50">
+          <div className="flex-1 min-w-0 flex items-baseline gap-1.5">
+            <span
+              className="font-bold leading-none"
+              style={{
+                fontFamily: "var(--font-display), sans-serif",
+                fontSize: 22,
+                color: demandColor(live!.demand_w!),
+              }}
+            >
+              {live!.demand_w! >= 1000
+                ? `${(live!.demand_w! / 1000).toFixed(1)}kW`
+                : `${Math.round(live!.demand_w!)}W`}
+            </span>
+            <span className="text-[12px] text-ink/50 truncate">
               today {live!.today_kwh}kWh {"·"} £{live!.today_cost_pounds.toFixed(2)}
               {live!.offpeak_now && (
                 <span className="ml-1 font-bold text-good">off-peak</span>
               )}
-            </div>
+            </span>
           </div>
         </div>
       )}
@@ -149,25 +149,23 @@ export default function EnergyWidget() {
           ].map((f) => (
             <div
               key={f.label}
-              className="p-2 rounded-xl min-w-0"
+              className="px-2 py-1.5 rounded-xl min-w-0"
               style={{ background: "var(--surface-alt)" }}
             >
               <div className="flex items-center gap-1.5">
-                <span className="text-base">{f.emoji}</span>
+                <span className="text-sm">{f.emoji}</span>
                 <span
                   className="font-bold leading-tight"
-                  style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 18, color: f.color }}
+                  style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 16, color: f.color }}
                 >
                   {f.kwh}
-                  <span className="text-[12px] text-ink/50 ml-0.5">kWh</span>
+                  <span className="text-[11px] text-ink/50 ml-0.5">kWh</span>
                 </span>
+                <span className="text-[12px] font-bold text-ink ml-auto">£{f.cost.toFixed(2)}</span>
               </div>
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-[13px] font-bold text-ink">£{f.cost.toFixed(2)}</span>
-                {f.sub && (
-                  <span className="text-[11px] text-ink/50 truncate">{f.sub}</span>
-                )}
-              </div>
+              {f.sub && (
+                <div className="text-[10px] text-ink/50 truncate leading-tight">{f.sub}</div>
+              )}
             </div>
           ))}
         </div>
