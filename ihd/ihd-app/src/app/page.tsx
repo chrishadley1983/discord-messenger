@@ -32,12 +32,13 @@ export default function HomePage() {
           </div>
           <HadleyWidget />
         </div>
-        {/* Col 2, Row 2: energy + sensors */}
+        {/* Col 2, Row 2: energy + sensors — energy gets the larger share so
+            the live tile + both fuel tiles fit above the clip */}
         <div className="flex flex-col gap-3 min-h-0">
-          <div className="flex-1 min-h-0 flex flex-col [&>*]:flex-1 [&>*]:min-h-0 [&>*]:overflow-hidden">
+          <div className="flex-[6] min-h-0 flex flex-col [&>*]:flex-1 [&>*]:min-h-0 [&>*]:overflow-hidden">
             <EnergyWidget />
           </div>
-          <div className="flex-1 min-h-0 flex flex-col [&>*]:flex-1 [&>*]:min-h-0 [&>*]:overflow-hidden">
+          <div className="flex-[5] min-h-0 flex flex-col [&>*]:flex-1 [&>*]:min-h-0 [&>*]:overflow-hidden">
             <SensorWidget />
           </div>
         </div>
