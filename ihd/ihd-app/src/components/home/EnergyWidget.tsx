@@ -123,7 +123,10 @@ export default function EnergyWidget() {
           </div>
         )
       ) : (
-        <div className="flex flex-col gap-1.5">
+        // Side-by-side mini-tiles: the home grid gives this card half a
+        // column (shared with Sensors) and clips overflow, so stacked
+        // full-width rows never fit below the live-demand tile.
+        <div className="grid grid-cols-2 gap-1.5">
           {[
             {
               emoji: "⚡",
@@ -146,24 +149,24 @@ export default function EnergyWidget() {
           ].map((f) => (
             <div
               key={f.label}
-              className="flex items-center gap-2 p-2 rounded-xl"
+              className="p-2 rounded-xl min-w-0"
               style={{ background: "var(--surface-alt)" }}
             >
-              <span className="text-lg">{f.emoji}</span>
-              <div className="flex-1 min-w-0">
-                <div
+              <div className="flex items-center gap-1.5">
+                <span className="text-base">{f.emoji}</span>
+                <span
                   className="font-bold leading-tight"
-                  style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 20, color: f.color }}
+                  style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 18, color: f.color }}
                 >
                   {f.kwh}
-                  <span className="text-[13px] text-ink/50 ml-0.5">kWh</span>
-                </div>
-                {f.sub && (
-                  <div className="text-[12px] text-ink/50">{f.sub}</div>
-                )}
+                  <span className="text-[12px] text-ink/50 ml-0.5">kWh</span>
+                </span>
               </div>
-              <div className="text-base font-bold text-ink">
-                £{f.cost.toFixed(2)}
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[13px] font-bold text-ink">£{f.cost.toFixed(2)}</span>
+                {f.sub && (
+                  <span className="text-[11px] text-ink/50 truncate">{f.sub}</span>
+                )}
               </div>
             </div>
           ))}

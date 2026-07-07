@@ -64,8 +64,12 @@ function buildResponse(rows: DailySummary[]) {
 }
 
 async function fromHadleyApi() {
+  // 9s: Pi→Hadley round-trips run ~2.5s and stretch under Pi load spikes —
+  // a 5s budget was observed timing out BOTH paths in one request. The
+  // widget refreshes every 30 min and keeps last-known data, so a longer
+  // wait costs nothing.
   const res = await fetch(HADLEY_SUMMARY, {
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(9000),
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`Hadley API returned ${res.status}`);
@@ -79,7 +83,7 @@ async function fromSupabase() {
     `${SUPABASE_URL}/rest/v1/energy_daily_summary?order=summary_date.desc&limit=6`,
     {
       headers: SB_HEADERS,
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(9000),
       cache: "no-store",
     }
   );
