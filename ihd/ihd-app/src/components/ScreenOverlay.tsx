@@ -66,6 +66,18 @@ export default function ScreenOverlay() {
     return () => clearInterval(t);
   }, [fetchScreen]);
 
+  // Liveness heartbeat — proves this page's JS is still running. The kiosk
+  // watchdog treats a stale heartbeat as a wedged renderer (frame looks fine
+  // but JS/network is frozen) and kills/reloads the tab, so this must keep
+  // beating in every screen state, not just while resting.
+  useEffect(() => {
+    const beat = () =>
+      fetch("/api/screen/heartbeat", { method: "POST" }).catch(() => {});
+    beat();
+    const t = setInterval(beat, 20000);
+    return () => clearInterval(t);
+  }, []);
+
   const resting = screen?.state === "dim" || screen?.state === "off";
 
   // Clock tick

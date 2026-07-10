@@ -26,6 +26,11 @@ WENV["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
 # --- State ---
 state = "active"  # active | dim | off
 last_motion = time.time()
+# Kiosk page posts /heartbeat every ~20s while its JS is alive. Until the first
+# beat arrives, age is measured from controller start so a never-beating kiosk
+# still reads as stale (the watchdog uses this to catch "data-wedge" freezes
+# where the frame looks fine but the renderer's JS is dead).
+last_heartbeat = time.time()
 lock = threading.Lock()
 mqtt_connected = False
 
@@ -121,11 +126,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         with lock:
             idle = time.time() - last_motion
+            hb_age = time.time() - last_heartbeat
         body = json.dumps({
             "state": state,
             "idle_seconds": round(idle),
             "night_mode": is_night(),
             "mqtt_connected": mqtt_connected,
+            "heartbeat_age_seconds": round(hb_age),
         })
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -134,7 +141,12 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body.encode())
 
     def do_POST(self):
-        wake()
+        global last_heartbeat
+        if self.path.rstrip("/") == "/heartbeat":
+            with lock:
+                last_heartbeat = time.time()
+        else:
+            wake()
         body = json.dumps({"ok": True})
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

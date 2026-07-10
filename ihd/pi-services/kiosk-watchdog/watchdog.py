@@ -27,6 +27,19 @@ the "Aw, Snap!" crash page is ~18 KB. So when active, size < CONTENT_MIN_BYTES m
 the tab is black / crashed / blank. We require two consecutive bad reads (to ride out
 a genuine reload/paint) before recovering.
 
+Data-wedge detection (2026-07-07 / 2026-07-10)
+----------------------------------------------
+The renderer can also wedge with an intact-looking frame: the UI shell (or the
+rest-state clock) keeps displaying but the page's JS/network layer is frozen, so
+widgets stop updating and taps do nothing. The screenshot-size check is blind to
+this (the frame is large), and when it happens on the clock face the state is
+"dim" so the size check never even runs. So the kiosk page POSTs a liveness
+heartbeat to the screen-controller every ~20s (ScreenOverlay in the app's root
+layout), and the controller reports heartbeat_age_seconds. A stale heartbeat in
+ANY state, twice in a row, means the tab's JS is dead. Plain Ctrl+R does not
+clear a wedge (proven 2026-07-07), so wedge recovery goes straight to
+kill-renderer + reload, then full relaunch.
+
 Recovery escalates: reload -> kill renderer + reload -> full Chromium relaunch.
 A once-daily proactive reload keeps the tab from rotting over multi-day uptimes.
 """
@@ -42,6 +55,7 @@ import urllib.request
 POLL_SECONDS = 60
 CONTENT_MIN_BYTES = 40000      # healthy dashboard ~120KB; black ~2.4KB; aw-snap ~18KB
 FAULT_THRESHOLD = 2            # consecutive bad reads before recovery
+HEARTBEAT_STALE_SECONDS = 75   # page beats every ~20s; >75s = 3 missed beats
 SCREEN_API = "http://localhost:5002/"
 DAILY_RELOAD_HOUR = 4          # proactive reload at 04:xx local time
 SHOT = "/tmp/kiosk_watchdog.png"
@@ -87,11 +101,11 @@ def run(cmd, timeout=15):
         return 1, f"exception: {e}"
 
 
-def get_state():
-    """Return screen-controller state string, or None if unreachable."""
+def get_screen():
+    """Return the screen-controller status dict, or None if unreachable."""
     try:
         with urllib.request.urlopen(SCREEN_API, timeout=5) as r:
-            return json.loads(r.read().decode()).get("state")
+            return json.loads(r.read().decode())
     except Exception:  # noqa: BLE001
         return None
 
@@ -186,10 +200,44 @@ def recover():
     return False
 
 
+def heartbeat_fresh(wait_s):
+    """Wait for the reloaded page to boot and beat, then re-read the age."""
+    time.sleep(wait_s)
+    screen = get_screen()
+    if screen is None:
+        return False
+    age = screen.get("heartbeat_age_seconds")
+    return age is not None and age < HEARTBEAT_STALE_SECONDS
+
+
+def recover_wedge():
+    """
+    Recovery for a wedged renderer (frame intact, JS dead). Plain Ctrl+R does
+    not clear this state, so start at kill-renderer + reload. Verified by the
+    heartbeat resuming, since the screenshot looks healthy throughout.
+    """
+    kill_renderer()
+    time.sleep(3)
+    reload_tab()
+    if heartbeat_fresh(35):
+        log("recovered wedge via renderer-kill + reload")
+        return True
+
+    relaunch_chromium()
+    if heartbeat_fresh(45):
+        log("recovered wedge via full relaunch")
+        return True
+
+    log("CRITICAL: kiosk heartbeat still stale after full recovery escalation")
+    return False
+
+
 def main():
     log(f"kiosk-watchdog starting (poll={POLL_SECONDS}s, "
-        f"content_min={CONTENT_MIN_BYTES}B, wayland={WENV['WAYLAND_DISPLAY']})")
+        f"content_min={CONTENT_MIN_BYTES}B, hb_stale={HEARTBEAT_STALE_SECONDS}s, "
+        f"wayland={WENV['WAYLAND_DISPLAY']})")
     faults = 0
+    hb_faults = 0
     last_daily_reload_day = None
 
     while True:
@@ -203,9 +251,33 @@ def main():
                 time.sleep(POLL_SECONDS)
                 continue
 
-            state = get_state()
-            if state != "active":
-                # dim/off (black is legitimate) or controller unreachable -> don't judge.
+            screen = get_screen()
+            if screen is None:
+                # Controller unreachable -> can't judge anything.
+                faults = 0
+                hb_faults = 0
+                time.sleep(POLL_SECONDS)
+                continue
+
+            # --- Wedge check: stale heartbeat means the tab's JS is dead,
+            # regardless of what the frame looks like or the screen state.
+            hb_age = screen.get("heartbeat_age_seconds")
+            if hb_age is not None and hb_age > HEARTBEAT_STALE_SECONDS:
+                hb_faults += 1
+                log(f"kiosk heartbeat stale ({hb_age}s, state={screen.get('state')}) "
+                    f"(fault {hb_faults}/{FAULT_THRESHOLD})")
+                if hb_faults >= FAULT_THRESHOLD:
+                    recover_wedge()
+                    hb_faults = 0
+                    faults = 0
+                time.sleep(POLL_SECONDS)
+                continue
+            if hb_faults:
+                log("kiosk heartbeat fresh again")
+            hb_faults = 0
+
+            if screen.get("state") != "active":
+                # dim/off -> a black frame is legitimate, don't judge content.
                 faults = 0
                 time.sleep(POLL_SECONDS)
                 continue
