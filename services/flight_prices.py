@@ -678,12 +678,14 @@ def ensure_chrome_cdp(port: int = 9222, launch: bool = True, wait_secs: int = 30
             chrome = alt
     profile = os.getenv("CHROME_CDP_PROFILE",
                         os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome-Vinted"))
+    # HEADED launch (2026-07-14 audit): --headless=new poisoned the shared Chrome-Vinted
+    # for every other consumer — BrickLink/Vinted flows 403 under headless. Headed still
+    # works from the scheduler; if no interactive desktop the window is simply not shown.
     args = [
         chrome,
         f"--remote-debugging-port={port}",
         f"--user-data-dir={profile}",
         "--remote-debugging-address=127.0.0.1",
-        "--headless=new",
         "--no-first-run",
         "--no-default-browser-check",
     ]
@@ -715,9 +717,13 @@ def restart_cdp_chrome(port: int = 9222) -> bool:
     automation simply reconnects to the fresh instance.
     """
     try:
+        # Scope the kill to port AND Chrome-Vinted profile (2026-07-14 audit): a
+        # port-only match killed whichever Chrome held the port — including the
+        # BrickLink scrape Chrome when both fought over :9222 (BL now on :9225).
         ps = (
             "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
-            f"Where-Object {{ $_.CommandLine -match 'remote-debugging-port={port}' }} | "
+            f"Where-Object {{ $_.CommandLine -match 'remote-debugging-port={port}' -and "
+            "$_.CommandLine -match 'Chrome-Vinted' } | "
             "ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }"
         )
         subprocess.run(
