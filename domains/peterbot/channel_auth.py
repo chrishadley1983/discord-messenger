@@ -55,6 +55,15 @@ WSL_CREDS = "/home/chris_hadley/.claude/.credentials.json"
 # Claude Code stays logged in (single instance, max sub) so this token refreshes
 # reliably and always has a valid refreshToken.
 WIN_CREDS = "/mnt/c/Users/Chris Hadley/.claude/.credentials.json"
+# Static long-lived OAuth token (claude setup-token) sourced by every channel's
+# launch.sh via scripts/claude-oauth-env.sh. While this file is non-empty,
+# CLAUDE_CODE_OAUTH_TOKEN overrides .credentials.json entirely — so if the
+# token inside it gets REVOKED (e.g. Chris does a fresh interactive /login
+# elsewhere, which invalidates the prior grant), restarting a session just
+# re-sources the same dead token and it 401s again on the next message
+# (2026-07-21 incident: 6 crash-loops in ~90 min while the watchdog "healed"
+# credentials.json that nothing was reading).
+STATIC_TOKEN_FILE = "/mnt/c/Users/Chris Hadley/.claude-code-oauth-token"
 
 _BASE = "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger"
 # Every persistent channel session that shares the OAuth file.
@@ -75,12 +84,25 @@ _AUTH_FAIL_MARKERS = "Please run /login\\|401 Invalid authentication credentials
 RESTART_COOLDOWN_SECONDS = 180
 # Throttle Discord alerts so a stuck condition doesn't spam #alerts.
 ALERT_THROTTLE_SECONDS = 1800
+# Standing "static token missing" condition: probe every 30 min, re-alert every
+# 6 h. The quarantine path removes the token file by design, but that degraded
+# mode must not persist silently — after the 2026-07-21 quarantine it sat
+# unprovisioned for days while WSL sessions shared the rotating credentials
+# chain with Windows Claude Code, logging the Windows/VS Code side out every
+# morning via the refresh race (2026-07-23).
+STATIC_TOKEN_CHECK_SECONDS = 1800
+STATIC_TOKEN_ALERT_SECONDS = 6 * 3600
 
 _WEBHOOK = os.environ.get("DISCORD_WEBHOOK_ALERTS", "")
 
 _lock = threading.Lock()
 _last_restart_ts: dict[str, float] = {}
 _last_alert_ts: dict[str, float] = {}
+_last_static_probe_ts = 0.0
+# Cache of the last static-token live test (ts, result) — a stale 401 marker
+# can sit in a pane's tail for many ticks and each test is a real API call.
+_last_token_test: tuple[float, "bool | None"] = (0.0, None)
+TOKEN_TEST_CACHE_SECONDS = 600
 
 
 # --- WSL plumbing ------------------------------------------------------------
@@ -156,12 +178,14 @@ def _sessions_with_401() -> list[str]:
     checked (`tail -40`) so a 401 that has already scrolled off after recovery
     doesn't produce a false positive.
     """
-    names = " ".join(CHANNELS)
-    script = (
-        f"for s in {names}; do "
-        f"tmux capture-pane -p -J -t \"$s\" 2>/dev/null | tail -40 | "
-        f"grep -q \"{_AUTH_FAIL_MARKERS}\" && echo \"$s\"; "
-        f"done"
+    # Unrolled per-channel (no shell variables): wsl.exe pipes the command line
+    # through an intermediate WSL shell that expands $vars BEFORE bash -lc runs,
+    # so a `for s in ...; echo "$s"` loop always echoed empty strings and this
+    # scan returned [] even with a 401 on screen (2026-07-16 incident).
+    script = "; ".join(
+        f"tmux capture-pane -p -J -t {name} 2>/dev/null | tail -40 | "
+        f"grep -q \"{_AUTH_FAIL_MARKERS}\" && echo {name}"
+        for name in CHANNELS
     )
     try:
         r = _wsl(script)
@@ -169,6 +193,95 @@ def _sessions_with_401() -> list[str]:
         logger.warning(f"channel_auth: 401 scan failed: {exc}")
         return []
     return [ln.strip() for ln in r.stdout.splitlines() if ln.strip() in CHANNELS]
+
+
+def _static_token_present() -> bool:
+    """True if the static-token file exists and is non-empty (i.e. launch.sh
+    will export CLAUDE_CODE_OAUTH_TOKEN from it on the next restart)."""
+    try:
+        r = _wsl(f"[ -s \"{STATIC_TOKEN_FILE}\" ] && echo YES || echo NO")
+        return "YES" in r.stdout
+    except Exception as exc:
+        logger.warning(f"channel_auth: static-token check failed: {exc}")
+        return False
+
+
+def _static_token_auth_ok() -> bool | None:
+    """Live-test the static token: does it actually authenticate?
+
+    Returns True (token works), False (definitive auth failure — revoked or
+    invalid), None (couldn't determine: timeout, network trouble, no token).
+
+    Why: the pane-401 scan can't tell a logged-out CLI from a Claude turn whose
+    *tool output* happens to contain 401/auth-error text. On 2026-07-23 the
+    Heartbeat job printed such text while the WSL creds file expired in the
+    same minute, and the watchdog quarantined a perfectly valid token —
+    putting jobs-channel back on the shared credentials chain and logging
+    Chris's Windows Claude Code out hours later. A ~1p Haiku call is cheap
+    insurance against destroying a good token; it runs only when locked
+    sessions are found with the token present (rare), throttled below.
+    """
+    cmd = (
+        f'TOK="$(tr -d "\\r\\n" < "{STATIC_TOKEN_FILE}" 2>/dev/null)"; '
+        'if [ -z "$TOK" ]; then echo __NO_TOKEN__; exit 0; fi; '
+        'CLAUDE_CODE_OAUTH_TOKEN="$TOK" timeout 90 claude -p "reply OK" '
+        "--model claude-haiku-4-5-20251001 < /dev/null 2>&1"
+    )
+    try:
+        r = _wsl(cmd, timeout=120)
+    except Exception as exc:
+        logger.warning(f"channel_auth: static-token live test errored: {exc}")
+        return None
+    out = (r.stdout + r.stderr).lower()
+    if "__no_token__" in out:
+        return None
+    auth_fail = (
+        "401" in out
+        or "revoked" in out
+        or "please run /login" in out
+        or "invalid authentication" in out
+    )
+    if auth_fail:
+        return False
+    if r.returncode == 0 and r.stdout.strip():
+        return True
+    logger.warning(
+        f"channel_auth: static-token live test inconclusive rc={r.returncode} "
+        f"out={r.stdout.strip()[:200]!r}"
+    )
+    return None
+
+
+def _quarantine_static_token() -> bool:
+    """Rename the static-token file aside so launch.sh falls back to
+    .credentials.json (which this watchdog keeps synced from Windows).
+
+    Called when sessions are 401ing WITH the static token in play — that means
+    the token has been revoked server-side and no number of session restarts
+    can fix it. Falling back to the rotating credentials file restores service
+    (at the cost of re-exposing the refresh race this token was built to
+    avoid) until Chris mints a fresh token with `claude setup-token`.
+    """
+    cmd = (
+        f"mv \"{STATIC_TOKEN_FILE}\" "
+        f"\"{STATIC_TOKEN_FILE}.revoked-$(date +%Y%m%d-%H%M%S)\" && echo OK"
+    )
+    try:
+        r = _wsl(cmd)
+    except Exception as exc:
+        logger.error(f"channel_auth: static-token quarantine failed: {exc}")
+        return False
+    ok = r.returncode == 0 and "OK" in r.stdout
+    if ok:
+        logger.warning(
+            "channel_auth: quarantined REVOKED static OAuth token "
+            f"({STATIC_TOKEN_FILE}) — sessions fall back to .credentials.json"
+        )
+    else:
+        logger.error(
+            f"channel_auth: static-token quarantine rc={r.returncode} err={r.stderr.strip()}"
+        )
+    return ok
 
 
 def _sync_creds_from_windows() -> bool:
@@ -249,11 +362,44 @@ def force_restart_channel(name: str, mark_relaunched=None) -> bool:
     return ok
 
 
-def _alert(key: str, msg: str) -> None:
+def _warn_if_static_token_missing() -> None:
+    """Standing-condition alert: no static OAuth token is provisioned.
+
+    Without it every WSL channel session falls back to the rotating
+    ``.credentials.json`` chain shared with Chris's Windows Claude Code, and
+    the overnight refresh race logs the Windows/VS Code side out each morning.
+    Probes at most every STATIC_TOKEN_CHECK_SECONDS (one extra WSL round-trip),
+    alerts at most every STATIC_TOKEN_ALERT_SECONDS.
+    """
+    global _last_static_probe_ts
+    now = time.time()
+    with _lock:
+        if now - _last_static_probe_ts < STATIC_TOKEN_CHECK_SECONDS:
+            return
+        _last_static_probe_ts = now
+    if _static_token_present():
+        return
+    logger.warning(
+        "channel_auth: static OAuth token file missing — running in degraded "
+        "shared-credentials mode (Windows morning-logout risk)"
+    )
+    _alert(
+        "static-token-missing",
+        ":warning: **No static Claude OAuth token is provisioned** (file "
+        "missing or quarantined). All WSL channel sessions are sharing the "
+        "rotating credentials chain with Windows Claude Code — the overnight "
+        "refresh race will log the Windows/VS Code side out every morning. "
+        "Fix: run `claude setup-token` in a normal Windows terminal, then in "
+        "WSL: `scripts/set-claude-oauth-token.sh '<token>'`.",
+        throttle=STATIC_TOKEN_ALERT_SECONDS,
+    )
+
+
+def _alert(key: str, msg: str, throttle: float = ALERT_THROTTLE_SECONDS) -> None:
     """Throttled fire-and-forget Discord post (one per `key` per window)."""
     now = time.time()
     with _lock:
-        if now - _last_alert_ts.get(key, 0.0) < ALERT_THROTTLE_SECONDS:
+        if now - _last_alert_ts.get(key, 0.0) < throttle:
             return
         _last_alert_ts[key] = now
     if not _WEBHOOK:
@@ -280,6 +426,8 @@ def heal_channel_auth(mark_relaunched=None) -> dict:
 
     Returns a small status dict (handy for the standalone CLI and tests).
     """
+    _warn_if_static_token_missing()
+
     wsl = _read_creds(WSL_CREDS)
     locked = _sessions_with_401()
 
@@ -303,8 +451,62 @@ def heal_channel_auth(mark_relaunched=None) -> dict:
         )
         return {"action": "blocked-windows-down", "wsl": wsl, "win": win, "locked": locked}
 
+    # Locked-out sessions while the static token is in play mean the token
+    # itself has been REVOKED (fresh interactive login elsewhere invalidated
+    # the grant). Restarting sessions without removing it just re-sources the
+    # same dead token — the 2026-07-21 crash-loop. But VERIFY before
+    # quarantining: the pane scan also matches auth-error text inside tool
+    # output, and on 2026-07-23 that false positive destroyed a valid token.
+    # A session whose env token verifiably authenticates cannot actually be
+    # logged out, so on a confirmed-good token we skip quarantine AND restarts.
+    quarantined = False
+    if locked and _static_token_present():
+        global _last_token_test
+        now_test = time.time()
+        with _lock:
+            test_ts, token_ok = _last_token_test
+            cached = now_test - test_ts < TOKEN_TEST_CACHE_SECONDS
+        if not cached:
+            token_ok = _static_token_auth_ok()
+            with _lock:
+                _last_token_test = (now_test, token_ok)
+        if token_ok is True:
+            logger.warning(
+                f"channel_auth: pane 401 markers in {locked} but the static "
+                "token authenticates — spurious match (tool output), no action"
+            )
+            return {
+                "action": "false-positive-401",
+                "wsl": wsl,
+                "locked": locked,
+                "token_ok": True,
+            }
+        if token_ok is None:
+            # Can't verify (network blip / timeout). Never destroy the token
+            # on uncertainty — leave it for the next tick and just restart the
+            # locked sessions below, which is safe either way.
+            logger.warning(
+                f"channel_auth: {locked} show 401 but static-token test was "
+                "inconclusive — skipping quarantine, restarting sessions only"
+            )
+        else:
+            quarantined = _quarantine_static_token()
+        if quarantined:
+            _alert(
+                "static-token-revoked",
+                ":rotating_light: **The static Claude OAuth token was revoked** "
+                "(usually caused by a fresh `/login` somewhere else on the "
+                "account). I've quarantined it so the channels fall back to the "
+                "regular credentials file and service recovers. To restore the "
+                "static token (recommended — it prevents the multi-session "
+                "refresh race): run `claude setup-token` on Windows, then "
+                "`scripts/set-claude-oauth-token.sh <token>`. "
+                "**Any messages sent to Peter in the last few minutes were "
+                "likely lost — please resend.**",
+            )
+
     synced = False
-    if wsl.corrupt:
+    if wsl.corrupt or quarantined:
         synced = _sync_creds_from_windows()
         if synced:
             logger.warning(
@@ -331,6 +533,8 @@ def heal_channel_auth(mark_relaunched=None) -> dict:
 
     if synced or restarted:
         bits = []
+        if quarantined:
+            bits.append("quarantined the revoked static token")
         if synced:
             bits.append("re-synced the OAuth token from Windows")
         if restarted:
@@ -349,6 +553,7 @@ def heal_channel_auth(mark_relaunched=None) -> dict:
         "action": "healed",
         "wsl": wsl,
         "synced": synced,
+        "quarantined_static_token": quarantined,
         "restarted": restarted,
         "locked": locked,
     }
@@ -372,6 +577,7 @@ def _status_report() -> str:
         "=== channel_auth status ===\n"
         f"WSL creds    : {_fmt(wsl)}\n"
         f"Windows creds: {_fmt(win)}\n"
+        f"Static token : {'present' if _static_token_present() else 'MISSING (degraded shared-credentials mode)'}\n"
         f"Sessions 401 : {locked or 'none'}\n"
         f"Webhook set  : {bool(_WEBHOOK)}\n"
     )
