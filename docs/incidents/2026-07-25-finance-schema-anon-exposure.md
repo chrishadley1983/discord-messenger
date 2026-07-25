@@ -117,3 +117,95 @@ Every consumer was checked before applying:
   `keepa_refresh_candidates`) — unrelated to finance, not addressed here.
 - `_backup_global_money_tx_20260701` is dated 20260701 and holds 34 rows. If it
   was a one-off migration backup, consider dropping it.
+
+---
+
+# Part 2 — the same schema was read/write for every logged-in user
+
+**Same day, found while triaging the "remaining follow-ups" above.**
+
+Part 1 closed anon. That left the 25 `ALL TO public USING (true)` policies in
+place, which I initially recorded as "latent, not active" on the assumption
+that `authenticated` was effectively just Chris. That assumption was wrong.
+
+## Why it was not latent
+
+`auth.users` holds **68 users, 58 of whom signed up in June 2026** — all
+confirmed, all having signed in, from aol/hotmail/yahoo/icloud/sky/talktalk
+addresses. The football prediction game shares this Supabase project, so
+`authenticated` meant roughly 58 external people, not one.
+
+`public` in a POLICY means every role, so those policies covered
+`authenticated`, which held `DELETE, INSERT, REFERENCES, SELECT, TRIGGER,
+TRUNCATE, UPDATE` on every finance table. Strictly worse than the anon leak in
+Part 1, where anon held `SELECT` only.
+
+## Demonstrated, not inferred
+
+A throwaway user was created via the Admin API with `email_confirm: true`, then
+signed in through the ordinary anon-key password flow — exactly what any app
+user does. Its JWT carried `"role": "authenticated"`.
+
+With that token and `Accept-Profile: finance`:
+
+    finance.transactions       HTTP 206  rows=0-0/3683
+    finance.wealth_snapshots   HTTP 206  rows=0-0/813
+    finance.accounts           HTTP 206  rows=0-0/14
+    finance.budgets            HTTP 206  rows=0-0/2148
+
+    DELETE finance.transactions      -> HTTP 204
+    PATCH  finance.transactions      -> HTTP 204
+    DELETE finance.wealth_snapshots  -> HTTP 204
+
+`204` means authorized and executed. The filters used the nil UUID so they
+matched zero rows; the transaction count was 3,683 before and after. The user
+was deleted after verification (`auth.users` back to 68, 0 probe users left).
+
+## Fix
+
+Migration `lock_finance_schema_to_service_role`:
+
+- Dropped every policy in the schema, dynamically rather than by name — three
+  were misleadingly named ("Service role full access on subscriptions",
+  "Allow full access via service key") despite being `TO public`.
+- Enabled RLS on any table lacking it, so "no policies" means deny-all.
+- Revoked `authenticated`'s table privileges and removed it from
+  `pg_default_acl` (it was `authenticated=arwdDxtm`, so new tables would have
+  re-granted automatically).
+
+finance is now reachable only by `service_role`, which has BYPASSRLS. Three
+tables in this schema already ran this way, which is why it was known-safe.
+
+## Verification
+
+- The *same* JWT that read 3,683 rows: **403** on all six tables tested, and
+  403 on DELETE and PATCH.
+- service_role unchanged: transactions 3,683, budgets 2,148, subscriptions 36,
+  truelayer_connections 1; PATCH still returns 204.
+- financial-data MCP `get_net_worth` and `get_budget_status` both return full
+  data end-to-end (the latter reads budgets + transactions + categories).
+- Final state: 0 policies, 0 anon/authenticated grants, 0 tables without RLS.
+
+## Rollback
+
+    GRANT ALL ON ALL TABLES IN SCHEMA finance TO authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA finance GRANT ALL ON TABLES TO authenticated;
+    -- then per table: CREATE POLICY allow_all_<t> ON finance.<t>
+    --   FOR ALL TO public USING (true) WITH CHECK (true);
+
+## Lesson
+
+Judging `authenticated` as low-risk requires knowing who can become
+authenticated. On a shared Supabase project, a consumer app's signup flow
+silently widens every `TO public` policy in every other schema. Check
+`auth.users` before calling that class of finding latent.
+
+## Still open
+
+46 tables outside finance remain anon-readable (`public` 31, `japan` 12,
+`practice` 3) — including `price_snapshots` (2.7M rows of Keepa/BL pricing),
+`energy_live` (62,701 rows of minute-resolution demand, an occupancy signal),
+`japan_bookings`, and `practice.papers`. Unlike finance, these have **real anon
+consumers** — the IHD dashboard reads `energy_daily_summary` with
+`SUPABASE_ANON_KEY` in `ihd/ihd-app/src/app/api/energy/route.ts` — so they need
+per-table triage, not a blanket revoke.
