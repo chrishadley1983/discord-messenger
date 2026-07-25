@@ -18,20 +18,35 @@ channel: #peterbot
 
 Generates consolidated picking lists for Amazon and eBay orders. Shows items that need to be picked from inventory for shipping. Scheduled for 7am daily or triggered conversationally.
 
+## Data Source — EXACT ENDPOINTS, DO NOT GUESS
+
+If pre-fetched data is missing or errored, fetch it yourself from these EXACT paths
+(via the HB proxy, base `http://172.19.64.1:8100`):
+
+- `GET /hb/picking-list/amazon?format=json`
+- `GET /hb/picking-list/ebay?format=json`
+
+The path is `picking-list` (NOT `pick-list`, `picklist`, or `pick`), and the platform
+segment is REQUIRED. Never substitute `/hb/orders` for the pick list — orders data has
+no storage locations, and reporting "no location" from it is wrong: the picking-list
+endpoint is what performs the inventory match and returns the real locations.
+
 ## Pre-fetched Data
 
-Data is pre-fetched from the Hadley Bricks API:
+Data is pre-fetched from the Hadley Bricks API (same shape as the endpoint responses):
 
 - `data.amazon`: Amazon picking list
   - `items`: Array of items to pick
-    - `sku`: Product SKU
-    - `set_number`: LEGO set number
-    - `set_name`: LEGO set name
+    - `setNo`: LEGO set number
+    - `asin`: Amazon ASIN
+    - `itemName`: Item name
     - `quantity`: Quantity to pick
-    - `location`: Storage location
-    - `order_id`: Amazon order ID
-- `data.ebay`: eBay picking list
-  - `items`: Array of items to pick (same structure)
+    - `location`: Storage location (null = matched but no location recorded)
+    - `matchStatus`: `matched` or `unmatched` (unmatched = no inventory match found)
+    - `amazonOrderId`: Amazon order ID
+  - `unmatchedItems` / `unknownLocationItems`: subsets needing a warning
+  - `totalItems`, `totalOrders`, `pickUrl`
+- `data.ebay`: eBay picking list (similar structure; `location` per item)
 - `data.fetch_time`: When data was fetched
 
 ## Output Format

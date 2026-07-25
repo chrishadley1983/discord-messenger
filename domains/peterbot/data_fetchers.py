@@ -2497,15 +2497,27 @@ async def get_hb_pick_list_data() -> dict[str, Any]:
 
         amazon, ebay = results
 
+        # The picking-list routes wrap their payload in {"data": {...}} — unwrap so
+        # consumers see the documented structure (items, unmatchedItems, totalItems).
+        def _unwrap(result):
+            if isinstance(result, Exception):
+                return {"error": str(result)}
+            if isinstance(result, dict) and isinstance(result.get("data"), dict):
+                return result["data"]
+            return result
+
+        amazon = _unwrap(amazon)
+        ebay = _unwrap(ebay)
+
         data = {
-            "amazon": amazon if not isinstance(amazon, Exception) else {"error": str(amazon)},
-            "ebay": ebay if not isinstance(ebay, Exception) else {"error": str(ebay)},
+            "amazon": amazon,
+            "ebay": ebay,
             "fetch_time": datetime.now(UK_TZ).strftime("%Y-%m-%d %H:%M")
         }
 
         # Count items
-        amazon_count = len(amazon.get("items", [])) if isinstance(amazon, dict) and "items" in amazon else 0
-        ebay_count = len(ebay.get("items", [])) if isinstance(ebay, dict) and "items" in ebay else 0
+        amazon_count = len(amazon.get("items", [])) if isinstance(amazon, dict) else 0
+        ebay_count = len(ebay.get("items", [])) if isinstance(ebay, dict) else 0
         logger.info(f"HB pick list fetch: {amazon_count} Amazon, {ebay_count} eBay items")
 
         return data

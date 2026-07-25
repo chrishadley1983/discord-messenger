@@ -135,3 +135,7 @@ supabase/.temp/
 # Runtime artifacts (contain secrets / PID churn)
 .cache
 bot.lock
+
+# Local NSSM copy (byte-identical to the WinGet install; resolved via NSSM_PATH
+# or the WinGet path in hadley_api/main.py — never commit the binary)
+nssm.exe
