@@ -923,8 +923,10 @@ class PeterbotScheduler:
                 asyncio.create_task(self._capture_to_memory(job, response))
                 asyncio.create_task(self._capture_to_second_brain(job, response))
 
-                # 8b. Save news history for deduplication
-                if job.skill == "news":
+                # 8b. Save news history for deduplication (shared by the
+                # conversational news skill and the merged daily newsletter —
+                # same file so the newsletter dedups against legacy posts too)
+                if job.skill in ("news", "newsletter"):
                     self._save_news_history(response)
 
                 # 8c. Write active skill context for conversational jobs
@@ -1118,9 +1120,16 @@ class PeterbotScheduler:
                 "```",
             ])
 
-        # Inject news history for deduplication
+        # Inject news history for deduplication. The newsletter gets a shorter
+        # window: its fetcher already hard-filters previously posted URLs, so
+        # the injected text only guards against same-story-different-URL
+        # repeats and keeps the prompt lean.
         if job.skill == "news":
             news_history = self._load_news_history()
+            if news_history:
+                parts.extend(["", news_history])
+        elif job.skill == "newsletter":
+            news_history = self._load_news_history(days=3)
             if news_history:
                 parts.extend(["", news_history])
 

@@ -13,7 +13,7 @@
 |---|-----|----------|---------|-------------|
 | 1 | **Balance Monitor** | Hourly 7am-9pm UK | #api-balances | Monitors Claude & Moonshot Kimi API credit balances; alerts if <$5 |
 | 2 | **Hydration Check-in** | 9am,11am,1pm,3pm,5pm,7pm,9pm UK | #food-log | Posts water intake & step progress with Haiku motivation |
-| 3 | **AI Morning Briefing** | 6:30am UTC | #ai-briefings | Two-stage AI briefing: Grok for search, Sonnet for curation (AI news, Claude Code tips) |
+| 3 | **AI Morning Briefing** | ~~6:30am UTC~~ | #ai-briefings | DISABLED 2026-07-02 — merged into the `newsletter` skill (07:01 UK, #ai-news) |
 | 4 | **Withings Sync** | 7:55am UK | (none) | Syncs latest weight from Withings API to database before morning digest |
 | 5 | **Morning Health Digest** | 8:00am UK | #food-log | Weight trend, sleep, HR, steps, yesterday's nutrition, days to Japan goal |
 | 6 | **School Run (Morning)** | 8:10am Mon-Wed,Fri / 7:45am Thu UK | #traffic-reports + WhatsApp | Traffic, weather, uniform, morning activities |
@@ -26,7 +26,7 @@
 | # | Job | Schedule | Channel | Description |
 |---|-----|----------|---------|-------------|
 | 10 | **Daily Nutrition Summary** | 9:00pm UK | #food-log | Daily totals with emoji status (calories, protein, carbs, fat, water, steps) |
-| 11 | **Morning News Briefing** | 7:00am UK | #news | Tech, UK, and F1 headlines from RSS feeds (3 tech, 2 UK, 2 F1) |
+| 11 | **Morning News Briefing** | ~~7:00am UK~~ | #news | DISABLED 2026-07-02 — RSS tech/UK/F1 sections merged into the `newsletter` skill (07:01 UK, #ai-news) |
 | 12 | **Weekly API Usage** | Monday 9:00am UK | #api-usage | Weekly cost summary for Claude (Anthropic) and OpenAI APIs |
 
 ### Manual Discord Commands

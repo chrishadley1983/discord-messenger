@@ -508,26 +508,50 @@ async def get_monthly_health_data() -> dict[str, Any]:
 async def get_balance_data() -> dict[str, Any]:
     """Fetch API balance data for balance-monitor skill.
 
-    Returns:
-        Dict with Claude, Moonshot, and Grok balances
+    Grok was dropped from the check on 2026-07-02 (account defunded; the
+    newsletter pipeline no longer depends on it). Kimi/Moonshot balance is
+    flagged with `changed` vs the previous check so the skill only shows it
+    when it has moved.
     """
-    from jobs.balance_monitor import _get_claude_data, _get_moonshot_data, _get_grok_data, _get_max_usage
+    from jobs.balance_monitor import _get_claude_data, _get_moonshot_data, _get_max_usage
     from domains.api_usage.services.gcp_monitoring import get_gcp_cost_summary
 
     try:
-        claude_data, moonshot_data, grok_data, max_data, gcp_data = await asyncio.gather(
+        claude_data, moonshot_data, max_data, gcp_data = await asyncio.gather(
             _get_claude_data(),
             _get_moonshot_data(),
-            _get_grok_data(),
             _get_max_usage(),
             get_gcp_cost_summary(),
             return_exceptions=True
         )
 
+        moonshot = moonshot_data if not isinstance(moonshot_data, Exception) else {"error": str(moonshot_data)}
+
+        # Kimi change detection vs last check (state survives restarts)
+        state_path = Path(__file__).parent.parent.parent / "data" / "balance_state.json"
+        try:
+            prev = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+        except Exception:
+            prev = {}
+        current_kimi = moonshot.get("balance") if isinstance(moonshot, dict) else None
+        prev_kimi = prev.get("kimi_balance")
+        if isinstance(moonshot, dict) and "error" not in moonshot:
+            moonshot["previous_balance"] = prev_kimi
+            moonshot["changed"] = (
+                prev_kimi is None
+                or current_kimi is None
+                or round(float(current_kimi), 2) != round(float(prev_kimi), 2)
+            )
+            try:
+                state_path.write_text(
+                    json.dumps({**prev, "kimi_balance": current_kimi}), encoding="utf-8"
+                )
+            except Exception as e:
+                logger.debug(f"Balance state write failed: {e}")
+
         return {
             "claude": claude_data if not isinstance(claude_data, Exception) else {"error": str(claude_data)},
-            "moonshot": moonshot_data if not isinstance(moonshot_data, Exception) else {"error": str(moonshot_data)},
-            "grok": grok_data if not isinstance(grok_data, Exception) else {"error": str(grok_data)},
+            "moonshot": moonshot,
             "max": max_data if not isinstance(max_data, Exception) else {"error": str(max_data)},
             "gcp": gcp_data if not isinstance(gcp_data, Exception) else {"error": str(gcp_data)},
             "threshold": 5.00,
@@ -4617,7 +4641,14 @@ async def get_cost_digest_data() -> dict[str, Any]:
 
 # Map skill names to their data fetchers
 # Skills not in this dict use web search (news, etc.)
+def get_newsletter_data_fetcher():
+    """Lazy import to keep newsletter sources isolated from this module."""
+    from domains.peterbot.newsletter_sources import get_newsletter_data
+    return get_newsletter_data()
+
+
 SKILL_DATA_FETCHERS = {
+    "newsletter": get_newsletter_data_fetcher,
     "nutrition-summary": get_nutrition_data,
     "hydration": get_hydration_data,
     "health-digest": get_health_digest_data,

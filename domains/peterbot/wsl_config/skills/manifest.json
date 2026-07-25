@@ -1114,7 +1114,7 @@
       "morning briefing"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "AI and Claude news morning briefing",
     "channel": "#ai-briefings"
   },
@@ -1155,9 +1155,22 @@
       "what's going on"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Fetch and summarize news based on user request and preferences from memory",
     "channel": "#news"
+  },
+  "newsletter": {
+    "triggers": [
+      "newsletter",
+      "daily newsletter",
+      "morning newsletter",
+      "ai news",
+      "briefing"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Merged daily morning newsletter — AI news, Claude Code, community, tech, UK, F1, YouTube",
+    "channel": "#ai-news"
   },
   "notion-ideas": {
     "triggers": [
@@ -1652,7 +1665,7 @@
       "anything good on youtube"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Daily YouTube video recommendations in key interest areas",
     "channel": "#youtube"
   }
