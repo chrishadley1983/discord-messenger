@@ -75,3 +75,7 @@ POST http://172.19.64.1:8100/commitments/{id}/nudge
 - Never nudge about things said to Peter (bot conversations are not commitments)
 - Keep under 500 chars — this goes to WhatsApp, not Discord
 - Warm tone, not naggy. More "heads up" than "you forgot"
+
+## Empty-Response Guard
+
+**Never return a truly blank reply** — the scheduler records an empty reply as a job failure (`empty response`). When there are no open commitments to nudge, reply with the **literal token** `NO_REPLY` (those exact characters), NOT an empty string. An empty string is what triggers the `empty response` failure; `NO_REPLY` is the correct, silent, no-op outcome. If data fetching fails outright, emit one short line noting it rather than going blank.

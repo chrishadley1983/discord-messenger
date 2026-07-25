@@ -56,3 +56,10 @@ Daily summary of parser health, format drift, and pending feedback delivered at 
 - Report is brief - meant to be scanned quickly
 - Links to detailed logs if issues found
 - Suppressed if everything is healthy (optional setting)
+
+## Empty-Response Guard
+
+**Never return a truly blank reply** — the scheduler records an empty reply as a job failure (`empty response`), which is exactly the failure this report has hit at 06:45. Two cases:
+
+- **Healthy + suppression on:** reply with the **literal token** `NO_REPLY` (those exact characters), NOT an empty string. The empty string is what logs `empty response`; `NO_REPLY` is the correct silent outcome.
+- **Thin/missing data** (the data fetcher returned nothing, common in the early-morning run before sources are warm): do not go blank — emit one short honest line, e.g. `🩺 Quality report: source data not ready yet this morning — will report on the next run.` This prevents a thin-data morning from hard-failing the job.

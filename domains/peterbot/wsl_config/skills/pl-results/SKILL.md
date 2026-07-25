@@ -77,6 +77,8 @@ Use the search results to write factual, informed reports — not generic filler
 - No finished PL matches AND no finished CL matches AND no Dover result found -> respond with just `NO_REPLY`
 - If ANY of the three have results, produce a report (even if just one section)
 
+**Empty-Response Guard:** when there's no football to report, you MUST reply with the **literal token** `NO_REPLY` (those exact seven characters), NOT an empty string. The scheduler logs a truly-blank reply as an `empty response` job failure — which is what hit this job at 06:05 on a no-football morning. `NO_REPLY` is the correct silent outcome; empty text is a failure. Never end the turn with no output.
+
 ## Output Format
 
 ```

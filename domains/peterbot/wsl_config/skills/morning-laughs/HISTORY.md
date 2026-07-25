@@ -2,6 +2,14 @@
 
 ## Jokes
 
+- 2026-07-03: Why can't you hear a pterodactyl going to the bathroom? Because the "P" is silent.
+- 2026-07-03: I'm on a whiskey diet — I've lost three days already.
+- 2026-07-03: I tried to organise a hide-and-seek tournament, but good players are really hard to find.
+- 2026-07-03: "The best way to predict the future is to create it." — Peter Drucker
+- 2026-07-02: Why did the tomato turn red? Because it saw the salad dressing.
+- 2026-07-02: I used to work at a calendar factory, but I got fired for taking a couple of days off.
+- 2026-07-02: What do you call a deer with no eyes? No idea.
+- 2026-07-02: "Whether you think you can or you think you can't, you're right." — Henry Ford
 - 2026-02-11: I'm reading a book about anti-gravity. It's impossible to put down.
 - 2026-02-11: Why did the scarecrow win an award? He was outstanding in his field.
 - 2026-02-11: What do you call a bear with no teeth? A gummy bear.
@@ -648,3 +656,163 @@
 - 2026-06-19: I used to be an actor, but I couldn't get the part. So I wrote my own script.
 - 2026-06-19: What do you call a chicken running a race? Poultry in motion.
 - 2026-06-19: "The pessimist sees difficulty in every opportunity. The optimist sees opportunity in every difficulty." — Winston Churchill
+
+- 2026-06-20: What do you call a snowman who can play guitar? A cool dude.
+- 2026-06-20: I tried to come up with a joke about infinity. There was no end to it.
+- 2026-06-20: What do you call a number that can't stay still? A roamin' numeral.
+- 2026-06-20: "You have brains in your head. You have feet in your shoes. You can steer yourself in any direction you choose." — Dr Seuss
+
+- 2026-06-21: Why did the baker stop making doughnuts? He was tired of the whole business.
+- 2026-06-21: I swallowed a dictionary. It gave me thesaurus throat I've ever had.
+- 2026-06-21: What do you call a bee that never stops talking about itself? A humblebrag.
+- 2026-06-21: "It takes courage to grow up and become who you really are." — E.E. Cummings
+
+- 2026-06-22: What do you call an eagle who can play the piano? Talon-ted.
+- 2026-06-22: What do you call a man who tells dad jokes but has no kids? A faux pa.
+- 2026-06-22: I'm trying to lose weight, but it keeps finding me.
+- 2026-06-22: "The only place where success comes before work is in the dictionary." — Vidal Sassoon
+
+- 2026-06-23: My wife said I need to grow up. I said I'd think about it from my treehouse.
+- 2026-06-23: What do you call a chef who goes to church? A holy roller.
+- 2026-06-23: Why did the shoe go to school? To get a little sole.
+- 2026-06-23: "Pain is temporary. Quitting lasts forever." — Lance Armstrong
+
+- 2026-06-24: Why can't Cinderella play football? Because she keeps running away from the ball.
+- 2026-06-24: Why do sprinters eat so little before a race? They don't want to bolt their food.
+- 2026-06-24: What's a runner's favourite subject? Jog-raphy.
+- 2026-06-24: "You have to expect things of yourself before you can do them." — Michael Jordan
+
+- 2026-06-25: What do you call a cow that won't give milk? An udder failure.
+- 2026-06-25: I used to be a carpenter, but then I got bored.
+- 2026-06-25: What do you call a man who's always losing his temper in the kitchen? A whisk taker.
+- 2026-06-25: "A room without books is like a body without a soul." — Marcus Tullius Cicero
+
+- 2026-06-26: Why did the scarecrow win an award? Because he was outstanding in his field.
+- 2026-06-26: I'm reading a book about anti-gravity. It's impossible to put down.
+- 2026-06-26: What do you call a fish without eyes? A fsh.
+- 2026-06-26: "The secret of getting ahead is getting started." — Mark Twain
+
+- 2026-06-27: I tried to write a joke about paper... it was tearable.
+- 2026-06-27: What do you call a sleeping dinosaur? A dino-snore.
+- 2026-06-27: Why do cows wear bells? Because their horns don't work.
+- 2026-06-27: "It does not matter how slowly you go as long as you do not stop." — Confucius
+
+- 2026-06-28: Why did the tomato turn red? Because it saw the salad dressing.
+- 2026-06-28: What do you call a lazy kangaroo? A pouch potato.
+- 2026-06-28: I told my cat a joke. He didn't laugh. Tough crowd.
+- 2026-06-28: "The way to get started is to quit talking and begin doing." — Walt Disney
+
+- 2026-06-29: Why did the man put his money in the freezer? He wanted cold hard cash.
+- 2026-06-29: What do you call a woman who stands between two goalposts? Annette.
+- 2026-06-29: I used to be a professional boxer. Cardboard mainly.
+- 2026-06-29: "The only journey is the one within." — Rainer Maria Rilke
+
+- 2026-06-30: I went to a seafood disco last night. I pulled a muscle.
+- 2026-06-30: Did you hear about the guy who invented Lifesavers? He made a mint.
+- 2026-06-30: What do you call a man with a pole on his head? Alf.
+- 2026-06-30: "Energy and persistence conquer all things." — Benjamin Franklin
+
+- 2026-07-01: What do you call a baby potato? A small fry.
+- 2026-07-01: I used to be a glass blower, but I inhaled and got a pane in my chest.
+- 2026-07-01: What do you call a snobbish criminal going down the stairs? A condescending con descending.
+- 2026-07-01: "The unexamined life is not worth living." — Socrates
+
+- 2026-07-04: I asked the gym instructor if he could teach me to do the splits. He said, "How flexible are you?" I said, "I can't do Tuesdays."
+- 2026-07-04: My boss told me to have a good day. So I went home.
+- 2026-07-04: What do you call a pig that plays basketball? A ball hog.
+- 2026-07-04: "Do one thing every day that scares you." — Eleanor Roosevelt
+
+- 2026-07-05: Why did the coffee taste like mud? Because it was ground this morning.
+- 2026-07-05: I told my wife she should do lunges to stay in shape. She said that would be a big step forward.
+- 2026-07-05: What's the best thing about Switzerland? I don't know, but the flag is a big plus.
+- 2026-07-05: "In the end, it's not the years in your life that count. It's the life in your years." — Abraham Lincoln
+
+- 2026-07-06: What do you get if you cross a sheepdog with a rose? A collie-flower.
+- 2026-07-06: Why did the bee get married? Because he finally found his honey.
+- 2026-07-06: What do you call a dog that can tell the time? A watchdog.
+- 2026-07-06: "The future depends on what you do today." — Mahatma Gandhi
+
+- 2026-07-07: How do you organise a party in space? You planet.
+- 2026-07-07: What do you call a fish that needs help with its singing? Auto-tuna.
+- 2026-07-07: What did one plate say to the other? Tonight, dinner's on me.
+- 2026-07-07: "However difficult life may seem, there is always something you can do and succeed at." — Stephen Hawking
+
+- 2026-07-08: What kind of shoes do ninjas wear? Sneakers.
+- 2026-07-08: How does the moon cut its hair? Eclipse it.
+- 2026-07-08: What do you call a boat that keeps breaking down? A sink.
+- 2026-07-08: "Try not to become a man of success, but rather try to become a man of value." — Albert Einstein
+
+- 2026-07-09: What do you call a magician on a plane? A flying sorcerer.
+- 2026-07-09: Why don't skeletons ride roller coasters? They don't have the stomach for it.
+- 2026-07-09: Why did the tree go to the dentist? To get a root canal.
+- 2026-07-09: "Happiness depends upon ourselves." — Aristotle
+
+- 2026-07-10: Why are frogs so happy? They eat whatever bugs them.
+- 2026-07-10: What did the big flower say to the little flower? Hi, bud!
+- 2026-07-10: How do you make a tissue dance? You put a little boogie in it.
+- 2026-07-10: "Change your thoughts and you change your world." — Norman Vincent Peale
+
+- 2026-07-11: Why did the scientist install a knocker on his door? He wanted to win the No-bell prize.
+- 2026-07-11: What do you call a dinosaur with no eyes? A do-you-think-he-saurus.
+- 2026-07-11: What do you get from a pampered cow? Spoiled milk.
+- 2026-07-11: "Whatever you can do, or dream you can, begin it. Boldness has genius, power, and magic in it." — Johann Wolfgang von Goethe
+
+- 2026-07-12: I ordered a book on how to fall down the stairs. It arrived step by step.
+- 2026-07-12: What do you call a duck that loves fireworks? A firequacker.
+- 2026-07-12: Why did the melon jump into the lake? It wanted to be a watermelon.
+- 2026-07-12: "The pessimist complains about the wind; the optimist expects it to change; the realist adjusts the sails." — William Arthur Ward
+
+- 2026-07-13: Why did the coffee go to therapy? It had grounds for concern.
+- 2026-07-13: What do you call a bee that can't stop complaining? A grumble-bee.
+- 2026-07-13: Why couldn't the leopard play hide and seek? Because he was always spotted.
+- 2026-07-13: "The future belongs to those who prepare for it today." — Malcolm X
+
+- 2026-07-14: I told my computer I needed a break, and now it won't stop sending me KitKat ads.
+- 2026-07-14: What do you call a snail on a ship? A snailor.
+- 2026-07-14: What do you call a dinosaur that loves tacos? A Tyrannosaurus Mex.
+- 2026-07-14: "Great things are done by a series of small things brought together." — Vincent van Gogh
+
+- 2026-07-15: What do you call an apology written in dots and dashes? Re-Morse code.
+- 2026-07-15: What do you call a cow with a twitch? Beef jerky.
+- 2026-07-15: Why do bananas wear sunscreen? Because they peel.
+- 2026-07-15: "The best way to find yourself is to lose yourself in the service of others." — Mahatma Gandhi
+
+- 2026-07-17: What do you call a snake that works for the government? A civil serpent.
+- 2026-07-17: Why did the strawberry get so upset? Its parents were in a jam.
+- 2026-07-17: I entered ten puns into a competition hoping one would win. Sadly, no pun in ten did.
+- 2026-07-17: "Try to be a rainbow in someone else's cloud." — Maya Angelou
+
+- 2026-07-18: What do you call a fish wearing a bowtie? So-fish-ticated... at a black-tie event.
+- 2026-07-18: I gave all my dead batteries away today — free of charge.
+- 2026-07-18: Why did the scarecrow keep getting invited to dinner parties? He was a-maize-ing company.
+- 2026-07-18: "The best time for new beginnings is now." — Unknown
+
+- 2026-07-19: Why did the golfer wear two watches? In case he wanted to play a round on time.
+- 2026-07-19: I told my wife she was overreacting about my obsession with bricks. She said I was building it up too much.
+- 2026-07-19: What do you call a dinosaur that's a noisy sleeper? A Bronto-snorus.
+- 2026-07-19: "Enjoy the little things, for one day you may look back and realise they were the big things." — Robert Brault
+
+- 2026-07-21: Why did the tin can go to school? To become a little more well-rounded.
+- 2026-07-21: I bought some shoes from a blacksmith — they were forged for comfort.
+- 2026-07-21: Why did the sponge get an award? Because its performance was absorbing.
+- 2026-07-21: "The best way to make your dreams come true is to wake up." — Paul Valéry
+
+- 2026-07-22: Why did the pencil win an award? It really made its point.
+- 2026-07-22: I tried to catch fog yesterday. Mist.
+- 2026-07-22: What do you call a belt made of watches? A waist of time.
+- 2026-07-22: "It always seems impossible until it's done." — Nelson Mandela
+
+- 2026-07-23: Why don't scientists trust atoms? Because they make up everything.
+- 2026-07-23: I only know 25 letters of the alphabet. I don't know y.
+- 2026-07-23: What do you call cheese that isn't yours? Nacho cheese.
+- 2026-07-23: "The way to get started is to quit talking and begin doing." — Walt Disney
+
+- 2026-07-24: What do you call a fish that wears a crown and rules the sea? A king prawn.
+- 2026-07-24: I used to be a baker's assistant, but I couldn't make enough dough, so I loafed off.
+- 2026-07-24: Why did the scarecrow take up gardening? He wanted to branch out into something new.
+- 2026-07-24: "Do not go where the path may lead, go instead where there is no path and leave a trail." — Ralph Waldo Emerson
+
+- 2026-07-25: How do you catch a squirrel? Climb a tree and act like a nut.
+- 2026-07-25: I bought the world's worst thesaurus. Not only is it terrible, it's also terrible.
+- 2026-07-25: Why did the pirate go to the Apple Store? To get an iPatch.
+- 2026-07-25: "The best and most beautiful things in the world cannot be seen or even touched — they must be felt with the heart." — Helen Keller

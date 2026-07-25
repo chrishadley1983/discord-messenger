@@ -192,3 +192,11 @@ School notices last week:
 - For "next week", emphasise preparation (kit, heads up, PE days)
 - For "last week", keep it brief — just confirmation + any notable events
 - Posts to both Discord AND WhatsApp
+
+## Empty-Response Guard
+
+**This skill must NEVER return a truly blank reply** — the scheduler records an empty reply as a job failure (`empty response`). Always emit *something*:
+
+- If the pre-fetched data is thin or missing (no activities, no school data), do **not** stay silent. Emit a short honest line instead, e.g. `👧🧒 No kids' activities found for the week — calendar/school data looks empty. I'll pick it up on the next sync.`
+- On a genuinely free week/weekend, say so in one line ("Free week — nothing scheduled") rather than producing no output.
+- Only ever reply with the literal token `NO_REPLY` as a deliberate choice — never as the result of producing no text. An empty string is NOT the same as `NO_REPLY`.

@@ -34,6 +34,18 @@ Afternoon traffic report for school pickup. Posts to Discord AND WhatsApp.
 
 5. **Do NOT call any APIs yourself** - All data is pre-fetched. Just format it.
 
+## School Holiday Guard — CHECK THIS FIRST
+
+Before formatting anything, compare `date` from the pre-fetched data against the Kent school-holiday ranges below. **If today falls inside any holiday range — OR the pre-fetched data contains an all-day "School Holiday" event — OR `day_of_week` is "Weekend", school is closed: reply with exactly `NO_REPLY` and nothing else.** This is a date comparison only; do not call any API.
+
+Kent school holidays (school CLOSED). This is a **fail-safe blacklist** — if today is NOT in a listed range, proceed as a normal school day. Update when new term dates are published (currently only 2025–26 is confirmed; add 2026–27 when available):
+- 2025-10-25 → 2025-11-02 (October half-term)
+- 2025-12-20 → 2026-01-04 (Christmas)
+- 2026-02-14 → 2026-02-22 (February half-term)
+- 2026-03-28 → 2026-04-12 (Easter)
+- 2026-05-23 → 2026-05-31 (May half-term)
+- 2026-07-22 → 2026-09-01 (Summer)
+
 ## Pre-fetched Data Structure
 
 ```json
