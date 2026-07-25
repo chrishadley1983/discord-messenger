@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import SensorHistoryPopup from "./SensorHistoryPopup";
+import { Card } from "../ui/Card";
+import Icon from "../ui/Icon";
 
 interface SensorReading {
   temperature: number | null;
@@ -16,9 +18,9 @@ interface SensorResponse {
   sensors: Record<string, SensorReading>;
 }
 
-const SENSOR_CONFIG: { key: string; label: string; color: string }[] = [
-  { key: "sensor_kitchen", label: "Kitchen", color: "var(--accent)" },
-  { key: "sensor_bedroom", label: "Bedroom", color: "var(--blue)" },
+const SENSOR_CONFIG: { key: string; label: string }[] = [
+  { key: "sensor_kitchen", label: "Kitchen" },
+  { key: "sensor_bedroom", label: "Bedroom" },
 ];
 
 export default function SensorWidget() {
@@ -45,35 +47,33 @@ export default function SensorWidget() {
 
   return (
     <>
-      <button
+      <Card
+        section="calendar"
+        chip="Sensors"
+        chipIcon={<Icon name="thermometer" size={16} />}
         onClick={() => setShowHistory(true)}
-        className="bg-surface border border-border rounded-2xl p-3 shadow-sm flex flex-col w-full text-left cursor-pointer transition-all hover:shadow-md active:scale-[0.98]"
+        headerRight={<span className="text-[13px] font-semibold text-ink/40">History ▸</span>}
       >
-        <div className="text-xs font-bold uppercase tracking-widest text-text-mid mb-2 flex items-center justify-between">
-          <span>Sensors</span>
-          <span className="text-text-dim font-normal normal-case tracking-normal text-[0.6rem]">
-            tap for history {"\u25B8"}
-          </span>
-        </div>
         <div className="grid grid-cols-2 gap-2">
           {SENSOR_CONFIG.map((cfg) => {
             const s = !offline ? data.sensors[cfg.key] : null;
             return (
               <div
                 key={cfg.key}
-                className="text-center py-2 px-2 bg-surface-alt rounded-xl"
+                className="text-center py-2 px-2 rounded-xl"
+                style={{ background: "var(--surface-alt)" }}
               >
-                <div className="text-[0.65rem] font-bold uppercase text-text-dim tracking-wide mb-1">
+                <div className="text-[13px] font-bold uppercase text-ink/50 tracking-wide mb-1">
                   {cfg.label}
                 </div>
                 <div
-                  className="font-serif text-2xl font-extralight"
-                  style={{ color: cfg.color }}
+                  className="font-bold"
+                  style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 26, color: "var(--ink)" }}
                 >
                   {s?.temperature ?? "--"}
-                  <span className="text-sm">{"\u00B0"}C</span>
+                  <span className="text-base">°C</span>
                 </div>
-                <div className="text-xs text-text-mid mt-0.5">
+                <div className="text-sm text-ink/60 mt-0.5">
                   {s?.humidity ?? "--"}% humidity
                 </div>
               </div>
@@ -83,18 +83,18 @@ export default function SensorWidget() {
 
         {/* Motion indicator */}
         {motion && (
-          <div className="mt-2 flex items-center gap-1.5 px-1 text-xs text-text-mid">
+          <div className="mt-2 flex items-center gap-1.5 px-1 text-sm text-ink/60">
             <span
-              className="w-2 h-2 rounded-full inline-block"
-              style={{ background: motion.occupancy ? "#16A34A" : "rgba(0,0,0,0.15)" }}
+              className="w-2.5 h-2.5 rounded-full inline-block"
+              style={{ background: motion.occupancy ? "var(--good)" : "var(--ink-12)" }}
             />
             Lounge {motion.occupancy ? "motion detected" : "clear"}
             {motion.illuminance != null && (
-              <span className="ml-auto text-text-dim">{Math.round(motion.illuminance)} lux</span>
+              <span className="ml-auto text-ink/40">{Math.round(motion.illuminance)} lux</span>
             )}
           </div>
         )}
-      </button>
+      </Card>
 
       {showHistory && <SensorHistoryPopup onClose={() => setShowHistory(false)} />}
     </>

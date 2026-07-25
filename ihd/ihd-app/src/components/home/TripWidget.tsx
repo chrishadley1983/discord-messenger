@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, type CSSProperties } from "react";
 import TripPopup from "./TripPopup";
+import { Card } from "../ui/Card";
 
 interface Venue {
   id: string;
@@ -38,10 +39,15 @@ function formatCategory(cat: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// Edge-safety rule 6: auto-rotation pauses for 60s on any pointerdown inside the card
+const ROTATE_MS = 30_000;
+const PAUSE_MS = 60_000;
+
 export default function TripWidget() {
   const [trip, setTrip] = useState<TripData | null>(null);
   const [featured, setFeatured] = useState<Venue | null>(null);
   const [showPopup, setShowPopup] = useState(false);
+  const pauseUntilRef = useRef(0);
 
   const fetchTrip = useCallback(async () => {
     try {
@@ -69,14 +75,19 @@ export default function TripWidget() {
     const pool = greens.length > 10 ? greens : trip.venues;
 
     const pick = () => {
+      if (Date.now() < pauseUntilRef.current) return; // paused by a recent tap
       const idx = Math.floor(Math.random() * pool.length);
       setFeatured(pool[idx]);
     };
 
     pick();
-    const t = setInterval(pick, 30_000);
+    const t = setInterval(pick, ROTATE_MS);
     return () => clearInterval(t);
   }, [trip?.venues]);
+
+  const handlePointerDown = useCallback(() => {
+    pauseUntilRef.current = Date.now() + PAUSE_MS;
+  }, []);
 
   const fallbackDays = Math.ceil(
     (new Date("2026-04-03").getTime() - new Date().getTime()) / 864e5
@@ -86,61 +97,73 @@ export default function TripWidget() {
 
   return (
     <>
-      <div className="bg-surface border border-accent rounded-2xl p-4 shadow-sm flex flex-col gap-2">
-        {/* Countdown at top */}
-        <div className="flex items-center justify-between">
-          <div className="text-xs font-bold uppercase tracking-widest text-text-mid">
-            Japan Trip
-          </div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="font-serif text-[28px] text-accent leading-none font-extralight">
-              {daysToGo}
+      <Card className="flex flex-col gap-2">
+        <div
+          className="flex flex-col gap-2 flex-1 min-h-0"
+          onPointerDownCapture={handlePointerDown}
+        >
+          {/* Header: ink chip (not a standard section colour) */}
+          <div className="flex items-center justify-between shrink-0">
+            <span
+              className="chip-v2"
+              style={{ "--chip": "var(--ink)", "--chip-text": "#fff" } as CSSProperties}
+            >
+              🇯🇵 Japan Trip
             </span>
-            <span className="text-sm text-text-mid">days</span>
+            <div className="flex items-baseline gap-1.5">
+              <span
+                className="text-4xl leading-none font-extrabold"
+                style={{ fontFamily: "var(--font-display), sans-serif", color: "var(--ink)" }}
+              >
+                {daysToGo}
+              </span>
+              <span className="text-sm font-semibold text-ink/60">days</span>
+            </div>
           </div>
-        </div>
 
-        {/* Featured venue — large, tappable */}
-        {featured && (
-          <button
-            onClick={() => setShowPopup(true)}
-            className="flex-1 text-left bg-accent-glow border border-accent/20 rounded-xl p-3 cursor-pointer hover:border-accent/40 transition-colors"
-          >
-            <div className="flex items-start gap-3">
-              <span className="text-3xl mt-0.5">{featured.emoji}</span>
-              <div className="flex-1 min-w-0">
-                <div className="text-[15px] font-semibold leading-tight">
-                  {featured.name}
-                </div>
-                <div className="text-sm text-text-mid mt-1">
-                  {featured.area}
-                </div>
-                <div className="text-xs text-text-mid mt-1.5 leading-snug line-clamp-2">
-                  {featured.verdict}
-                </div>
-                <div className="flex items-center gap-2 mt-2">
-                  {rating && (
-                    <span
-                      className="inline-block px-1.5 py-0.5 rounded text-xs font-bold uppercase"
-                      style={{ background: rating.bg, color: rating.text }}
-                    >
-                      {rating.label}
+          {/* Featured venue — large, tappable */}
+          {featured && (
+            <button
+              onClick={() => setShowPopup(true)}
+              className="pressable flex-1 text-left rounded-xl p-3 cursor-pointer border-2"
+              style={{ background: "var(--ink-08)", borderColor: "var(--ink-30)" }}
+            >
+              <div className="flex items-start gap-3">
+                <span className="text-3xl mt-0.5">{featured.emoji}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-base font-semibold leading-tight">
+                    {featured.name}
+                  </div>
+                  <div className="text-sm text-ink/60 mt-1">
+                    {featured.area}
+                  </div>
+                  <div className="text-sm text-ink/60 mt-1.5 leading-snug line-clamp-2">
+                    {featured.verdict}
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    {rating && (
+                      <span
+                        className="inline-block px-1.5 py-0.5 rounded text-[13px] font-bold uppercase"
+                        style={{ background: rating.bg, color: rating.text }}
+                      >
+                        {rating.label}
+                      </span>
+                    )}
+                    <span className="text-[13px] text-ink/50">
+                      {formatCategory(featured.category)}
                     </span>
-                  )}
-                  <span className="text-xs text-text-dim">
-                    {formatCategory(featured.category)}
-                  </span>
-                  {featured.price && (
-                    <span className="text-xs text-text-dim">
-                      {featured.price}
-                    </span>
-                  )}
+                    {featured.price && (
+                      <span className="text-[13px] text-ink/50">
+                        {featured.price}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          </button>
-        )}
-      </div>
+            </button>
+          )}
+        </div>
+      </Card>
 
       {showPopup && trip && (
         <TripPopup

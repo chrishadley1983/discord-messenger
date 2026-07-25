@@ -8,8 +8,11 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import paho.mqtt.client as mqtt
 
 # --- Config ---
-DIM_TIMEOUT = 120       # seconds of no motion → dim
-OFF_TIMEOUT = 900       # seconds of no motion → off
+# The lounge motion sensor (motion_lounge) has been dead since ~Mar 2026, so
+# this is touch-driven only. Resting state is the clock face ("dim"), never a
+# fully-black "off" screen — that was indistinguishable from a crashed kiosk and
+# gave no power saving anyway (the LCD backlight stays on regardless of content).
+REST_TIMEOUT = 180      # seconds of no touch → revert to clock face
 NIGHT_START = 23        # 23:00
 NIGHT_END = 6           # 06:00
 DISPLAY = "HDMI-A-1"
@@ -23,6 +26,11 @@ WENV["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
 # --- State ---
 state = "active"  # active | dim | off
 last_motion = time.time()
+# Kiosk page posts /heartbeat every ~20s while its JS is alive. Until the first
+# beat arrives, age is measured from controller start so a never-beating kiosk
+# still reads as stale (the watchdog uses this to catch "data-wedge" freezes
+# where the frame looks fine but the renderer's JS is dead).
+last_heartbeat = time.time()
 lock = threading.Lock()
 mqtt_connected = False
 
@@ -39,15 +47,15 @@ def is_night():
     return h >= NIGHT_START or h < NIGHT_END
 
 def get_target_state(idle_secs):
-    """Determine what state we should be in based on idle time."""
-    if idle_secs < DIM_TIMEOUT:
-        if is_night():
-            return "dim"  # night mode: skip active, stay dim
+    """Show the dashboard while in use; rest on the clock face after REST_TIMEOUT.
+
+    Never returns "off" — the screen always shows at least the clock, so a black
+    frame unambiguously means a crashed/frozen kiosk (which the kiosk-watchdog
+    recovers). A touch resets the idle timer and brings the dashboard back.
+    """
+    if idle_secs < REST_TIMEOUT:
         return "active"
-    elif idle_secs < OFF_TIMEOUT:
-        return "dim"
-    else:
-        return "off"
+    return "dim"  # clock face
 
 def transition(new_state):
     """Transition to a new screen state."""
@@ -118,11 +126,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         with lock:
             idle = time.time() - last_motion
+            hb_age = time.time() - last_heartbeat
         body = json.dumps({
             "state": state,
             "idle_seconds": round(idle),
             "night_mode": is_night(),
             "mqtt_connected": mqtt_connected,
+            "heartbeat_age_seconds": round(hb_age),
         })
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -131,7 +141,12 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body.encode())
 
     def do_POST(self):
-        wake()
+        global last_heartbeat
+        if self.path.rstrip("/") == "/heartbeat":
+            with lock:
+                last_heartbeat = time.time()
+        else:
+            wake()
         body = json.dumps({"ok": True})
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

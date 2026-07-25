@@ -1,6 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { Card } from "../ui/Card";
+import Takeover from "../ui/Takeover";
+import Icon from "../ui/Icon";
+import EmptyState from "../ui/EmptyState";
 
 const CHILD_COLOURS: Record<string, string> = {
   Emmie: "#7040b8",
@@ -131,39 +135,14 @@ function getLaunchUrl(slot: ScheduleSlot, students: Student[], tutorTopics: Tuto
   return null;
 }
 
-function IframeModal({ url, title, onClose }: { url: string; title: string; onClose: () => void }) {
-  const overlayRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", h);
-    return () => document.removeEventListener("keydown", h);
-  }, [onClose]);
-
-  return (
-    <div ref={overlayRef} className="fixed inset-0 z-50 flex"
-      style={{ background: "rgba(26, 23, 16, 0.5)" }}>
-      <div className="bg-bg m-3 rounded-2xl shadow-xl flex flex-col overflow-hidden w-full">
-        <div className="flex items-center gap-3 p-3 border-b border-border flex-shrink-0">
-          <button onClick={onClose}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-surface-alt border border-border cursor-pointer hover:bg-border transition-colors">
-            &lsaquo; Back
-          </button>
-          <span className="text-sm text-text-mid truncate">{title}</span>
-        </div>
-        <iframe src={url} className="flex-1 w-full border-none" title={title} allow="autoplay; microphone; speaker; clipboard-write" />
-      </div>
-    </div>
-  );
-}
-
 export default function KidsWidget() {
   const [data, setData] = useState<KidsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [iframeUrl, setIframeUrl] = useState<string | null>(null);
   const [iframeTitle, setIframeTitle] = useState("");
   const [sessionCache, setSessionCache] = useState<Record<string, string>>({});
-  const [rawSessions, setRawSessions] = useState<Record<string, { session_token: string; student_id: string }>>({});
   const [allocations, setAllocations] = useState<Record<string, Allocation[]>>({});
+  const fetchedRef = useRef(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -197,7 +176,6 @@ export default function KidsWidget() {
         }
       } catch { /* ignore */ }
     }
-    setRawSessions(sessions);
     return sessions;
   }, []);
 
@@ -224,9 +202,12 @@ export default function KidsWidget() {
 
   useEffect(() => {
     fetchData();
-    fetchChildSessions().then((sessions) => {
-      if (Object.keys(sessions).length > 0) fetchAllocations(sessions);
-    });
+    if (!fetchedRef.current) {
+      fetchedRef.current = true;
+      fetchChildSessions().then((sessions) => {
+        if (Object.keys(sessions).length > 0) fetchAllocations(sessions);
+      });
+    }
     const t = setInterval(fetchData, 10 * 60 * 1000);
     return () => clearInterval(t);
   }, [fetchData, fetchChildSessions, fetchAllocations]);
@@ -245,23 +226,17 @@ export default function KidsWidget() {
 
   if (loading) {
     return (
-      <div className="bg-surface border border-border rounded-2xl p-4 shadow-sm flex-1 min-h-0">
-        <div className="text-xs font-bold uppercase tracking-widest text-text-mid">
-          Kids Learning
-        </div>
-        <div className="text-sm text-text-dim text-center py-4">Loading...</div>
-      </div>
+      <Card section="kids" chip="Kids Learning" chipIcon={<Icon name="backpack" size={16} />} className="flex-1 min-h-0">
+        <div className="text-base text-ink/60 text-center py-4">Loading...</div>
+      </Card>
     );
   }
 
   if (!data) {
     return (
-      <div className="bg-surface border border-border rounded-2xl p-4 shadow-sm flex-1 min-h-0">
-        <div className="text-xs font-bold uppercase tracking-widest text-text-mid">
-          Kids Learning
-        </div>
-        <div className="text-sm text-text-dim text-center py-4">No data</div>
-      </div>
+      <Card section="kids" chip="Kids Learning" chipIcon={<Icon name="backpack" size={16} />} className="flex-1 min-h-0">
+        <div className="text-base text-ink/60 text-center py-4">No data</div>
+      </Card>
     );
   }
 
@@ -300,39 +275,39 @@ export default function KidsWidget() {
 
   return (
     <>
-      <div className="bg-surface border border-border rounded-2xl p-3 shadow-sm flex-1 min-h-0 flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-xs font-bold uppercase tracking-widest text-text-mid">
-            Kids Learning
-          </div>
-          <div className="text-xs text-text-dim">Week {data.weekNumber}</div>
-        </div>
-
+      <Card section="kids" chip="Kids Learning" chipIcon={<Icon name="backpack" size={16} />} className="flex-1 min-h-0"
+        headerRight={<span className="text-sm text-ink/60 font-semibold">Week {data.weekNumber}</span>}
+      >
         {/* Two-column: one per child */}
-        <div className="flex-1 min-h-0 grid grid-cols-2 gap-2">
+        <div className="flex-1 min-h-0 grid grid-cols-2 gap-2.5 overflow-hidden">
           {childData.map(({ name, col, slots, spelling, words, bestResult }) => (
-            <div key={name} className="flex flex-col gap-1.5 min-h-0">
+            <div key={name} className="flex flex-col gap-1.5 min-h-0 overflow-y-auto overflow-x-hidden">
               {/* Child name header */}
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-bold uppercase" style={{ color: col }}>{name}</span>
+              <div
+                className="text-sm font-bold uppercase tracking-wide"
+                style={{ fontFamily: "var(--font-display), sans-serif", color: col }}
+              >
+                {name}
               </div>
+
+              {slots.length === 0 && !spelling && (
+                <EmptyState icon="backpack" headline="Nothing set today" compact />
+              )}
 
               {/* Today's practice — show allocated papers if available, fallback to schedule slots */}
               {slots.length > 0 && (() => {
                 const childAllocs = allocations[name] || [];
                 const hasAllocs = childAllocs.length > 0;
-                // Filter to actionable allocations (not rest)
                 const activeAllocs = hasAllocs
                   ? childAllocs.filter((a) => a.activity_type !== "rest")
                   : [];
 
                 return (
-                  <div className="p-1.5 rounded-lg" style={{ background: "#eff6ff" }}>
-                    <div className="text-[10px] font-bold uppercase text-blue-600 tracking-wide mb-0.5">
+                  <div className="p-2 rounded-xl flex flex-col gap-1" style={{ background: "var(--kids-tint)" }}>
+                    <div className="text-[13px] font-bold uppercase text-kids tracking-wide">
                       Today&apos;s Practice
                     </div>
                     {hasAllocs && activeAllocs.length > 0 ? (
-                      // Show specific allocated papers with topics
                       activeAllocs.map((a, i) => {
                         const topicLabel = a.topic && a.topic !== "TBD"
                           ? a.topic.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())
@@ -343,37 +318,40 @@ export default function KidsWidget() {
                         const diffLabel = a.difficulty === "actual_test" ? "Kent" : a.difficulty?.replace("_", " ");
 
                         return (
-                          <div key={i}
-                            className={`flex items-center gap-1 text-xs leading-tight py-0.5 ${url ? "cursor-pointer hover:bg-blue-100 rounded px-0.5 -mx-0.5" : ""}`}
+                          <button
+                            key={i}
+                            className={`pressable flex items-center gap-2 text-left rounded-lg px-2 border-none ${url ? "cursor-pointer bg-surface" : "bg-transparent cursor-default"}`}
+                            style={{ minHeight: 56 }}
                             onClick={url ? () => { setIframeUrl(buildIframeUrl(url, name)); setIframeTitle(title); } : undefined}
                           >
                             {a.completed ? (
-                              <span className="text-green-600 flex-shrink-0">{"\u2713"}</span>
+                              <span className="text-good flex-shrink-0 text-lg">{"✓"}</span>
                             ) : (
-                              <span className="text-blue-400 flex-shrink-0">{"\u25CB"}</span>
+                              <span className="text-kids flex-shrink-0 text-lg">{"○"}</span>
                             )}
-                            <span className={`truncate ${a.completed ? "text-green-700" : "text-text-mid"}`}>
+                            <span className="truncate text-base font-medium flex-1">
                               {topicLabel || label}
                             </span>
                             {diffLabel && (
-                              <span className="text-[9px] font-bold uppercase text-blue-400 flex-shrink-0">{diffLabel}</span>
+                              <span className="text-[13px] font-bold uppercase text-kids flex-shrink-0">{diffLabel}</span>
                             )}
-                            {url && <span className="text-text-dim ml-auto flex-shrink-0">&#9656;</span>}
-                          </div>
+                            {url && <span className="text-ink/40 flex-shrink-0">&#9656;</span>}
+                          </button>
                         );
                       })
                     ) : (
-                      // Fallback to generic schedule slots
                       slots.map((s, i) => {
                         const target = getLaunchUrl(s, students, tutorTopics, papers);
                         return (
-                          <div key={i}
-                            className={`flex items-center gap-1 text-xs leading-tight py-0.5 ${target ? "cursor-pointer hover:bg-blue-100 rounded px-0.5 -mx-0.5" : ""}`}
+                          <button
+                            key={i}
+                            className={`pressable flex items-center gap-2 text-left rounded-lg px-2 border-none ${target ? "cursor-pointer bg-surface" : "bg-transparent cursor-default"}`}
+                            style={{ minHeight: 56 }}
                             onClick={target ? () => { setIframeUrl(buildIframeUrl(target.url, name)); setIframeTitle(target.title); } : undefined}
                           >
-                            <span className="text-text-mid truncate">{ACTIVITY_LABELS[s.activity_type] || s.activity_type}</span>
-                            {target && <span className="text-text-dim ml-auto flex-shrink-0">&#9656;</span>}
-                          </div>
+                            <span className="text-base font-medium text-ink truncate flex-1">{ACTIVITY_LABELS[s.activity_type] || s.activity_type}</span>
+                            {target && <span className="text-ink/40 flex-shrink-0">&#9656;</span>}
+                          </button>
                         );
                       })
                     )}
@@ -383,30 +361,31 @@ export default function KidsWidget() {
 
               {/* Spellings */}
               {spelling && (
-                <div className="p-1.5 bg-surface-alt rounded-lg flex flex-col gap-1" style={{ borderLeft: `3px solid ${col}` }}>
+                <div className="p-2 rounded-xl flex flex-col gap-1.5" style={{ background: "var(--surface-alt)", borderLeft: `3px solid ${col}` }}>
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase text-text-mid tracking-wide">Spellings</span>
+                    <span className="text-[13px] font-bold uppercase text-ink/60 tracking-wide">Spellings</span>
                     {bestResult ? (
-                      <span className="text-xs font-bold" style={{
-                        color: bestResult.score / bestResult.total >= 0.8 ? "#166534"
-                          : bestResult.score / bestResult.total >= 0.5 ? "#92400e" : "#dc2626",
+                      <span className="text-base font-bold" style={{
+                        color: bestResult.score / bestResult.total >= 0.8 ? "var(--good)"
+                          : bestResult.score / bestResult.total >= 0.5 ? "var(--warn)" : "var(--bad)",
                       }}>
                         {bestResult.score}/{bestResult.total}
                       </span>
                     ) : (
-                      <span className="text-[10px] text-text-dim">Not tested</span>
+                      <span className="text-[13px] text-ink/40">Not tested</span>
                     )}
                   </div>
                   {spelling.phoneme && (
-                    <span className="text-[10px] text-text-dim -mt-0.5">&ldquo;{spelling.phoneme}&rdquo;</span>
+                    <span className="text-[13px] text-ink/60">&ldquo;{spelling.phoneme}&rdquo;</span>
                   )}
                   <div className="grid grid-cols-2 gap-1">
                     {words.map((word, i) => (
-                      <span key={i} className="px-1.5 py-0.5 rounded-md text-xs bg-surface border border-border text-center truncate">{word}</span>
+                      <span key={i} className="px-1.5 py-1 rounded-md text-sm bg-surface border-2 border-ink/10 text-center truncate">{word}</span>
                     ))}
                   </div>
                   <button
-                    className="w-full py-1 rounded-md text-[11px] font-semibold cursor-pointer border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 transition-colors mt-0.5"
+                    className="pressable w-full rounded-lg text-sm font-bold uppercase cursor-pointer border-2 mt-0.5"
+                    style={{ minHeight: 56, borderColor: col, color: col, background: "var(--surface)" }}
                     onClick={() => {
                       setIframeUrl(buildIframeUrl("https://hadley-spelling-test.surge.sh/", name));
                       setIframeTitle(`Spelling Test — ${name}`);
@@ -419,14 +398,17 @@ export default function KidsWidget() {
             </div>
           ))}
         </div>
-
-        {data.spellings.length === 0 && (
-          <div className="text-xs text-text-dim text-center py-2">No spellings this week</div>
-        )}
-      </div>
+      </Card>
 
       {iframeUrl && (
-        <IframeModal url={iframeUrl} title={iframeTitle} onClose={() => setIframeUrl(null)} />
+        <Takeover onClose={() => setIframeUrl(null)} accent="var(--kids)" title={iframeTitle}>
+          <iframe
+            src={iframeUrl}
+            style={{ width: "100%", height: "100%", border: 0 }}
+            title={iframeTitle}
+            allow="autoplay; microphone; speaker; clipboard-write"
+          />
+        </Takeover>
       )}
     </>
   );

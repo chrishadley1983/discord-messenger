@@ -1,22 +1,23 @@
 import type { Metadata } from "next";
-import { Fraunces, Figtree } from "next/font/google";
+import { Bricolage_Grotesque, Hanken_Grotesk } from "next/font/google";
 import ScreenOverlay from "@/components/ScreenOverlay";
+import { ModalManagerProvider } from "@/components/ui/ModalManager";
 import "./globals.css";
 
-const fraunces = Fraunces({
-  variable: "--font-fraunces",
+const display = Bricolage_Grotesque({
+  variable: "--font-display",
   subsets: ["latin"],
-  weight: ["200", "500"],
+  weight: ["300", "400", "600", "700", "800"],
 });
 
-const figtree = Figtree({
-  variable: "--font-figtree",
+const body = Hanken_Grotesk({
+  variable: "--font-body",
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
+  weight: ["400", "600", "700"],
 });
 
 export const metadata: Metadata = {
-  title: "Family Dashboard",
+  title: "Hadley HQ",
   description: "In-Home Dashboard",
 };
 
@@ -27,9 +28,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${fraunces.variable} ${figtree.variable} antialiased`}>
-        {children}
-        <ScreenOverlay />
+      <body className={`${display.variable} ${body.variable} antialiased`}>
+        <ModalManagerProvider>
+          {children}
+          <ScreenOverlay />
+        </ModalManagerProvider>
       </body>
     </html>
   );

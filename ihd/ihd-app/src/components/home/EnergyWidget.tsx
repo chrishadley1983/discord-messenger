@@ -1,12 +1,16 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { Card } from "../ui/Card";
+import Icon from "../ui/Icon";
+import EnergyDetail from "./EnergyDetail";
 
 interface EnergyData {
   status: string;
   dateLabel: string | null;
+  estimated?: boolean;
   electricity: { kwh: number; cost_pounds: number };
-  gas: { kwh: number; cost_pounds: number };
+  gas: { kwh: number; cost_pounds: number; dateLabel?: string | null };
   isEvDay: boolean;
 }
 
@@ -20,14 +24,15 @@ interface LiveData {
 }
 
 function demandColor(w: number): string {
-  if (w < 600) return "var(--green, #4ade80)";
-  if (w < 2000) return "var(--accent)";
-  return "var(--red, #f87171)";
+  if (w < 600) return "var(--good)";
+  if (w < 2000) return "var(--warn)";
+  return "var(--bad)";
 }
 
 export default function EnergyWidget() {
   const [data, setData] = useState<EnergyData | null>(null);
   const [live, setLive] = useState<LiveData | null>(null);
+  const [showDetail, setShowDetail] = useState(false);
 
   const fetchEnergy = useCallback(async () => {
     try {
@@ -62,97 +67,117 @@ export default function EnergyWidget() {
   const noData = data?.status === "no_data";
   const liveOk = live && live.status === "ok" && !live.stale && live.demand_w !== null;
 
-  const title = data?.dateLabel
-    ? `Energy — ${data.dateLabel}`
-    : "Energy";
-
   return (
-    <div className="bg-surface border border-border rounded-2xl p-3 shadow-sm flex flex-col">
-      <div className="text-xs font-bold uppercase tracking-widest text-text-mid mb-2">
-        {title}
-      </div>
-
+    <>
+    <Card
+      section="control"
+      chip="Energy"
+      chipIcon={<Icon name="zap" size={16} />}
+      onClick={() => setShowDetail(true)}
+      headerRight={
+        data?.dateLabel ? (
+          <span className="text-[13px] font-semibold text-ink/50">
+            {data.dateLabel}
+            {data.estimated ? " (est.)" : ""} ▸
+          </span>
+        ) : undefined
+      }
+    >
       {/* Live demand from the Octopus Home Mini (updates every 20s) */}
+      {/* Compact single-line live tile: the card shares half a column with
+          Sensors and clips overflow, so vertical budget is ~130px below the
+          header — the two-line hero tile left no room for the fuel tiles. */}
       {liveOk && (
-        <div className="flex items-center gap-2 p-2 bg-surface-alt rounded-xl mb-1.5">
+        <div className="flex items-center gap-2 px-2 py-1.5 rounded-xl mb-1.5" style={{ background: "var(--control-tint)" }}>
           <span
-            className="inline-block w-2 h-2 rounded-full animate-pulse"
+            className="inline-block w-2 h-2 rounded-full animate-pulse flex-shrink-0"
             style={{ background: demandColor(live!.demand_w!) }}
           />
-          <div className="flex-1 min-w-0">
-            <div
-              className="font-serif text-2xl font-extralight leading-tight"
-              style={{ color: demandColor(live!.demand_w!) }}
+          <div className="flex-1 min-w-0 flex items-baseline gap-1.5">
+            <span
+              className="font-bold leading-none"
+              style={{
+                fontFamily: "var(--font-display), sans-serif",
+                fontSize: 22,
+                color: demandColor(live!.demand_w!),
+              }}
             >
               {live!.demand_w! >= 1000
                 ? `${(live!.demand_w! / 1000).toFixed(1)}kW`
                 : `${Math.round(live!.demand_w!)}W`}
-              <span className="text-[0.6rem] text-text-dim ml-1">now</span>
-            </div>
-            <div className="text-[0.65rem] text-text-dim">
-              today {live!.today_kwh}kWh {"·"} {"£"}
-              {live!.today_cost_pounds.toFixed(2)}
+            </span>
+            <span className="text-[12px] text-ink/50 truncate">
+              today {live!.today_kwh}kWh {"·"} £{live!.today_cost_pounds.toFixed(2)}
               {live!.offpeak_now && (
-                <span className="ml-1 font-bold" style={{ color: "var(--green, #4ade80)" }}>
-                  off-peak
-                </span>
+                <span className="ml-1 font-bold text-good">off-peak</span>
               )}
-            </div>
+            </span>
           </div>
         </div>
       )}
 
       {offline || noData ? (
         !liveOk && (
-          <div className="text-xs text-text-dim text-center py-2">
+          <div className="text-sm text-ink/50 text-center py-2">
             {noData ? "No data" : "Offline"}
           </div>
         )
       ) : (
-        <div className="flex flex-col gap-1.5">
+        // Side-by-side mini-tiles: the home grid gives this card half a
+        // column (shared with Sensors) and clips overflow, so stacked
+        // full-width rows never fit below the live-demand tile.
+        <div className="grid grid-cols-2 gap-1.5">
           {[
             {
               emoji: "⚡",
               label: "Elec",
+              sub: null as string | null,
               kwh: data!.electricity.kwh,
               cost: data!.electricity.cost_pounds,
-              color: "var(--accent)",
+              color: "var(--warn)",
             },
             {
               emoji: "🔥",
               label: "Gas",
+              // Gas has no Home Mini telemetry so it can lag electricity —
+              // show its own date when it trails the headline date.
+              sub: data!.gas.dateLabel ?? null,
               kwh: data!.gas.kwh,
               cost: data!.gas.cost_pounds,
-              color: "var(--blue)",
+              color: "var(--calendar)",
             },
           ].map((f) => (
             <div
               key={f.label}
-              className="flex items-center gap-2 p-2 bg-surface-alt rounded-xl"
+              className="px-2 py-1.5 rounded-xl min-w-0"
+              style={{ background: "var(--surface-alt)" }}
             >
-              <span className="text-base">{f.emoji}</span>
-              <div className="flex-1 min-w-0">
-                <div
-                  className="font-serif text-lg font-extralight leading-tight"
-                  style={{ color: f.color }}
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm">{f.emoji}</span>
+                <span
+                  className="font-bold leading-tight"
+                  style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 16, color: f.color }}
                 >
                   {f.kwh}
-                  <span className="text-[0.6rem] text-text-dim ml-0.5">kWh</span>
-                </div>
+                  <span className="text-[11px] text-ink/50 ml-0.5">kWh</span>
+                </span>
+                <span className="text-[12px] font-bold text-ink ml-auto">£{f.cost.toFixed(2)}</span>
               </div>
-              <div className="text-sm font-bold text-text">
-                {"£"}{f.cost.toFixed(2)}
-              </div>
+              {f.sub && (
+                <div className="text-[10px] text-ink/50 truncate leading-tight">{f.sub}</div>
+              )}
             </div>
           ))}
         </div>
       )}
 
       {!offline && !noData && data!.isEvDay && (
-        <div className="mt-1.5 text-[0.65rem] font-bold" style={{ color: "var(--accent)" }}>
-          {"🔌"} EV charge day
+        <div className="mt-1.5 text-[13px] font-bold text-warn">
+          🔌 EV charge day
         </div>
       )}
-    </div>
+    </Card>
+    {showDetail && <EnergyDetail onClose={() => setShowDetail(false)} />}
+    </>
   );
 }

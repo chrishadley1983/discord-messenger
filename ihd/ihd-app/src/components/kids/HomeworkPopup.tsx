@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
+import Modal from "../ui/Modal";
 
 const CHILD_COLOURS: Record<string, string> = {
-  Emmie: "#8B5CF6",
-  Max: "#3B82F6",
+  Emmie: "var(--emmie)",
+  Max: "var(--max)",
 };
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -141,8 +142,10 @@ function studentName(students: Student[], id: string): string {
   return students.find((s) => s.id === id)?.name || "Unknown";
 }
 
+// Fullscreen iframe experience for practice papers / spelling tests
+// (DESIGN_SPEC_V2 §6/§7: iframes get a Takeover-style fixed header with an
+// always-reachable back button — sits above the Homework Modal, kids accent).
 function IframeModal({ url, title, onClose }: { url: string; title: string; onClose: () => void }) {
-  const overlayRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", h);
@@ -150,19 +153,40 @@ function IframeModal({ url, title, onClose }: { url: string; title: string; onCl
   }, [onClose]);
 
   return (
-    <div ref={overlayRef} className="fixed inset-0 z-[60] flex"
-      style={{ background: "rgba(26, 23, 16, 0.5)" }}>
-      <div className="bg-bg m-3 rounded-2xl shadow-xl flex flex-col overflow-hidden w-full">
-        <div className="flex items-center gap-3 p-3 border-b border-border flex-shrink-0">
-          <button onClick={onClose}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-surface-alt border border-border cursor-pointer hover:bg-border transition-colors"
-            style={{ minHeight: "44px" }}>
-            &lsaquo; Back
-          </button>
-          <span className="text-sm text-text-mid truncate">{title}</span>
-        </div>
-        <iframe src={url} className="flex-1 w-full border-none" title={title} allow="autoplay; microphone; speaker; clipboard-write" />
+    <div
+      className="fixed inset-0 flex flex-col"
+      style={{ zIndex: 250, background: "var(--paper)", animation: "overlayIn 200ms ease both" }}
+    >
+      <div
+        className="flex items-center gap-4 shrink-0 px-3"
+        style={{ height: 72, background: "var(--kids)", borderBottom: "2px solid var(--ink)" }}
+      >
+        <button
+          onClick={onClose}
+          aria-label="Back"
+          className="pressable flex items-center justify-center gap-1 shrink-0"
+          style={{
+            width: 72,
+            height: 56,
+            borderRadius: 16,
+            border: "2px solid var(--ink)",
+            background: "var(--surface)",
+            fontSize: 22,
+            fontWeight: 800,
+            cursor: "pointer",
+            fontFamily: "var(--font-display), sans-serif",
+          }}
+        >
+          ◀
+        </button>
+        <span
+          className="flex-1 min-w-0 truncate"
+          style={{ fontFamily: "var(--font-display), sans-serif", fontWeight: 800, fontSize: 22, color: "#fff" }}
+        >
+          {title}
+        </span>
       </div>
+      <iframe src={url} className="flex-1 w-full border-none" title={title} allow="autoplay; microphone; speaker; clipboard-write" />
     </div>
   );
 }
@@ -213,25 +237,25 @@ function ScheduleSection({
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <div className="text-xs font-bold uppercase tracking-widest text-text-mid">
+        <div className="text-sm font-bold uppercase tracking-widest" style={{ color: "var(--ink-60)" }}>
           Weekly Practice Schedule
         </div>
         <button onClick={onLaunchPractice}
-          className="px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
-          style={{ minHeight: "44px" }}>
+          className="pressable px-4 rounded-2xl font-semibold cursor-pointer"
+          style={{ minHeight: 56, fontSize: 14, border: "2px solid var(--kids)", background: "var(--kids-tint)", color: "var(--kids)" }}>
           Launch 11PlusMate
         </button>
       </div>
 
       {tutorTopics.length > 0 && (
         <div className="p-3 rounded-xl bg-purple-50 border border-purple-200 mb-3">
-          <div className="text-xs font-bold uppercase text-purple-700 mb-1">
+          <div className="text-sm font-bold uppercase text-purple-700 mb-1">
             This Week&apos;s Tutor Focus
           </div>
           <div className="text-sm font-medium">
             {tutorTopics[0].topic.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
           </div>
-          <div className="text-xs text-text-mid mt-0.5">
+          <div className="text-sm text-text-mid mt-0.5">
             {tutorTopics[0].subject} &middot; {tutorTopics[0].notes?.split("|")[0]?.trim().slice(0, 80)}
           </div>
         </div>
@@ -271,20 +295,20 @@ function ScheduleSection({
               borderColor: isToday ? "#93c5fd" : "transparent",
             }}>
               <div className="flex items-center gap-2 p-3 cursor-pointer select-none"
-                onClick={() => toggleDay(dow)} style={{ minHeight: "44px" }}>
-                <span className="text-text-dim text-xs" style={{ transition: "transform 0.15s", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>
+                onClick={() => toggleDay(dow)} style={{ minHeight: 64 }}>
+                <span style={{ color: "var(--ink-60)", fontSize: 14, transition: "transform 0.15s", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>
                   &#x25BE;
                 </span>
-                <span className={`text-sm font-bold ${isToday ? "text-blue-700" : "text-text-mid"}`}>
+                <span className={`text-base font-bold ${isToday ? "text-blue-700" : ""}`} style={!isToday ? { color: "var(--ink-60)" } : undefined}>
                   {DAY_NAMES[dow]}
                 </span>
                 {isToday && (
-                  <span className="text-xs font-bold uppercase text-blue-500 bg-blue-100 px-1.5 py-0.5 rounded">
+                  <span className="text-sm font-bold uppercase text-blue-500 bg-blue-100 px-2 py-0.5 rounded">
                     Today
                   </span>
                 )}
                 {isCollapsed && (
-                  <span className="ml-auto text-xs text-text-dim">
+                  <span className="ml-auto text-sm" style={{ color: "var(--ink-60)" }}>
                     {doneCount}/{totalSlots} done
                   </span>
                 )}
@@ -300,7 +324,7 @@ function ScheduleSection({
 
                     return (
                       <div key={name} className="mb-2.5 last:mb-0">
-                        <span className="text-xs font-bold mb-1.5 block" style={{ color: col }}>{name}</span>
+                        <span className="text-sm font-bold mb-1.5 block" style={{ color: col }}>{name}</span>
                         <div className="flex flex-col gap-1.5 ml-1">
                           {slots.map((s, i) => {
                             const isTickbox = TICKBOX_TYPES.has(s.activity_type);
@@ -331,13 +355,13 @@ function ScheduleSection({
                             let statusColor: string;
 
                             if (isDone) {
-                              bgColor = "#f0fdf4"; borderColor = "#bbf7d0"; statusIcon = "\u2713"; statusColor = "#166534";
+                              bgColor = "#f0fdf4"; borderColor = "#bbf7d0"; statusIcon = "✓"; statusColor = "#166534";
                             } else if (isPast) {
-                              bgColor = "#fef2f2"; borderColor = "#fecaca"; statusIcon = "\u2717"; statusColor = "#dc2626";
+                              bgColor = "#fef2f2"; borderColor = "#fecaca"; statusIcon = "✗"; statusColor = "#dc2626";
                             } else if (isToday) {
-                              bgColor = "#eff6ff"; borderColor = "#93c5fd"; statusIcon = "\u25CB"; statusColor = "#2563eb";
+                              bgColor = "#eff6ff"; borderColor = "#93c5fd"; statusIcon = "○"; statusColor = "#2563eb";
                             } else {
-                              bgColor = "#f8f7f4"; borderColor = "#e5e2d9"; statusIcon = "\u00B7"; statusColor = "#9ca3af";
+                              bgColor = "#f8f7f4"; borderColor = "#e5e2d9"; statusIcon = "·"; statusColor = "#9ca3af";
                             }
 
                             const getLaunchUrl = (): { url: string; title: string } | null => {
@@ -381,14 +405,16 @@ function ScheduleSection({
 
                             return (
                               <div key={i}
-                                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs ${isTappable ? "cursor-pointer hover:brightness-95 active:brightness-90" : ""}`}
-                                style={{ background: bgColor, border: `1px solid ${borderColor}`, transition: "filter 0.1s", minHeight: "44px" }}
+                                className={`flex items-center gap-2 px-3 rounded-lg text-sm ${isTappable ? "cursor-pointer hover:brightness-95 active:brightness-90" : ""}`}
+                                style={{ background: bgColor, border: `1px solid ${borderColor}`, transition: "filter 0.1s", minHeight: 64 }}
                                 onClick={isTappable && !isTickbox ? () => onLaunchActivity(launchTarget.url, launchTarget.title, name) : undefined}
                               >
                                 {isTickbox ? (
                                   <button
-                                    className="w-6 h-6 rounded border-2 flex items-center justify-center flex-shrink-0 cursor-pointer transition-colors"
+                                    className="pressable rounded-lg border-2 flex items-center justify-center flex-shrink-0 cursor-pointer transition-colors"
                                     style={{
+                                      width: 56,
+                                      height: 56,
                                       borderColor: isDone ? "#166534" : "#d1d5db",
                                       background: isDone ? "#166534" : "white",
                                     }}
@@ -397,10 +423,10 @@ function ScheduleSection({
                                       onToggleCompletion(s.student_id, s.activity_type, dayDate, !isDone);
                                     }}
                                   >
-                                    {isDone && <span className="text-white text-xs font-bold">{"\u2713"}</span>}
+                                    {isDone && <span className="text-white text-lg font-bold">{"✓"}</span>}
                                   </button>
                                 ) : (
-                                  <span className="font-bold text-sm w-5 text-center flex-shrink-0" style={{ color: statusColor }}>
+                                  <span className="font-bold w-6 text-center flex-shrink-0" style={{ color: statusColor, fontSize: 16 }}>
                                     {statusIcon}
                                   </span>
                                 )}
@@ -409,7 +435,7 @@ function ScheduleSection({
                                   {ACTIVITY_LABELS[s.activity_type] || s.activity_type}
                                 </span>
                                 {s.duration_minutes && (
-                                  <span className="text-text-dim">{s.duration_minutes}m</span>
+                                  <span style={{ color: "var(--ink-60)" }}>{s.duration_minutes}m</span>
                                 )}
                                 {!isTickbox && isDone && bestMatch && (
                                   <span className="ml-auto font-bold" style={{
@@ -426,7 +452,7 @@ function ScheduleSection({
                                   <span className="ml-auto text-blue-400 font-medium">Due today</span>
                                 )}
                                 {isTappable && (
-                                  <span className="text-text-dim ml-auto">{"\u25B8"}</span>
+                                  <span className="ml-auto" style={{ color: "var(--ink-30)" }}>{"▸"}</span>
                                 )}
                               </div>
                             );
@@ -437,8 +463,8 @@ function ScheduleSection({
                   })}
                   {isToday && (
                     <button onClick={onLaunchPractice}
-                      className="mt-2 w-full py-2 rounded-lg text-xs font-semibold cursor-pointer border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
-                      style={{ minHeight: "44px" }}>
+                      className="pressable mt-2 w-full rounded-xl font-semibold cursor-pointer border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+                      style={{ minHeight: 56, fontSize: 14 }}>
                       Start Practice &rarr;
                     </button>
                   )}
@@ -463,12 +489,12 @@ function SpellingsSection({
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <div className="text-xs font-bold uppercase tracking-widest text-text-mid">
+        <div className="text-sm font-bold uppercase tracking-widest" style={{ color: "var(--ink-60)" }}>
           Spellings &mdash; Week {weekNumber}
         </div>
         <button onClick={onLaunchTest}
-          className="px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
-          style={{ minHeight: "44px" }}>
+          className="pressable px-4 rounded-2xl font-semibold cursor-pointer"
+          style={{ minHeight: 56, fontSize: 14, border: "2px solid var(--kids)", background: "var(--kids-tint)", color: "var(--kids)" }}>
           Launch Spelling Test
         </button>
       </div>
@@ -491,9 +517,9 @@ function SpellingsSection({
               style={{ borderColor: col + "40", borderLeft: `4px solid ${col}` }}>
               <div className="flex items-center justify-between mb-2">
                 <div>
-                  <span className="text-sm font-bold" style={{ color: col }}>{s.child_name}</span>
-                  <span className="text-xs text-text-dim ml-2">{s.year_group}</span>
-                  {s.phoneme && <span className="text-xs text-text-mid ml-2">Phoneme: <strong>{s.phoneme}</strong></span>}
+                  <span className="text-base font-bold" style={{ color: col }}>{s.child_name}</span>
+                  <span className="text-sm ml-2" style={{ color: "var(--ink-60)" }}>{s.year_group}</span>
+                  {s.phoneme && <span className="text-sm ml-2" style={{ color: "var(--ink-60)" }}>Phoneme: <strong>{s.phoneme}</strong></span>}
                 </div>
                 {bestResult && (
                   <span className="text-lg font-bold" style={{
@@ -508,7 +534,7 @@ function SpellingsSection({
                 {words.map((word, i) => {
                   const isWrong = wrongInBest.map(w => w.toLowerCase()).includes(word.toLowerCase());
                   return (
-                    <span key={i} className="inline-block px-2.5 py-1 rounded-lg text-xs font-medium border"
+                    <span key={i} className="inline-block px-2.5 py-1 rounded-lg text-sm font-medium border"
                       style={{
                         background: bestResult ? (isWrong ? "#fef2f2" : "#f0fdf4") : "#f8f7f4",
                         borderColor: bestResult ? (isWrong ? "#fca5a5" : "#bbf7d0") : "#e5e2d9",
@@ -521,19 +547,19 @@ function SpellingsSection({
               </div>
 
               {childResults.length > 0 ? (
-                <div className="text-xs text-text-mid">
+                <div className="text-sm" style={{ color: "var(--ink-60)" }}>
                   {childResults.length} attempt{childResults.length !== 1 ? "s" : ""} this week
-                  {bestResult?.time_seconds ? ` \u00B7 Best: ${Math.floor(bestResult.time_seconds / 60)}m ${bestResult.time_seconds % 60}s` : ""}
+                  {bestResult?.time_seconds ? ` · Best: ${Math.floor(bestResult.time_seconds / 60)}m ${bestResult.time_seconds % 60}s` : ""}
                 </div>
               ) : (
-                <div className="text-xs text-text-dim">Not tested yet this week</div>
+                <div className="text-sm" style={{ color: "var(--ink-30)" }}>Not tested yet this week</div>
               )}
             </div>
           );
         })}
 
         {spellings.length === 0 && (
-          <div className="text-sm text-text-dim text-center py-6">No spellings loaded this week</div>
+          <div className="text-base text-center py-6" style={{ color: "var(--ink-30)" }}>No spellings loaded this week</div>
         )}
       </div>
     </div>
@@ -545,7 +571,6 @@ export default function HomeworkPopup({ mode, onClose }: HomeworkPopupProps) {
   const [completions, setCompletions] = useState<CompletionRecord[]>([]);
   const [iframeUrl, setIframeUrl] = useState<string | null>(null);
   const [iframeTitle, setIframeTitle] = useState("");
-  const overlayRef = useRef<HTMLDivElement>(null);
   const [sessionCache, setSessionCache] = useState<Record<string, string>>({});
 
   const fetchData = useCallback(async () => {
@@ -615,11 +640,11 @@ export default function HomeworkPopup({ mode, onClose }: HomeworkPopupProps) {
     fetchData();
   }, [fetchData]);
 
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape" && !iframeUrl) onClose(); };
-    document.addEventListener("keydown", h);
-    return () => document.removeEventListener("keydown", h);
-  }, [onClose, iframeUrl]);
+  // Escape closes the Homework popup, unless a fullscreen practice iframe is
+  // showing on top of it (that iframe owns Escape while it's open).
+  const guardedClose = useCallback(() => {
+    if (!iframeUrl) onClose();
+  }, [iframeUrl, onClose]);
 
   const allStudents = data?.practice?.students || [];
   const allSchedules = data?.practice?.schedules || [];
@@ -643,41 +668,27 @@ export default function HomeworkPopup({ mode, onClose }: HomeworkPopupProps) {
     setIframeTitle(title);
   };
 
-  // Count today's completed items for the summary badge
-  const todayDow = (() => { const d = new Date().getDay(); return d === 0 ? 6 : d - 1; })();
-  const todaySlots = schedules.filter((s: ScheduleSlot) => s.day_of_week === todayDow && s.activity_type !== "rest");
-  const todayDone = todaySlots.filter((s: ScheduleSlot) => {
-    if (s.activity_type === "tutor_lesson" || s.activity_type === "tutor_homework") {
-      const dayDate = new Date().toISOString().slice(0, 10);
-      return completions.some((c) => c.student_id === s.student_id && c.activity_type === s.activity_type && c.activity_date === dayDate && c.completed);
-    }
-    return false;
-  }).length;
+  const titleText = mode === "spellings"
+    ? "\u{1F4DD} Spellings"
+    : mode === "emmie"
+      ? "\u{1F984} Emmie's Homework"
+      : mode === "max"
+        ? "\u{1F988} Max's Homework"
+        : "\u{1F4DA} Homework Hub";
 
   return (
-    <div
-      ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: "rgba(26,23,16,0.5)" }}
-      onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
-    >
-      <div className="bg-white rounded-3xl shadow-2xl w-[900px] max-w-[95vw] max-h-[90vh] flex flex-col" style={{ animation: "fadeIn 0.2s ease" }}>
-        <div className="flex items-center justify-between p-5 pb-3 border-b border-border flex-shrink-0">
-          <div>
-            <h2 className="text-lg font-bold">
-              {mode === "spellings" ? "\u{1F4DD} Spellings" : mode === "emmie" ? "\u{1F984} Emmie's Homework" : mode === "max" ? "\u{1F988} Max's Homework" : "\u{1F4DA} Homework Hub"}
-            </h2>
-            {data && <div className="text-sm text-text-mid">Week {data.weekNumber} &middot; {data.academicYear}</div>}
-          </div>
-          <button onClick={onClose} className="text-2xl text-text-dim cursor-pointer p-1" style={{ minWidth: "44px", minHeight: "44px" }}>
-            &times;
-          </button>
-        </div>
+    <>
+      <Modal onClose={guardedClose} accent="var(--kids)" title={titleText} maxWidth={960}>
+        <div className="p-5">
+          {data && (
+            <div className="text-sm mb-3" style={{ color: "var(--ink-60)" }}>
+              Week {data.weekNumber} &middot; {data.academicYear}
+            </div>
+          )}
 
-        <div className="flex-1 overflow-y-auto p-5">
           {!data ? (
             <div className="flex items-center justify-center py-12">
-              <div className="text-text-mid text-sm">Loading...</div>
+              <div className="text-base" style={{ color: "var(--ink-60)" }}>Loading...</div>
             </div>
           ) : mode === "spellings" ? (
             <SpellingsSection
@@ -724,12 +735,12 @@ export default function HomeworkPopup({ mode, onClose }: HomeworkPopupProps) {
             </div>
           )}
         </div>
-      </div>
+      </Modal>
 
       {iframeUrl && (
         <IframeModal url={iframeUrl} title={iframeTitle} onClose={() => setIframeUrl(null)} />
       )}
-    </div>
+    </>
   );
 }
 

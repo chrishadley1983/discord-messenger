@@ -1,21 +1,60 @@
 @import "tailwindcss";
 
-:root {
-  --bg: #f5f2eb;
-  --surface: #ffffff;
-  --surface-alt: #f0ece2;
-  --border: #e0d9cc;
-  --accent: #c47f0a;
-  --accent-glow: rgba(196, 127, 10, 0.08);
-  --text: #1a1710;
-  --text-mid: #7a7060;
-  --text-dim: #bbb0a0;
-  --green: #2a9e5c;
-  --blue: #2e78d0;
-  --rose: #d44868;
-  --purple: #7c52c8;
+/* ============================================================
+   IHD V2 — "Sunburst Control Panel"
+   Bold + bright: saturated section colours, one ink, sticker
+   cards, giant type. See ihd/DESIGN_SPEC_V2.md
+   ============================================================ */
 
-  /* Person colours */
+:root {
+  /* Core */
+  --paper: #FFFDF6;
+  --ink: #221A3A;
+  --ink-80: rgba(34, 26, 58, 0.8);
+  --ink-60: rgba(34, 26, 58, 0.6);
+  --ink-30: rgba(34, 26, 58, 0.3);
+  --ink-12: rgba(34, 26, 58, 0.12);
+  --ink-08: rgba(34, 26, 58, 0.08);
+  --night-bg: #14102A;
+
+  /* Section signature hues */
+  --home: #FFB703;
+  --home-tint: #FFF4D6;
+  --calendar: #1B9AAA;
+  --calendar-tint: #E2F3F5;
+  --meals: #FB5607;
+  --meals-tint: #FFE8DC;
+  --kids: #8338EC;
+  --kids-tint: #EFE4FD;
+  --media: #F72585;
+  --media-tint: #FDE0EE;
+  --control: #06D6A0;
+  --control-tint: #DCF9F0;
+  --hb: #D01012;
+  --hb-tint: #FBE2E2;
+
+  /* Status — --good is deliberately DISTINCT from --control mint so the
+     Control screen's chip / status / CTA don't collapse into one wash */
+  --good: #1AA053;
+  --warn: #FFB703;
+  --bad: #EF4444;
+
+  /* Legacy aliases → new values (untouched components inherit the reboot) */
+  --bg: var(--paper);
+  --surface: #ffffff;
+  --surface-alt: #F6F2E7;
+  --border: rgba(34, 26, 58, 0.12);
+  --accent: #D07B00; /* darkened marigold — AA-legible as text on white */
+  --accent-glow: rgba(255, 183, 3, 0.14);
+  --text: var(--ink);
+  --text-mid: rgba(34, 26, 58, 0.62);
+  --text-dim: rgba(34, 26, 58, 0.34);
+  --green: #0AA574;
+  --blue: #1B9AAA;
+  --rose: #F72585;
+  --purple: #8338EC;
+
+  /* Person colours — KEEP, the family knows them */
   --chris: #c47f0a;
   --abby: #c8304c;
   --max: #2060b8;
@@ -24,6 +63,28 @@
 }
 
 @theme inline {
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-night: var(--night-bg);
+  --color-home: var(--home);
+  --color-home-tint: var(--home-tint);
+  --color-calendar: var(--calendar);
+  --color-calendar-tint: var(--calendar-tint);
+  --color-meals: var(--meals);
+  --color-meals-tint: var(--meals-tint);
+  --color-kids: var(--kids);
+  --color-kids-tint: var(--kids-tint);
+  --color-media: var(--media);
+  --color-media-tint: var(--media-tint);
+  --color-control: var(--control);
+  --color-control-tint: var(--control-tint);
+  --color-hb: var(--hb);
+  --color-hb-tint: var(--hb-tint);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+
+  /* Legacy token names */
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-alt: var(--surface-alt);
@@ -37,8 +98,10 @@
   --color-blue: var(--blue);
   --color-rose: var(--rose);
   --color-purple: var(--purple);
-  --font-sans: var(--font-figtree);
-  --font-serif: var(--font-fraunces);
+
+  --font-sans: var(--font-body);
+  --font-serif: var(--font-display);
+  --font-display: var(--font-display);
 }
 
 *, *::before, *::after {
@@ -51,7 +114,7 @@ html {
   overflow: hidden;
   margin: 0;
   padding: 0;
-  /* Bigger text for 13.3" 1080p touchscreen at kitchen distance */
+  /* Bigger text for touchscreen at kitchen distance */
   font-size: 18px;
 }
 
@@ -61,12 +124,73 @@ body {
   overflow: hidden;
   margin: 0;
   padding: 0;
-}
-
-body {
   background: var(--bg);
   color: var(--text);
-  font-family: var(--font-figtree), sans-serif;
+  font-family: var(--font-body), sans-serif;
+}
+
+/* ============ Sticker-card system ============ */
+.card-v2 {
+  background: var(--surface);
+  border: 2px solid var(--ink);
+  border-radius: 20px;
+  box-shadow: 4px 4px 0 var(--ink-08);
+}
+
+.pressable {
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.pressable:active {
+  transform: scale(0.96);
+  box-shadow: 2px 2px 0 var(--ink-08);
+}
+
+/* Section chip: <span class="chip-v2" style="--chip: var(--kids); --chip-text: #fff"> */
+.chip-v2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--chip, var(--ink));
+  color: var(--chip-text, #fff);
+  font-family: var(--font-display), sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+}
+
+/* Staggered mount: add .stagger-in to a container; direct children animate in.
+   fill-mode backwards (NOT both): a forwards/both fill leaves a computed
+   transform on the card forever, which turns it into a containing block and
+   traps position:fixed takeovers inside the card (E2E finding). */
+.stagger-in > * {
+  animation: cardIn 300ms ease-out backwards;
+}
+.stagger-in > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-in > *:nth-child(2) { animation-delay: 60ms; }
+.stagger-in > *:nth-child(3) { animation-delay: 120ms; }
+.stagger-in > *:nth-child(4) { animation-delay: 180ms; }
+.stagger-in > *:nth-child(5) { animation-delay: 240ms; }
+.stagger-in > *:nth-child(6) { animation-delay: 300ms; }
+.stagger-in > *:nth-child(7) { animation-delay: 360ms; }
+.stagger-in > *:nth-child(8) { animation-delay: 420ms; }
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes overlayIn {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes backdropIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* Prevent horizontal scrollbar caused by wide vertical scrollbar */
@@ -81,23 +205,23 @@ body {
   border-radius: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--ink-30);
   border-radius: 10px;
   border: 4px solid var(--surface-alt);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-dim);
+  background: var(--ink-60);
 }
 
-/* Animations */
+/* ============ Animations (transform/opacity only — Pi GPU) ============ */
 @keyframes blink {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.2; }
+  50% { opacity: 0.5; }
 }
 
 @keyframes glow {
-  0%, 100% { box-shadow: 0 0 6px var(--green); }
-  50% { box-shadow: 0 0 14px var(--green); }
+  0%, 100% { box-shadow: 0 0 6px var(--good); }
+  50% { box-shadow: 0 0 14px var(--good); }
 }
 
 @keyframes fadeIn {

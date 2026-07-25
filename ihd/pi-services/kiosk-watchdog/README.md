@@ -1,22 +1,46 @@
 # kiosk-watchdog
 
-Auto-recovers the IHD dashboard Chromium kiosk when its renderer freezes or crashes,
-leaving a black/blank screen that ignores touch (the Next.js server on :3000 stays
-healthy, so only a framebuffer check catches it).
+Auto-recovers the IHD dashboard Chromium kiosk when its renderer freezes or crashes —
+a black/blank screen that ignores touch, a "data-wedge" where the frame looks fine
+but the page's JS is dead, or a "presentation stall" where the JS is alive and
+beating but the compositor has stopped painting new frames (the Next.js server on
+:3000 stays healthy throughout, so an HTTP health check can't see any of them).
 
 ## How it works
 
-- Polls the screen-controller (`:5002`) every 60s. Only judges health when
-  `state == "active"` (when the dashboard must be visible). In `dim`/`off` a black
-  frame is legitimate, so it does nothing.
+Three independent checks, polled from the screen-controller (`:5002`) every 60s:
+
+**Black/crash check** (active state only — in `dim`/`off` a black frame is legitimate):
 - Takes a `grim` screenshot and checks its byte size: healthy dashboard ~120 KB,
   black frame ~2.4 KB, "Aw, Snap!" crash ~18 KB. `< 40 KB` while active = fault.
-- Requires two consecutive faults, then escalates recovery:
+- Two consecutive faults, then escalating recovery:
   1. `Ctrl+R` reload (`wtype`)
   2. kill the frozen renderer (`pkill -f 'chromium.*type=renderer'`) + reload
   3. full Chromium relaunch (the labwc autostart has no respawn loop)
-- Runs a once-daily proactive reload at 04:xx to prevent multi-day tab rot
-  (the original 2026-07-05 freeze was a ~9-day-old tab).
+
+**Heartbeat / data-wedge check** (any state — the 2026-07-07 and 2026-07-10 wedges
+froze the widgets and the rest-state clock respectively, with a healthy-looking frame):
+- The kiosk page (`ScreenOverlay` in the app's root layout) POSTs
+  `/api/screen/heartbeat` → controller `POST /heartbeat` every 20s while its JS
+  runs; the controller reports `heartbeat_age_seconds`.
+- Age > 75s (3 missed beats) twice in a row = wedged. Plain Ctrl+R does not clear
+  a wedge, so recovery starts at kill-renderer + reload (verified by the heartbeat
+  resuming), then full relaunch.
+- Caveat: any browser with the dashboard open (e.g. a laptop viewing :3000)
+  also beats, which would mask a wedged kiosk while that tab stays open.
+
+**Presentation-stall check** (any state — the 2026-07-17 stall held one frame for
+35 hours while the heartbeat kept arriving, so both checks above passed):
+- Each poll md5s the `grim` screenshot. The on-screen clock advances every minute
+  in every state, so a healthy frame is *never* byte-identical to the last one.
+- 3 identical consecutive frames (spanning ≥2 clock minutes) = stalled. Recovery
+  goes straight to a full Chromium relaunch — a reload or renderer kill leaves the
+  stalled compositor in place.
+- Suppressed while the media overlay is up (`close-overlay.py` running), where a
+  paused video is legitimately static.
+
+Also runs a once-daily proactive reload at 04:xx to prevent multi-day tab rot
+(the original 2026-07-05 freeze was a ~9-day-old tab).
 
 ## Deploy (on the Pi)
 

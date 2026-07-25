@@ -21,6 +21,26 @@ def _sb_get(table: str, params: dict) -> list[dict]:
     return resp.json()
 
 
+def _sb_get_all(table: str, params: dict, max_rows: int = 5000) -> list[dict]:
+    """Paginate past PostgREST's server-side max-rows cap (1000 on Supabase).
+
+    A single request for a full day of energy_live minutes (1440 rows) is
+    silently truncated to 1000, which starved recent_summary's provisional
+    synthesis (needs >=1200) and undercounted today_curve after ~16:40 local.
+    Requires an explicit `order` in params for stable pages.
+    """
+    page = 1000
+    rows: list[dict] = []
+    offset = 0
+    while offset < max_rows:
+        batch = _sb_get(table, {**params, "limit": str(page), "offset": str(offset)})
+        rows.extend(batch)
+        if len(batch) < page:
+            break
+        offset += page
+    return rows
+
+
 def _rate_windows(hours_back: int = 72) -> list[dict]:
     """Electricity unit-rate windows covering recent days.
 
@@ -138,11 +158,10 @@ def today_curve() -> dict:
     """Today's 1-minute curve + totals from energy_live, cost-estimated."""
     day_start = datetime.now(timezone.utc).astimezone().replace(
         hour=0, minute=0, second=0, microsecond=0)
-    rows = _sb_get("energy_live", {
+    rows = _sb_get_all("energy_live", {
         "select": "minute_start,demand_w_avg,demand_w_max,consumption_wh",
         "minute_start": f"gte.{day_start.isoformat()}",
         "order": "minute_start.asc",
-        "limit": "1500",
     })
     total_wh = sum(float(r.get("consumption_wh") or 0) for r in rows)
     windows = _rate_windows()
@@ -203,11 +222,11 @@ def recent_summary(days: int = 7) -> list[dict]:
             continue
         day_start = datetime.combine(day, datetime.min.time()).astimezone()
         day_end = day_start + timedelta(days=1)
-        mins = _sb_get("energy_live", {
+        mins = _sb_get_all("energy_live", {
             "select": "minute_start,consumption_wh",
             "minute_start": f"gte.{day_start.isoformat()}",
             "and": f"(minute_start.lt.{day_end.isoformat()})",
-            "limit": "1500",
+            "order": "minute_start.asc",
         })
         # Only synthesise when telemetry covers most of the day — a few
         # hours of minutes would masquerade as a tiny full day.
