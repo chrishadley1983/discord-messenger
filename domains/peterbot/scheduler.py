@@ -853,6 +853,16 @@ class PeterbotScheduler:
                             asyncio.create_task(asyncio.to_thread(force_restart_channel, used_channel))
                         except Exception as heal_err:
                             logger.warning(f"reactive channel heal failed to start: {heal_err}")
+
+                # Strip leaked tool-call XML (e.g. "</text></invoke>") before
+                # any further processing — it must never reach Discord or the
+                # news history file.
+                if response:
+                    from domains.peterbot.response.sanitiser import strip_tool_xml
+                    cleaned = strip_tool_xml(response)
+                    if cleaned != response:
+                        logger.warning(f"Job {job.name}: stripped leaked tool XML from response")
+                        response = cleaned
             except asyncio.TimeoutError:
                 duration = time.time() - start_time
                 logger.error(f"Job {job.name} timed out after {duration:.1f}s")
