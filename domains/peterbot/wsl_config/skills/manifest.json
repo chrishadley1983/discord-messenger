@@ -1291,17 +1291,6 @@
     "description": "Sunday pocket money calculation — present grid to Chris for approval, then credit balances",
     "channel": "#peterbot"
   },
-  "practice-allocate": {
-    "triggers": [
-      "allocate practice",
-      "generate practice week",
-      "11+ mate allocate"
-    ],
-    "conversational": true,
-    "scheduled": true,
-    "description": "Weekly 11+ Mate practice paper allocation for Emmie and Max",
-    "channel": "#peterbot"
-  },
   "price-scanner": {
     "triggers": [
       "check prices",
@@ -1668,5 +1657,17 @@
     "scheduled": false,
     "description": "Daily YouTube video recommendations in key interest areas",
     "channel": "#youtube"
+  },
+  "mark-paper": {
+    "triggers": [
+      "got X/20",
+      "scored",
+      "mark paper",
+      "wrong on"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Record 11+ practice paper marks Chris sends conversationally",
+    "channel": "#peterbot"
   }
 }

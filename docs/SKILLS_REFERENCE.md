@@ -316,7 +316,6 @@ channel: "#peterbot"
 | Skill | Purpose | Conv | Sched | Schedule | Channel | Data Sources |
 |-------|---------|------|-------|----------|---------|-------------|
 | `spelling-test-generator` | Process Max's spelling photo, add to DB, deploy test page | YES | YES | Fri 19:00 | #peterbot +WhatsApp:chris | Image OCR, Hadley API: `/spellings/add`, surge.sh deploy |
-| `practice-allocate` | Weekly 11+ Mate practice paper allocation for Emmie and Max | YES | YES | Tue 21:00 | #peterbot | Supabase: `allocate-practice` Edge Function |
 | `tutor-email-parser` | Parse tutor emails for topic and homework, update 11+ Mate | YES | YES | Tue 19:00 | #peterbot | Gmail: tutor emails, 11+ Mate API |
 | `paper-builder` | Generate missing 11+ practice papers for this week's topic | YES | YES | Tue 19:30 | #peterbot | 11+ Mate: paper counts, topic data, template system |
 | `pocket-money-weekly` | Sunday pocket money grid calculation with approval flow | YES | YES | Sunday 09:32 | #peterbot | IHD Dashboard API: `/api/kids/pocket-money/calculate` |
@@ -326,14 +325,16 @@ channel: "#peterbot"
 **Education pipeline (Tuesday flow):**
 1. `tutor-email-parser` at 19:00 -- parses tutor email, identifies topic
 2. `paper-builder` at 19:30 -- generates practice papers for the topic
-3. `practice-allocate` at 21:00 -- allocates papers across the week
+
+Allocation is no longer Peter's job (removed 30 Jul 2026): the Windows task
+`11Plus-MorningPapers` (07:00 daily, emmie-practice repo) allocates each day via
+the `allocate-practice` Edge Function and emails the papers in the same run.
 
 **Triggers (conversational):**
 
 | Skill | Trigger Phrases |
 |-------|-----------------|
 | `spelling-test-generator` | "max spellings", "spelling test", "generate spelling test", "spelling photo" |
-| `practice-allocate` | "allocate practice", "generate practice week", "11+ mate allocate" |
 | `tutor-email-parser` | _(primarily scheduled -- parses tutor email automatically)_ |
 | `paper-builder` | "build papers", "generate papers", "make practice papers" |
 | `pocket-money-weekly` | "pocket money", "pocket money update", "kids pocket money" |
@@ -490,7 +491,6 @@ Complete view of all scheduled skills in chronological order for a typical weekd
 | Monday | 07:30 | `school-weekly-spellings` | #peter-chat +WhatsApp:group |
 | Tuesday | 19:00 | `tutor-email-parser` | #peterbot |
 | Tuesday | 19:30 | `paper-builder` | #peterbot |
-| Tuesday | 21:00 | `practice-allocate` | #peterbot |
 | Thursday | 07:45 | `school-run` _(early start)_ | #traffic-reports +WhatsApp:group |
 | Wednesday | 16:50 | `school-pickup` _(late pickup)_ | #traffic-reports +WhatsApp:group |
 | Friday | 19:00 | `spelling-test-generator` | #peterbot +WhatsApp:chris |
@@ -513,7 +513,7 @@ Which skills post to which Discord channels.
 
 | Channel | Skills |
 |---------|--------|
-| `#peterbot` | hb-dashboard, hb-orders, hb-pick-list, hb-full-sync-print, hb-daily-activity, kids-daily, kids-weekly, morning-laughs, email-summary, schedule-today, schedule-week, notion-todos, knowledge-digest, amazon-purchases, daily-instagram-prep, instagram-concepts, instagram-processing, github-activity, github-weekly, spelling-test-generator, practice-allocate, paper-builder, pocket-money-weekly, healthera-prescriptions, property-valuation, daily-thoughts, remind, hb-dashboard |
+| `#peterbot` | hb-dashboard, hb-orders, hb-pick-list, hb-full-sync-print, hb-daily-activity, kids-daily, kids-weekly, morning-laughs, email-summary, schedule-today, schedule-week, notion-todos, knowledge-digest, amazon-purchases, daily-instagram-prep, instagram-concepts, instagram-processing, github-activity, github-weekly, spelling-test-generator, paper-builder, pocket-money-weekly, healthera-prescriptions, property-valuation, daily-thoughts, remind, hb-dashboard |
 | `#food-log` | nutrition-summary, hydration, health-digest, weekly-health, monthly-health, meal-rating, cooking-reminder, daily-recipes, price-scanner, recipe-discovery |
 | `#traffic-reports` | school-run, school-pickup |
 | `#ai-briefings` | morning-briefing, hb-email-purchases |

@@ -154,7 +154,6 @@ Times are UK local. Jobs marked with a day name only run on that day.
 | 20:30 | `meal-rating` | #food-log | Rate today's meals |
 | 20:45 | `cooking-reminder` | #food-log | Evening cooking reminder |
 | 21:00 | `nutrition-summary` | #food-log | End-of-day nutrition totals |
-| 21:00 | `practice-allocate` | #peterbot | **Tue only** — allocate 11+ practice |
 | 21:02 | `hydration` | #food-log+WhatsApp:chris | Final hydration check |
 | 21:45 | `daily-thoughts` | #peterbot!quiet | Daily reflection/journal prompt |
 | 22:00 | `security-monitor` | #alerts | 5th (final) security check |
@@ -244,7 +243,6 @@ Pre-fetch functions in `data_fetchers.py` run **before** skill execution to prov
 | `school-weekly-spellings` | `get_school_data()` | Supabase spellings + school events |
 | `tutor-email-parser` | `get_tutor_email_data()` | Gmail (tutor emails) |
 | `paper-builder` | `get_paper_builder_data()` | 11+ practice paper data |
-| `practice-allocate` | `get_practice_allocate_data()` | 11+ practice allocation |
 | `pocket-money-weekly` | `get_pocket_money_weekly_data()` | Chore completion data |
 
 #### Hadley Bricks (Business)
@@ -364,7 +362,7 @@ These skills have their output automatically saved to Second Brain after executi
 
 | Channel | Channel ID | Skills |
 |---------|-----------|--------|
-| **#peterbot** | (env var) | morning-laughs, kids-daily, morning-digest, cricket-scores, ballot-reminders, healthera-prescriptions, amazon-purchases, hb-full-sync-print, spurs-matchday, saturday-sport-preview, pl-results, claude-history, property-valuation, pocket-money-weekly, tutor-email-parser, paper-builder, practice-allocate, spelling-test-generator, daily-thoughts, schedule-week, github-weekly, kids-weekly, spurs-live |
+| **#peterbot** | (env var) | morning-laughs, kids-daily, morning-digest, cricket-scores, ballot-reminders, healthera-prescriptions, amazon-purchases, hb-full-sync-print, spurs-matchday, saturday-sport-preview, pl-results, claude-history, property-valuation, pocket-money-weekly, tutor-email-parser, paper-builder, spelling-test-generator, daily-thoughts, schedule-week, github-weekly, kids-weekly, spurs-live |
 | **#food-log** | 1465294449038069912 | hydration, health-digest, nutrition-summary, cooking-reminder, meal-rating, weekly-health, monthly-health, recipe-discovery, price-scanner |
 | **#ai-news** | 1465277483866788037 | newsletter (merged 2026-07-02; morning-briefing/news/youtube-digest schedules disabled, skills remain conversational) |
 | **#alerts** | 1466019126194606286 | system-health, security-monitor, subscription-monitor, self-reflect |

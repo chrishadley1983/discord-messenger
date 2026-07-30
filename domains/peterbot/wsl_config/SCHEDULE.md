@@ -62,7 +62,6 @@ Run `!reload-schedule` after editing to apply changes.
 | Security Monitor | security-monitor | 06:00,22:00 UK | #alerts | yes |
 | Tutor Email Parser | tutor-email-parser | Tue 19:00 UK | #peterbot | yes |
 | Paper Builder | paper-builder | Tue 19:30 UK | #peterbot | yes |
-| Practice Allocate | practice-allocate | Tue 21:00 UK | #peterbot | yes |
 | Spelling Test Reminder | spelling-test-generator | Fri 19:00 UK | #peterbot+WhatsApp:chris | yes |
 | Commitment Nudge | commitment-nudge | 19:00 UK | WhatsApp:chris | yes |
 | Pocket Money Weekly | pocket-money-weekly | Sunday 09:32 UK | #peterbot | yes |

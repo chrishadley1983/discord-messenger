@@ -3950,68 +3950,6 @@ async def get_paper_builder_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
-async def get_practice_allocate_data() -> dict[str, Any]:
-    """Allocate 11+ Mate practice papers for the week for both students.
-
-    Calls the allocate-practice Edge Function for each student for each day
-    of the coming week (Wed-Tue cycle, starting tomorrow).
-    """
-    import httpx
-
-    base_url = "https://modjoikyuhqzouxvieua.supabase.co/functions/v1/allocate-practice"
-    service_key = "psk_11plusmate_tutor_2026"
-    family_code = "HADLEY"
-    anon_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1vZGpvaWt5dWhxem91eHZpZXVhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYxNDE3MjksImV4cCI6MjA4MTcxNzcyOX0.EWGr0LOwFKFw3krrzZQZP_Gcew13s1Z9H3LxB0-JmPA"
-
-    students = [
-        {"id": "a5677d2f-9614-4504-94a2-4dae933af2c1", "name": "Emmie"},
-        {"id": "2d204872-bfaa-4577-bd16-c07863b52cd1", "name": "Max"},
-    ]
-
-    now = datetime.now(UK_TZ)
-    results = {}
-
-    try:
-        async with httpx.AsyncClient() as client:
-            for student in students:
-                student_results = []
-                # Allocate for the next 7 days (tomorrow through 7 days out)
-                for day_offset in range(1, 8):
-                    target_date = (now + timedelta(days=day_offset)).strftime("%Y-%m-%d")
-                    params = {
-                        "service_key": service_key,
-                        "family_code": family_code,
-                        "student_id": student["id"],
-                        "date_override": target_date,
-                    }
-                    resp = await client.get(
-                        base_url,
-                        params=params,
-                        headers={"Authorization": f"Bearer {anon_key}"},
-                        timeout=15,
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        student_results.append({
-                            "date": target_date,
-                            "day_name": data.get("day_name", ""),
-                            "allocations": data.get("allocations", []),
-                        })
-                    else:
-                        student_results.append({
-                            "date": target_date,
-                            "error": f"HTTP {resp.status_code}: {resp.text[:100]}",
-                        })
-
-                results[student["name"]] = student_results
-
-        logger.info(f"Practice allocation: allocated for {len(students)} students, 7 days each")
-        return {"students": results, "week_start": (now + timedelta(days=1)).strftime("%Y-%m-%d")}
-
-    except Exception as e:
-        logger.error(f"Practice allocation fetch error: {e}")
-        return {"error": str(e), "students": {}}
-
 
 async def get_system_health_data() -> dict[str, Any]:
     """Fetch unified job health data from Hadley API.
@@ -4729,7 +4667,6 @@ SKILL_DATA_FETCHERS = {
     # 11+ Mate
     "tutor-email-parser": get_tutor_email_data,
     "paper-builder": get_paper_builder_data,
-    "practice-allocate": get_practice_allocate_data,
     # System health monitoring
     "system-health": get_system_health_data,
     # Pocket money weekly
