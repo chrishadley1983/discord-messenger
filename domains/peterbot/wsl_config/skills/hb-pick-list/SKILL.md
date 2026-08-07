@@ -1,6 +1,6 @@
 ---
 name: hb-pick-list
-description: Amazon and eBay picking lists for order fulfillment
+description: Amazon, eBay and Shopify picking lists for order fulfillment
 trigger:
   - "picking list"
   - "pick list"
@@ -16,7 +16,7 @@ channel: #peterbot
 
 ## Purpose
 
-Generates consolidated picking lists for Amazon and eBay orders. Shows items that need to be picked from inventory for shipping. Scheduled for 7am daily or triggered conversationally.
+Generates consolidated picking lists for Amazon, eBay and Shopify orders. Shows items that need to be picked from inventory for shipping. Scheduled for 7am daily or triggered conversationally.
 
 ## Data Source — EXACT ENDPOINTS, DO NOT GUESS
 
@@ -25,6 +25,7 @@ If pre-fetched data is missing or errored, fetch it yourself from these EXACT pa
 
 - `GET /hb/picking-list/amazon?format=json`
 - `GET /hb/picking-list/ebay?format=json`
+- `GET /hb/picking-list/shopify?format=json`
 
 The path is `picking-list` (NOT `pick-list`, `picklist`, or `pick`), and the platform
 segment is REQUIRED. Never substitute `/hb/orders` for the pick list — orders data has
@@ -47,6 +48,10 @@ Data is pre-fetched from the Hadley Bricks API (same shape as the endpoint respo
   - `unmatchedItems` / `unknownLocationItems`: subsets needing a warning
   - `totalItems`, `totalOrders`, `pickUrl`
 - `data.ebay`: eBay picking list (similar structure; `location` per item)
+- `data.shopify`: Shopify picking list (similar structure); extra fields per item:
+  - `sku`: inventory SKU (use when `setNo` is null)
+  - `orderName`: human order number like `#1011` — show this as the order reference
+  - Shopify rows are one per unit (`quantity` 1 each); combine duplicates as usual
 - `data.fetch_time`: When data was fetched
 
 ## Output Format
@@ -63,12 +68,16 @@ Data is pre-fetched from the Hadley Bricks API (same shape as the endpoint respo
 • 10497 Galaxy Explorer x1 → A1-B4
 • 21330 Home Alone x1 → B2-A1
 
-Total: 5 items to pick
+**Shopify** (2 items)
+• 43273 Frozen Advent Calendar x1 → Loft - S72
+• 75358 Tenoo Jedi Temple x1 → Loft - S54
+
+Total: 7 items to pick
 ```
 
 ## Rules
 
-- Group by platform (Amazon first, then eBay)
+- Group by platform (Amazon first, then eBay, then Shopify)
 - Show location codes for easy picking
 - Combine duplicates with quantity
 - Keep set names short if needed
@@ -114,7 +123,7 @@ Total: 6 items to pick
 
 ✅ All caught up! No items to pick.
 
-All Amazon and eBay orders are fulfilled.
+All Amazon, eBay and Shopify orders are fulfilled.
 ```
 
 **Only Amazon:**

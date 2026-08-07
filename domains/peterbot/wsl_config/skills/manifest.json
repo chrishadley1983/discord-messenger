@@ -632,7 +632,7 @@
     ],
     "conversational": true,
     "scheduled": false,
-    "description": "Amazon and eBay picking lists for order fulfillment",
+    "description": "Amazon, eBay and Shopify picking lists for order fulfillment",
     "channel": null
   },
   "hb-platform-performance": {

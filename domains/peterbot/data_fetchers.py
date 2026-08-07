@@ -2511,15 +2511,16 @@ async def get_hb_dashboard_data() -> dict[str, Any]:
 
 
 async def get_hb_pick_list_data() -> dict[str, Any]:
-    """Fetch Amazon and eBay picking lists."""
+    """Fetch Amazon, eBay and Shopify picking lists."""
     try:
         results = await asyncio.gather(
             _hb_request("/api/picking-list/amazon", params={"format": "json"}),
             _hb_request("/api/picking-list/ebay", params={"format": "json"}),
+            _hb_request("/api/picking-list/shopify", params={"format": "json"}),
             return_exceptions=True
         )
 
-        amazon, ebay = results
+        amazon, ebay, shopify = results
 
         # The picking-list routes wrap their payload in {"data": {...}} — unwrap so
         # consumers see the documented structure (items, unmatchedItems, totalItems).
@@ -2532,17 +2533,20 @@ async def get_hb_pick_list_data() -> dict[str, Any]:
 
         amazon = _unwrap(amazon)
         ebay = _unwrap(ebay)
+        shopify = _unwrap(shopify)
 
         data = {
             "amazon": amazon,
             "ebay": ebay,
+            "shopify": shopify,
             "fetch_time": datetime.now(UK_TZ).strftime("%Y-%m-%d %H:%M")
         }
 
         # Count items
         amazon_count = len(amazon.get("items", [])) if isinstance(amazon, dict) else 0
         ebay_count = len(ebay.get("items", [])) if isinstance(ebay, dict) else 0
-        logger.info(f"HB pick list fetch: {amazon_count} Amazon, {ebay_count} eBay items")
+        shopify_count = len(shopify.get("items", [])) if isinstance(shopify, dict) else 0
+        logger.info(f"HB pick list fetch: {amazon_count} Amazon, {ebay_count} eBay, {shopify_count} Shopify items")
 
         return data
 
@@ -2729,9 +2733,10 @@ async def get_hb_full_sync_and_print_data() -> dict[str, Any]:
         "sync": {"status": "pending", "data": {}},
         "pick_lists": {
             "amazon": {"status": "pending", "items": 0, "orders": 0, "pdf_path": None},
-            "ebay": {"status": "pending", "items": 0, "orders": 0, "pdf_path": None}
+            "ebay": {"status": "pending", "items": 0, "orders": 0, "pdf_path": None},
+            "shopify": {"status": "pending", "items": 0, "orders": 0, "pdf_path": None}
         },
-        "print_status": {"amazon": None, "ebay": None},
+        "print_status": {"amazon": None, "ebay": None, "shopify": None},
         "files_to_attach": [],  # List of (filepath, filename) tuples for Discord
         "errors": [],
         "fetch_time": datetime.now(UK_TZ).strftime("%Y-%m-%d %H:%M")
@@ -2757,9 +2762,10 @@ async def get_hb_full_sync_and_print_data() -> dict[str, Any]:
 
     # Step 2: Get pick list data (JSON for counts)
     logger.info("HB Full Sync: Fetching pick list data...")
-    amazon_data, ebay_data = await asyncio.gather(
+    amazon_data, ebay_data, shopify_data = await asyncio.gather(
         _hb_request("/api/picking-list/amazon", params={"format": "json"}),
         _hb_request("/api/picking-list/ebay", params={"format": "json"}),
+        _hb_request("/api/picking-list/shopify", params={"format": "json"}),
         return_exceptions=True
     )
 
@@ -2791,6 +2797,20 @@ async def get_hb_full_sync_and_print_data() -> dict[str, Any]:
         result["pick_lists"]["ebay"]["orders"] = len(set(i.get("order_id") for i in items if i.get("order_id")))
         result["pick_lists"]["ebay"]["data"] = ebay_data.get("data", {})
 
+    # Process Shopify pick list
+    if isinstance(shopify_data, Exception):
+        result["pick_lists"]["shopify"]["status"] = "error"
+        result["errors"].append(f"Shopify pick list error: {shopify_data}")
+    elif "error" in shopify_data:
+        result["pick_lists"]["shopify"]["status"] = "error"
+        result["errors"].append(f"Shopify API error: {shopify_data.get('error')}")
+    else:
+        items = shopify_data.get("data", {}).get("items", [])
+        result["pick_lists"]["shopify"]["status"] = "success"
+        result["pick_lists"]["shopify"]["items"] = len(items)
+        result["pick_lists"]["shopify"]["orders"] = len(set(i.get("orderId") for i in items if i.get("orderId")))
+        result["pick_lists"]["shopify"]["data"] = shopify_data.get("data", {})
+
     # Step 3: Download PDFs if items exist
     temp_dir = Path(tempfile.gettempdir()) / "peterbot_picklists"
     temp_dir.mkdir(exist_ok=True)
@@ -2811,18 +2831,29 @@ async def get_hb_full_sync_and_print_data() -> dict[str, Any]:
             result["files_to_attach"].append((str(ebay_pdf), f"ebay_picklist_{datetime.now(UK_TZ).strftime('%Y%m%d')}.pdf"))
             logger.info(f"HB Full Sync: eBay PDF downloaded to {ebay_pdf}")
 
+    # Download Shopify PDF
+    if result["pick_lists"]["shopify"]["items"] > 0:
+        shopify_pdf = await _download_pick_list_pdf("shopify", temp_dir)
+        if shopify_pdf:
+            result["pick_lists"]["shopify"]["pdf_path"] = str(shopify_pdf)
+            result["files_to_attach"].append((str(shopify_pdf), f"shopify_picklist_{datetime.now(UK_TZ).strftime('%Y%m%d')}.pdf"))
+            logger.info(f"HB Full Sync: Shopify PDF downloaded to {shopify_pdf}")
+
     # Step 4: Add interactive pick list URLs (printing disabled)
     app_url = os.getenv("HADLEY_BRICKS_URL", "https://hadley-bricks-inventory-management.vercel.app")
     if result["pick_lists"]["amazon"]["items"] > 0:
         result["pick_lists"]["amazon"]["pick_url"] = f"{app_url}/pick/amazon"
     if result["pick_lists"]["ebay"]["items"] > 0:
         result["pick_lists"]["ebay"]["pick_url"] = f"{app_url}/pick/ebay"
+    if result["pick_lists"]["shopify"]["items"] > 0:
+        result["pick_lists"]["shopify"]["pick_url"] = f"{app_url}/pick/shopify"
     result["print_status"]["skipped"] = "Printing disabled — use interactive pick lists"
 
     # Step 5: Send pick list summary to Chris via WhatsApp
     amazon_items = result["pick_lists"]["amazon"]["items"]
     ebay_items = result["pick_lists"]["ebay"]["items"]
-    if amazon_items > 0 or ebay_items > 0:
+    shopify_items = result["pick_lists"]["shopify"]["items"]
+    if amazon_items > 0 or ebay_items > 0 or shopify_items > 0:
         try:
             from integrations.whatsapp import send_to_chris
             lines = ["*Pick List*"]
@@ -2850,11 +2881,23 @@ async def get_hb_full_sync_and_print_data() -> dict[str, Any]:
                 if ebay_items > 15:
                     lines.append(f"  ... +{ebay_items - 15} more")
                 lines.append(f"  {app_url}/pick/ebay")
+            if shopify_items > 0:
+                shopify_orders = result["pick_lists"]["shopify"].get("orders", 0)
+                lines.append(f"Shopify: {shopify_items} items ({shopify_orders} orders)")
+                shopify_pick_data = result["pick_lists"]["shopify"].get("data", {})
+                for item in shopify_pick_data.get("items", [])[:15]:
+                    loc = item.get("location") or "?"
+                    set_no = item.get("setNo") or item.get("sku") or "-"
+                    qty = item.get("quantity", 1)
+                    lines.append(f"  {set_no} x{qty} → {loc}")
+                if shopify_items > 15:
+                    lines.append(f"  ... +{shopify_items - 15} more")
+                lines.append(f"  {app_url}/pick/shopify")
             await send_to_chris("\n".join(lines))
         except Exception as e:
             logger.warning(f"WhatsApp pick list send failed: {e}")
 
-    logger.info(f"HB Full Sync complete: {amazon_items} Amazon, {ebay_items} eBay items")
+    logger.info(f"HB Full Sync complete: {amazon_items} Amazon, {ebay_items} eBay, {shopify_items} Shopify items")
     return result
 
 
