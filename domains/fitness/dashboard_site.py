@@ -247,6 +247,44 @@ def _status_from_delta(delta_pct, good_up=True):
 
 # ── AI summary via jobs-channel ────────────────────────────────────────
 
+async def _completed_days_nutrition(days: int = 7) -> dict:
+    """Per-day calorie/protein totals for the last N COMPLETED days (yesterday
+    back). The daily build runs early morning — before breakfast is logged —
+    so 'today' is always a partial snapshot at build time. Logging adherence
+    must be judged on these completed days, never on today's zeros."""
+    today = datetime.now(UK_TZ).date()
+    start = today - timedelta(days=days)
+    async with httpx.AsyncClient(timeout=10) as c:
+        resp = await c.get(
+            f"{fit.SUPABASE_URL}/rest/v1/nutrition_logs",
+            headers=fit._read_headers(),
+            params={
+                "select": "logged_at,calories,protein_g",
+                "and": f"(logged_at.gte.{start.isoformat()}T00:00:00,"
+                       f"logged_at.lt.{today.isoformat()}T00:00:00)",
+            },
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+    by_day: dict[str, dict] = {}
+    for r in rows:
+        d = str(r["logged_at"])[:10]
+        agg = by_day.setdefault(d, {"cal": 0.0, "pro": 0.0})
+        agg["cal"] += float(r.get("calories") or 0)
+        agg["pro"] += float(r.get("protein_g") or 0)
+    out = []
+    for i in range(days, 0, -1):
+        d = today - timedelta(days=i)
+        v = by_day.get(d.isoformat())
+        out.append({
+            "date": d.isoformat(), "day": DAY_NAMES[d.weekday()],
+            "calories": round(v["cal"]) if v else 0,
+            "protein_g": round(v["pro"], 1) if v else 0,
+            "logged": v is not None,
+        })
+    return {"days": out, "unlogged_count": sum(1 for r in out if not r["logged"])}
+
+
 async def _ai_summary(facts: dict) -> str:
     g = facts.get("goal", {})
     prompt = (
@@ -261,7 +299,12 @@ async def _ai_summary(facts: dict) -> str:
         "('a touch', 'roughly', 'drifting', 'more or less on track') are banned when the "
         "tier is behind/well_behind/off_track.\n"
         "2. Name the primary cause bluntly — if the data shows unlogged days or a stall, "
-        "that IS the story, not a footnote.\n"
+        "that IS the story, not a footnote. Judge logging and intake ONLY on "
+        "nutrition_completed_days (the last 7 finished days): logged=false days are the "
+        "genuinely unlogged ones; logged=true days show real intake vs targets. "
+        "TIMING RULE: this build runs early morning, so the 'today' metrics are a "
+        "same-moment partial snapshot and normally read 0 before breakfast is logged — "
+        "NEVER describe today's zeros as missed logging or an unlogged day.\n"
         "3. ONE corrective focus for this week, with a number attached (a calorie line, a "
         "protein floor, a step count).\n"
         "4. One genuine positive, briefly — it must not outweigh the gap.\n"
@@ -513,8 +556,15 @@ async def _build_data() -> dict:
                       "not medical advice.",
     }
 
+    try:
+        completed_days = await _completed_days_nutrition(7)
+    except Exception as e:
+        logger.warning(f"Dashboard: completed-days nutrition fetch failed: {e}")
+        completed_days = None
+
     facts = {"hero": hero, "plan": plan,
              "metrics": [{k: m[k] for k in ("label", "value", "sub", "status")} for m in metrics],
+             "nutrition_completed_days": completed_days,
              "trends_summary": summ,
              "goal": {"phase": goal.get("effective_phase"), "label": phase.get("label"),
                       "focus": phase.get("focus"), "protein_target": tgt_pro,
