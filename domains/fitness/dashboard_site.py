@@ -251,14 +251,27 @@ async def _ai_summary(facts: dict) -> str:
     g = facts.get("goal", {})
     prompt = (
         "You are Pete, Chris's expert personal trainer and nutrition coach. "
-        "Write a concise expert summary (4–6 sentences, plain text, NO markdown headings) "
-        "of his cut using the data below. Frame everything around his CURRENT goal/phase "
-        f"(\"{g.get('label','')}\": {g.get('focus','')}). Cover: progress vs his target weight and "
-        "this week's trend-weight line; what's going well; the ONE thing to focus on this week; "
-        "and a calm, encouraging close. He is tapering sertraline (GP-supervised) so keep the "
-        "tone supportive, never guilt-trippy; frame walking as stress relief. Be specific with his "
-        "numbers and use the protein target from the data — never invent a different one. When "
-        "done, call the reply tool with the job_id and your summary text only.\n\n"
+        "Write a concise summary (4–6 sentences, plain text, NO markdown headings) "
+        "of his cut using the data below. Non-negotiable structure:\n"
+        "1. LEAD with the honest position: the on_track_label verdict, the gap vs this "
+        "week's line (plan.gap_vs_line_kg), and required vs actual rate "
+        "(plan.required_kg_per_week vs hero.slope). If plan.projected_finish_date or "
+        "projected_end_weight show the current rate missing the deadline, SAY SO with the "
+        "numbers — e.g. 'at this rate you arrive in March, not December'. Softening words "
+        "('a touch', 'roughly', 'drifting', 'more or less on track') are banned when the "
+        "tier is behind/well_behind/off_track.\n"
+        "2. Name the primary cause bluntly — if the data shows unlogged days or a stall, "
+        "that IS the story, not a footnote.\n"
+        "3. ONE corrective focus for this week, with a number attached (a calorie line, a "
+        "protein floor, a step count).\n"
+        "4. One genuine positive, briefly — it must not outweigh the gap.\n"
+        f"Frame around his CURRENT goal phase (\"{g.get('label','')}\": {g.get('focus','')}) "
+        "and use the protein target from the data — never invent a different one. "
+        "Tone: a direct coach who respects Chris enough to tell him the truth. He is "
+        "tapering sertraline (GP-supervised): no shame, no catastrophising, no 'you failed' "
+        "framing — the numbers are the problem, not his character; walking stays framed as "
+        "stress relief. Honest and warm are not opposites — be both. When done, call the "
+        "reply tool with the job_id and your summary text only.\n\n"
         f"DATA:\n{json.dumps(facts, default=str)}"
     )
     try:
@@ -272,19 +285,30 @@ async def _ai_summary(facts: dict) -> str:
             logger.warning(f"Dashboard AI summary: channel returned {r.status_code}/empty")
     except Exception as e:
         logger.warning(f"Dashboard AI summary via channel failed: {e}")
-    # Fallback — deterministic, still useful. Protein line comes from the goal
-    # phase (its protein_note), so it tracks the current target, never 180g.
+    # Fallback — deterministic and just as honest as the AI version.
     h = facts.get("hero", {})
+    p = facts.get("plan") or {}
     protein_line = g.get("protein_note") or (
         f"hold protein around {g.get('protein_target','?')}g"
     )
-    return (
-        f"You're {h.get('current_weight','?')}kg, down {h.get('cumulative_loss','?')}kg toward "
-        f"{h.get('target_weight','?')}kg ({h.get('progress_pct','?')}% there) with "
-        f"{h.get('days_remaining','?')} days to go. Trend is the only number that matters week to "
-        f"week — {protein_line}, and treat the daily walk as much for your head as your waistline. "
-        "Lock breakfast and lunch, let dinner flex with the family, and keep showing up. Steady wins this."
-    )
+    parts = [
+        f"{h.get('on_track_label','Tracking')}: trend {h.get('current_weight','?')} kg vs "
+        f"{h.get('target_this_week','?')} kg on this week's line"
+    ]
+    if p.get("gap_vs_line_kg") is not None:
+        parts[0] += f" ({p['gap_vs_line_kg']:+.1f} kg)"
+    if p.get("required_kg_per_week") is not None:
+        actual = h.get("slope")
+        parts.append(
+            f"Hitting {h.get('target_weight','?')} kg by the deadline needs "
+            f"{p['required_kg_per_week']:.2f} kg/wk from here; actual is "
+            f"{actual if actual not in (None, '—') else 'flat'} kg/wk"
+        )
+    if p.get("projected_end_weight") is not None:
+        parts.append(f"At the current rate you finish at {p['projected_end_weight']} kg")
+    parts.append(f"This week: hit the calorie line daily and {protein_line}")
+    parts.append("The daily walk stays — for your head as much as the deficit")
+    return ". ".join(parts) + "."
 
 
 # ── data assembly ──────────────────────────────────────────────────────
@@ -336,26 +360,23 @@ async def _build_data() -> dict:
         end = date.fromisoformat(programme["end_date"])
         days_remaining = max(0, (end - datetime.now(UK_TZ).date()).days)
 
-    # trajectory line for "this week"
+    # Plan maths — single source of truth (service.compute_plan_maths): the
+    # weekly line, gap, required-vs-actual rate and projection. The old inline
+    # buckets capped the worst case at "A touch behind" — even 7 kg off the
+    # line — which is exactly the softness this replaces.
     eff_week = min(max(week_no, 1), dur)
-    target_this_week = None
-    if start_w is not None:
-        target_this_week = _round(start_w - (start_w - target_w) * (eff_week / dur), 1)
-
-    if week_no < 1:
-        on_track, on_label = "warn", "Starts Monday"
-    elif current is None or target_this_week is None:
-        on_track, on_label = "neutral", "Tracking"
-    elif current <= target_this_week - 0.2:
-        on_track, on_label = "ahead", "Ahead of plan"
-    elif current <= target_this_week + 0.3:
-        on_track, on_label = "on track", "On track"
-    elif week_no <= 2:
-        # Early programme: weight noise dwarfs a 0.3 kg miss off a micro-target.
-        # Don't flag "behind" and don't guilt-trip while the baseline settles.
-        on_track, on_label = "settling", "Settling in"
+    plan = fit.compute_plan_maths(programme, current, slope) if programme else None
+    if plan:
+        target_this_week = plan["target_this_week"]
+        on_track_key, on_label = plan["on_track"], plan["on_track_label"]
+        # template CSS buckets: warn/neutral/ahead/on track/settling/behind
+        css_map = {"pre_start": "warn", "neutral": "neutral", "ahead": "ahead",
+                   "on_track": "on track", "settling": "settling",
+                   "behind": "behind", "well_behind": "behind", "off_track": "behind"}
+        on_track = css_map.get(on_track_key, "neutral")
     else:
-        on_track, on_label = "behind", "A touch behind"
+        target_this_week = None
+        on_track, on_track_key, on_label = "neutral", "neutral", "Tracking"
 
     hero = {
         "current_weight": _round(current) if current else "—",
@@ -370,6 +391,14 @@ async def _build_data() -> dict:
         "days_remaining": days_remaining if days_remaining is not None else "—",
         "target_this_week": target_this_week if target_this_week is not None else "—",
         "on_track": on_track, "on_track_label": on_label,
+        "on_track_tier": on_track_key,
+        "gap_vs_line_kg": plan.get("gap_vs_line_kg") if plan else None,
+        "required_kg_per_week": plan.get("required_kg_per_week") if plan else None,
+        "required_rate_unsafe": plan.get("required_rate_unsafe") if plan else False,
+        "projected_end_weight": plan.get("projected_end_weight") if plan else None,
+        "projected_finish_date": plan.get("projected_finish_date") if plan else None,
+        "start_date": programme["start_date"] if programme else None,
+        "end_date": programme["end_date"] if programme else None,
     }
 
     # Resolve the active goal phase — it drives the protein target and all the
@@ -484,7 +513,8 @@ async def _build_data() -> dict:
                       "not medical advice.",
     }
 
-    facts = {"hero": hero, "metrics": [{k: m[k] for k in ("label", "value", "sub", "status")} for m in metrics],
+    facts = {"hero": hero, "plan": plan,
+             "metrics": [{k: m[k] for k in ("label", "value", "sub", "status")} for m in metrics],
              "trends_summary": summ,
              "goal": {"phase": goal.get("effective_phase"), "label": phase.get("label"),
                       "focus": phase.get("focus"), "protein_target": tgt_pro,

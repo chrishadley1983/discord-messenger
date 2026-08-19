@@ -249,7 +249,7 @@ canvas{width:100%!important;height:170px!important}
     <div class="mh-l">
       <div class="kicker">The Reset Cut Journal</div>
       <h1 class="serif">Where you stand</h1>
-      <div class="goal">Bound for 75&nbsp;kg &amp; 15% body fat by 23 October</div>
+      <div class="goal" id="goalline">Bound for 75&nbsp;kg &amp; 15% body fat</div>
     </div>
     <div class="mh-r">
       <button id="refresh" class="refreshbtn" title="Refresh from Garmin / Withings / Peter">&#8635;</button>
@@ -335,6 +335,11 @@ function render(){
   const wk=DATA.hero||{};
   const _sl=num(wk.slope), _ar=_sl==null?"":_sl<-0.05?" ▼":_sl>0.05?" ▲":" –";
   $("#dateline").innerHTML='<span class="livetok">'+esc(fix(num(wk.current_weight)))+' kg'+_ar+'</span>Updated<b>'+esc(DATA.generated_at)+'</b>';
+  // Goal strapline from live programme data — never hardcode the deadline.
+  if(wk.end_date&&num(wk.target_weight)!=null){
+    const ed=new Date(wk.end_date);
+    $("#goalline").innerHTML="Bound for "+esc(fix(num(wk.target_weight)))+"&nbsp;kg &amp; 15% body fat by "+esc(ed.toLocaleDateString("en-GB",{day:"numeric",month:"long"}));
+  }
   $("#issue").innerHTML="<span>Week "+esc(wk.week_no)+" of "+esc(wk.duration_weeks)+"</span>"+
     "<span>"+esc(wk.days_remaining)+" days to deadline</span>"+
     "<span>"+(stamp?esc(fmtDate(stamp)):esc(DATA.generated_at))+"</span>";
@@ -504,7 +509,7 @@ function renderProgress(){
     p.appendChild(sechead("·","Your weight line"));
     const cc=ce("div","chartcard wchart");
     cc.innerHTML='<div class="ch-h"><h4>Weight — raw vs 7-read trend</h4></div>'+
-      '<div class="legend"><span><i style="border-color:#d98b6a"></i>Scale reads</span><span><i style="border-color:var(--ink)"></i>Trend line</span></div>';
+      '<div class="legend"><span><i style="border-color:#d98b6a"></i>Scale reads</span><span><i style="border-color:var(--ink)"></i>Trend line</span><span><i style="border-color:#8a7d63;border-top-style:dashed"></i>Plan</span><span><i style="border-color:#8c2f2a;border-top-style:dotted"></i>At current pace</span></div>';
     const cv=ce("canvas"); cc.appendChild(cv); p.appendChild(cc);
     requestAnimationFrame(()=>drawWeightChart(cv,series.weight));
   }
@@ -532,11 +537,38 @@ function axisOpts(o){o=o||{};return {responsive:true,maintainAspectRatio:false,
              callback:o.unit?function(v){return v+o.unit;}:undefined}}}};}
 function drawWeightChart(cv,pts){
   if(!pts||!pts.length) return;
+  const h=DATA.hero||{};
   const labels=pts.map(x=>x.date.slice(5)), raw=pts.map(x=>x.value), tr=movingAvg(raw,7);
-  charts.push(new Chart(cv,{type:"line",data:{labels,datasets:[
-    {data:raw,borderColor:"#d98b6a",backgroundColor:"transparent",borderWidth:1.3,pointRadius:2.2,pointBackgroundColor:"#d98b6a",tension:.25,order:2},
-    {data:tr,borderColor:"#221d17",backgroundColor:"rgba(34,29,23,.05)",borderWidth:2.8,pointRadius:0,fill:true,tension:.35,order:1}
-  ]},options:axisOpts({grid:"#d8cdb4",tick:"#4d453a",maxTicks:5,tsize:11,unit:" kg"})}));
+  // Plan line + current-pace projection: extend the axis to the programme end
+  // date (weekly steps) so divergence from the plan is visible, not deniable.
+  const planD=[], projD=[];
+  const sw=num(h.start_weight), tw=num(h.target_weight), slope=num(h.slope);
+  const sd=h.start_date?new Date(h.start_date):null, ed=h.end_date?new Date(h.end_date):null;
+  if(sw!=null&&tw!=null&&sd&&ed&&ed>sd){
+    const total=(ed-sd)/864e5;
+    const planAt=d=>{const t=(d-sd)/864e5; return t<0?null:sw-(sw-tw)*Math.min(t/total,1);};
+    const lastD=new Date(pts[pts.length-1].date);
+    const fut=[];
+    for(let d=new Date(lastD.getTime()+7*864e5); d<ed; d=new Date(d.getTime()+7*864e5)) fut.push(d);
+    if(ed>lastD) fut.push(ed);
+    fut.forEach(d=>{labels.push(d.toISOString().slice(5,10)); raw.push(null); tr.push(null);});
+    pts.forEach(x=>planD.push(planAt(new Date(x.date))));
+    fut.forEach(d=>planD.push(planAt(d)));
+    const lastTrVals=tr.filter(v=>v!=null), lastVal=lastTrVals.length?lastTrVals[lastTrVals.length-1]:null;
+    if(slope!=null&&lastVal!=null&&fut.length){
+      for(let i=0;i<pts.length-1;i++) projD.push(null);
+      projD.push(lastVal);
+      fut.forEach(d=>projD.push(lastVal+slope*((d-lastD)/(7*864e5))));
+    }
+  }
+  const datasets=[
+    {data:raw,borderColor:"#d98b6a",backgroundColor:"transparent",borderWidth:1.3,pointRadius:2.2,pointBackgroundColor:"#d98b6a",tension:.25,order:2,spanGaps:false},
+    {data:tr,borderColor:"#221d17",backgroundColor:"rgba(34,29,23,.05)",borderWidth:2.8,pointRadius:0,fill:true,tension:.35,order:1,spanGaps:false}
+  ];
+  if(planD.some(v=>v!=null)) datasets.push({data:planD,borderColor:"#8a7d63",backgroundColor:"transparent",borderWidth:1.6,borderDash:[6,4],pointRadius:0,tension:0,order:3,spanGaps:true});
+  if(projD.some(v=>v!=null)) datasets.push({data:projD,borderColor:"#8c2f2a",backgroundColor:"transparent",borderWidth:1.6,borderDash:[2,4],pointRadius:0,tension:0,order:4,spanGaps:true});
+  charts.push(new Chart(cv,{type:"line",data:{labels,datasets},
+    options:axisOpts({grid:"#d8cdb4",tick:"#4d453a",maxTicks:5,tsize:11,unit:" kg"})}));
 }
 function drawCharts(){
   charts.forEach(c=>c.destroy()); charts=[]; drawnTrends=true;
@@ -545,7 +577,7 @@ function drawCharts(){
   // weight first, full width with raw vs trend
   if((series.weight||[]).length){
     const cc=ce("div","chartcard wchart");
-    cc.innerHTML='<div class="ch-h"><h4>Weight</h4></div><div class="legend"><span><i style="border-color:#d98b6a"></i>Scale reads</span><span><i style="border-color:var(--ink)"></i>7-read trend</span></div>';
+    cc.innerHTML='<div class="ch-h"><h4>Weight</h4></div><div class="legend"><span><i style="border-color:#d98b6a"></i>Scale reads</span><span><i style="border-color:var(--ink)"></i>7-read trend</span><span><i style="border-color:#8a7d63;border-top-style:dashed"></i>Plan</span><span><i style="border-color:#8c2f2a;border-top-style:dotted"></i>At current pace</span></div>';
     const cv=ce("canvas"); cc.appendChild(cv); p.appendChild(cc); drawWeightChart(cv,series.weight);
   }
   const grid=ce("div","grid g2"); grid.style.marginTop="14px"; p.appendChild(grid);
@@ -664,27 +696,55 @@ function renderTargets(){
   if(r.disclaimer) p.appendChild(ce("div","disc",esc(r.disclaimer)));
 }
 
-// ---- Refresh: rebuild from Garmin/Withings/Peter. Targets the host that
-// served this page when on the LAN (http); on surge (https) it degrades to a hint. ----
+// ---- Refresh: rebuild from Garmin/Withings/Peter. On the LAN (http) page it
+// hits Hadley API directly; on surge (https) it queues a request via the
+// dashboard-refresh Edge Function (sha256 of the passcode as auth — verified by
+// the home machine before rebuilding), then watches this URL for the new build. ----
 const LOCAL_API=(location.protocol==="http:"&&location.hostname)?location.origin:"http://172.19.64.1:8100";
+const RELAY="https://modjoikyuhqzouxvieua.supabase.co/functions/v1/dashboard-refresh";
 function toast(msg,ms){let t=$("#toast");if(!t){t=ce("div");t.id="toast";document.body.appendChild(t);}t.textContent=msg;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),ms||6000);}
+async function sha256Hex(s){const d=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));return [...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,"0")).join("");}
+async function lanRefresh(){
+  toast("Refreshing from Garmin, Withings & Peter… (~1 min)",60000);
+  const r=await fetch(LOCAL_API+"/fitness/dashboard/refresh",{method:"POST"});
+  if(!r.ok) throw new Error("bad");
+  const start=GENERATED_AT;
+  for(let i=0;i<40;i++){
+    await new Promise(s=>setTimeout(s,3000));
+    try{
+      const st=await (await fetch(LOCAL_API+"/fitness/dashboard/refresh/status")).json();
+      if(st&&st.generated_at&&st.generated_at!==start&&!st.building){toast("Updated — reloading…",4000);setTimeout(()=>location.reload(),700);return;}
+    }catch(_){/* keep polling */}
+  }
+  toast("Still building — reload in a moment.",8000);
+}
+async function remoteRefresh(){
+  const pc=sessionStorage.getItem("rc_pc");
+  if(!pc){toast("Unlock the page first, then refresh.",6000);return;}
+  toast("Asking home base to refresh from Garmin, Withings & Peter… (~2 min)",120000);
+  const r=await fetch(RELAY,{method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({pass_sha256:await sha256Hex(pc)})});
+  if(!r.ok) throw new Error("relay");
+  // The home machine polls the queue (~20 s), rebuilds (~1 min) and redeploys
+  // this page — so watch our own URL for a new GENERATED_AT.
+  for(let i=0;i<60;i++){
+    await new Promise(s=>setTimeout(s,5000));
+    try{
+      const html=await (await fetch(location.pathname,{cache:"no-store"})).text();
+      const m=html.match(/const GENERATED_AT = "([^"]+)"/);
+      if(m&&m[1]&&m[1]!==GENERATED_AT){toast("Updated — reloading…",4000);setTimeout(()=>location.replace(location.pathname+"?v="+Date.now()),700);return;}
+    }catch(_){/* keep polling */}
+  }
+  toast("Still building — reload in a couple of minutes.",8000);
+}
 async function doRefresh(){
   const b=$("#refresh"); if(b.classList.contains("spin"))return; b.classList.add("spin");
-  toast("Refreshing from Garmin, Withings & Peter… (~1 min)",60000);
   try{
-    const r=await fetch(LOCAL_API+"/fitness/dashboard/refresh",{method:"POST"});
-    if(!r.ok) throw new Error("bad");
-    const start=GENERATED_AT;
-    for(let i=0;i<40;i++){
-      await new Promise(s=>setTimeout(s,3000));
-      try{
-        const st=await (await fetch(LOCAL_API+"/fitness/dashboard/refresh/status")).json();
-        if(st&&st.generated_at&&st.generated_at!==start&&!st.building){toast("Updated — reloading…",4000);setTimeout(()=>location.reload(),700);return;}
-      }catch(_){/* keep polling */}
-    }
-    toast("Still building — reload in a moment.",8000);
+    if(location.protocol==="https:") await remoteRefresh(); else await lanRefresh();
   }catch(_){
-    toast("Live refresh runs on your home network — open the LAN page (auto-updates daily at 08:20).",10000);
+    toast(location.protocol==="https:"
+      ?"Couldn't reach the refresh relay — try again in a minute."
+      :"Live refresh runs on your home network — open the LAN page (auto-updates daily at 08:20).",10000);
   }finally{ b.classList.remove("spin"); }
 }
 document.getElementById("refresh").addEventListener("click",doRefresh);

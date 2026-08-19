@@ -27,6 +27,14 @@ Today: {workout one-liner} · Budget: {calorie_budget} kcal
 {one-line adherence flag only if something needs attention}
 ```
 
+**Hard-truth line (mandatory when behind):** the payload's `plan` block carries
+the honest maths. If `plan.on_track` is `behind`, `well_behind` or `off_track`,
+add one line — no softeners ("a touch", "roughly", "drifting" are banned):
+
+```
+⚠️ {plan.on_track_label}: {plan.gap_vs_line_kg:+}kg vs this week's line — need {plan.required_kg_per_week}kg/wk, actual {slope_kg_per_week}kg/wk
+```
+
 The standalone fitness-dashboard skill remains for on-demand "cut status" questions and the Wednesday evening nudge.
 
 ## Pre-fetched Data

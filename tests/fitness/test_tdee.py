@@ -44,7 +44,7 @@ class TestActivityFactor:
         (6000, 1.375),
         (10000, 1.5),
         (14000, 1.6),
-        (20000, 1.75),
+        (20000, 1.65),
     ])
     def test_step_bucket_mapping(self, steps, expected):
         assert activity_factor_from_steps(steps) == expected
@@ -57,7 +57,7 @@ class TestActivityFactor:
         assert activity_factor_from_steps(11999) == 1.5
         assert activity_factor_from_steps(12000) == 1.6
         assert activity_factor_from_steps(15999) == 1.6
-        assert activity_factor_from_steps(16000) == 1.75
+        assert activity_factor_from_steps(16000) == 1.65
 
 
 class TestComputeTdee:

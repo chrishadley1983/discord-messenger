@@ -44,7 +44,7 @@ are the authoritative numbers for "what can I eat today" and how to frame protei
 | 5-8k | 1.375 | light |
 | 8-12k | 1.5 | moderate |
 | 12-16k | 1.6 | active |
-| 16k+ | 1.75 | very active |
+| 16k+ | 1.65 | very active |
 
 These are lower than textbook Mifflin multipliers (1.55/1.725/1.9) because
 those buckets assume manual-labour jobs or 6-7 days of hard training. For a
@@ -136,10 +136,57 @@ Progression: +1 rep/set/week (or +5s hold/week), capped at 2x base volume.
   returns both `latest_raw` and `trend_7d`. Always lead with trend.
 - **Stall detection:** if slope > −0.1 kg/week over 10+ days, flag it. The
   `/fitness/dashboard` endpoint sets `weight.stalled=true` when this happens.
-- **Stall protocol:** drop daily calories by 100, add 2k steps/day. Never
-  drop below 1700 kcal without discussing it with Chris.
+- **Stall protocol:** drop daily calories by 100, add 2k steps/day — but if
+  the plan gap is >2 kg, the dashboard escalates to −200 kcal +3k steps plus a
+  logging audit. Never drop below 1700 kcal without discussing it with Chris.
 - **Do NOT panic over single readings.** A 1kg overnight jump is almost
   always water — don't tell Chris to "eat less tomorrow".
+
+## Plan Maths — the Hard-Truth Rules (Aug 2026)
+
+`/fitness/dashboard` returns a `plan` block — the single source of truth for
+"am I on track". Every check-in surface (health digest, cut kickoff, dashboard
+page, advisor) reads it; never recompute or soften it.
+
+- `gap_vs_line_kg` — signed gap vs this week's linear target line (+ = behind)
+- `required_kg_per_week` vs `weight.slope_kg_per_week` — needed from here vs actual
+- `required_rate_unsafe` — true when the required rate exceeds 1% of body
+  weight/week: the plan itself is broken; propose a re-baseline (new date or
+  target), don't just cheer harder
+- `projected_end_weight` / `projected_finish_date` — where the current rate lands
+- `on_track` tiers: ahead / on_track / settling / behind / well_behind / off_track
+
+**Tone rules:** when the tier is behind/well_behind/off_track, state the gap and
+required-vs-actual numbers plainly — "a touch", "roughly", "drifting" are
+banned. Honest ≠ harsh (Chris is tapering sertraline): no shame, no
+catastrophising — the numbers are the problem, not his character. The advisor
+also reports `unlogged_days_7d` (≥2 unlogged days in the last week = that IS the
+story) and `weeks_since_diet_break` (plan prescribes one every 4–6 weeks).
+
+**Auto-recalibrate:** Mondays 08:05 UK an infra job recalibrates targets from
+trend weight AND syncs the accountability goal rows. Targets on the dashboard
+are always the live ones.
+
+## Dashboard Refresh (works from anywhere via Peter)
+
+The public dashboard is https://chris-reset-cut.surge.sh (passcode-gated; auto
+rebuilt daily at 08:20 UK). The page's own Refresh button also works from
+anywhere: on the surge (https) page it POSTs sha256(passcode) to the
+`dashboard-refresh` Supabase Edge Function (source: `supabase/functions/
+dashboard-refresh/index.ts`), which queues a row in
+`dashboard_refresh_requests`; a poller in `hadley_api/fitness_routes.py`
+(every 20 s) verifies the hash against `DASHBOARD_PASSCODE` and runs the same
+rebuild+redeploy, and the page reloads when it sees a new build (~2 min total).
+When Chris asks Peter directly to "refresh the dashboard", run:
+
+```
+curl -s -X POST http://172.19.64.1:8100/fitness/dashboard/refresh
+```
+
+This pulls fresh Withings + Garmin data, rebuilds, and redeploys the surge
+page (~1 min). Poll `GET /fitness/dashboard/refresh/status` until
+`building=false`, then confirm with the new `generated_at`. Tell Chris the
+surge page is updated — no LAN needed on his end.
 
 ## Calorie Budget Responses
 

@@ -520,6 +520,9 @@ All routes in `hadley_api/fitness_routes.py`. See `docs/playbooks/FITNESS.md` fo
 - `GET /fitness/programme` — active programme + current week/day number
 - `GET /fitness/today` — today's prescribed workout + calorie/protein/steps targets
 - `GET /fitness/dashboard` — full daily status (trend weight, nutrition, steps, today's workout, mobility, flags)
+  - Includes a `plan` block (single source of truth for "am I on track"): `{target_this_week, gap_vs_line_kg, required_kg_per_week, required_pct_bw_per_week, required_rate_unsafe, actual_kg_per_week, projected_end_weight, projected_finish_date, weeks_remaining, on_track, on_track_label}`
+  - `on_track` tiers: `ahead | on_track | settling | behind | well_behind | off_track` (`required_rate_unsafe=true` when hitting the target now needs >1% BW/wk — i.e. the plan needs re-baselining)
+  - Flags escalate with the gap: `BEHIND PLAN` / `OFF TRACK`, and the stall correction scales (−200 kcal +3k steps when >2 kg behind)
 - `GET /fitness/weekly-review` — Sunday review bundle with adherence + adjustment
 - `GET /fitness/trend?days=30` — smoothed weight trend (7-day SMA, EMA, linear slope, stall detection)
 - `GET /fitness/exercises?category=push` — exercise library (optional category filter)
@@ -550,6 +553,8 @@ All routes in `hadley_api/fitness_routes.py`. See `docs/playbooks/FITNESS.md` fo
   - Body (all optional): `{current_weight_kg, avg_steps, deficit_kcal}` — defaults to 7-day trend weight + 7-day step avg
   - Recomputes Mifflin-St Jeor BMR, TDEE, target calories, target protein
   - Updates the active programme row in-place (tdee_kcal, daily_calorie_target, daily_protein_g)
+  - Also syncs the active accountability goal rows to the programme (matched by `auto_source`: calories/protein/strength/steps targets + weight-goal deadline); response includes `goals_synced`
+  - Runs automatically every Monday 08:05 UK (bot.py infra job `fitness_recalibrate`)
   - Returns `{old, new, weight_used_kg, bmr, activity_factor, deficit_kcal}`
 - `POST /fitness/weekly-checkin` — persist a Sunday snapshot (auth required)
 - `GET /fitness/goal` — resolved goal phase + live targets

@@ -35,7 +35,7 @@ runtime** — never hardcode a protein number, a "protect muscle" line, or a dat
 ## Live data (fetch at runtime)
 
 ```
-GET http://172.19.64.1:8100/fitness/dashboard      # programme, weight trend, today_workout, steps, nutrition targets, goal{phase,label,focus,protein_note,rule,protein_mode}, week_no, day_no, days_remaining, flags
+GET http://172.19.64.1:8100/fitness/dashboard      # programme, weight trend, PLAN MATHS, today_workout, steps, nutrition targets, goal{...}, week_no, day_no, days_remaining, flags
 GET http://172.19.64.1:8100/nutrition/weight        # latest weigh-in + its date — used to detect "weighed in today"
 ```
 
@@ -48,9 +48,18 @@ muscle" from memory.
 
 **Weighed-in-today test:** the `date` from `/nutrition/weight` starts with today's date (UK).
 
-**This week's target weight (the North-Star line):**
-`target_this_week = start_weight_kg - (start_weight_kg - target_weight_kg) * (week_no / duration_weeks)`
-Use `programme.start_weight_kg`, `programme.target_weight_kg`, `programme.duration_weeks` from the dashboard payload.
+**The plan maths (the honest picture — use it, don't recompute):** the
+dashboard payload's `plan` block is the single source of truth:
+
+- `plan.target_this_week` — this week's line
+- `plan.gap_vs_line_kg` — signed gap vs that line (+ = behind)
+- `plan.required_kg_per_week` vs `weight.slope_kg_per_week` — needed vs actual
+- `plan.required_rate_unsafe` — true when the required rate exceeds 1% BW/wk (the plan itself is broken)
+- `plan.projected_end_weight` / `plan.projected_finish_date` — where the current rate actually lands
+- `plan.on_track` / `on_track_label` — the verdict tier (ahead / on_track / settling / behind / well_behind / off_track)
+
+Advisor payloads also carry `snapshot.plan.unlogged_days_7d` — if ≥2, unlogged
+days ARE the story.
 
 ## Output — No weigh-in yet (nudge)
 
@@ -84,33 +93,49 @@ Mon Lower A · Tue Upper A · Thu Lower B · Fri Upper B · Wed+Sat walk/mobilit
 Today: {today_workout.label} — let's go. 💪
 ```
 
-## Output — Weekly Checkpoint (week 2+)
+## Output — Weekly Hard-Truth Checkpoint (week 2+)
 
 ```
 📋 **Week {week_no} of {duration_weeks} — Monday weigh-in**
 {date}
 
-⚖️ Trend: {trend_7d}kg vs target {target_this_week}kg this week — {on track ✅ / behind / ahead}
-Cumulative: {cumulative_loss_kg}kg of {start_weight - target_weight}kg ▓░░░░ {progress %}
-{days_remaining} days to {end_date} → projected {trend_7d + slope*weeks_remaining}kg
+⚖️ **{plan.on_track_label}** — trend {trend_7d}kg vs {plan.target_this_week}kg line ({plan.gap_vs_line_kg:+}kg)
+Needed from here: {plan.required_kg_per_week}kg/wk · Actual: {slope_kg_per_week}kg/wk
+At this pace: {plan.projected_end_weight}kg on {end_date}{, target reached {plan.projected_finish_date} — not {end_date} | , target never reached at this rate}
 
-🎯 Targets this week: {target_calories} kcal · {target_protein}g protein · {steps_target/1000}k steps
+🎯 This week: {target_calories} kcal · {target_protein}g protein · {steps_target/1000}k steps
 🏋️ Today: {today_workout.label}
 
-[1-2 sentences — honest + encouraging, tie to weeks remaining. Flag if behind.]
+[2-3 sentences. Lead with the verdict and its cause (unlogged days / stall /
+over-target days), then ONE corrective with a number. If ahead/on track, say so
+plainly and bank it — no invented problems.]
+```
+
+**If `plan.on_track` is `off_track` or `plan.required_rate_unsafe` is true, append:**
+
+```
+🔧 **The plan needs a decision, not another week of drift:**
+A) Reset the behaviour — full logging + calorie line hit all 7 days, review next Monday
+B) Re-baseline the plan — new target date or weight (say "re-baseline the cut to <date>")
+Doing neither is choosing to miss.
 ```
 
 ## Rules
 
-- **Use the dashboard's programme targets** (now correct — calories/protein come
-  from the programme's own deficit/protein settings, so don't second-guess them
-  or recalibrate).
-- **Do NOT auto-recalibrate.** The targets are deliberately set and auto-adjust
-  with weight already. Only mention recalibration if a human asks.
+- **The maths comes from `plan`** — never recompute or soften it. If the tier is
+  behind/well_behind/off_track, the words "a touch", "roughly", "more or less",
+  "drifting" are banned. State gap, required vs actual, and the projection.
+- **Targets are auto-recalibrated Mondays 08:05** (infra job, also syncs the
+  accountability goals) — the dashboard numbers are already fresh. If they moved
+  meaningfully vs last week, mention the new calorie line.
+- **Name the cause, not just the verdict** — check advisor `unlogged_days_7d`
+  and the dashboard flags: unlogged days or a stall is the headline, not a footnote.
 - **Today's session**: pull `today_workout` from the dashboard. If it's a
   mobility/rest day, say so and nudge the walk + 10-min hip routine.
-- **Anxiety-aware tone**: Chris is tapering sertraline — keep it calm and
-  encouraging, never guilt-trippy. Frame the walk as stress relief.
+- **Honest ≠ harsh**: Chris is tapering sertraline — no shame, no
+  catastrophising, no "you failed" framing. The numbers are the problem, not his
+  character. But hiding the numbers is not kindness; he asked for the truth.
+  Frame the walk as stress relief.
 - **Steps are the accelerator, not pass/fail** — never scold a low-step day.
 - Save the kickoff/checkpoint text to Second Brain with tags `fitness,cut,reset,week-<N>`.
 - If `/fitness/dashboard` has no active programme, say the programme isn't set up

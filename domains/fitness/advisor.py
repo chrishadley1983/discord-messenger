@@ -43,6 +43,20 @@ class Snapshot:
     weight_stalled: bool = False
     stalled_weeks: int = 0
 
+    # Plan maths (honest arithmetic from service.compute_plan_maths)
+    plan_on_track: str | None = None       # ahead|on_track|settling|behind|well_behind|off_track
+    gap_vs_line_kg: float | None = None
+    required_kg_per_week: float | None = None
+    required_rate_unsafe: bool = False
+    projected_end_weight: float | None = None
+    projected_finish_date: str | None = None
+    target_weight_kg: float | None = None
+    end_date: str | None = None
+
+    # Logging adherence + periodisation
+    unlogged_days_7d: int = 0              # of the last 7 completed days
+    weeks_since_diet_break: float | None = None
+
     # Nutrition (today)
     calories_eaten: float = 0
     calories_target: int = 0
@@ -130,6 +144,26 @@ async def build_snapshot() -> Snapshot:
     snap.current_weight_kg = trend.trend_7d or trend.latest_raw
     snap.slope_kg_per_week = trend.slope_kg_per_week
     snap.weight_stalled = trend.stalled
+
+    # Plan maths — gap vs the line, required rate, projection
+    snap.target_weight_kg = float(programme["target_weight_kg"])
+    snap.end_date = programme["end_date"]
+    plan = fit.compute_plan_maths(programme, snap.current_weight_kg, snap.slope_kg_per_week)
+    snap.plan_on_track = plan["on_track"]
+    snap.gap_vs_line_kg = plan["gap_vs_line_kg"]
+    snap.required_kg_per_week = plan["required_kg_per_week"]
+    snap.required_rate_unsafe = plan["required_rate_unsafe"]
+    snap.projected_end_weight = plan["projected_end_weight"]
+    snap.projected_finish_date = plan["projected_finish_date"]
+
+    # Weeks since last diet break (anchor: goal_config.diet_breaks.last_end,
+    # else programme start). The plan prescribes one every 4-6 weeks.
+    dbrk = (programme.get("goal_config") or {}).get("diet_breaks") or {}
+    try:
+        anchor = date.fromisoformat(dbrk.get("last_end") or programme["start_date"])
+        snap.weeks_since_diet_break = round((today - anchor).days / 7, 1)
+    except Exception:
+        snap.weeks_since_diet_break = None
 
     # Nutrition today
     nutrition = await fit.fetch_nutrition_today()
@@ -267,6 +301,29 @@ async def build_snapshot() -> Snapshot:
                 for v in by_day.values()
             ]
             snap.avg_protein_pct_this_week = sum(pro_pcts) / len(pro_pcts)
+    except Exception:
+        pass
+
+    # Logging adherence: how many of the last 7 COMPLETED days (yesterday back)
+    # have no food log at all. Unlogged days pass every calorie rule by default
+    # — they're where the deficit quietly dies, so count them explicitly.
+    try:
+        window_start = today - timedelta(days=7)
+        async with httpx.AsyncClient(timeout=10) as c:
+            resp = await c.get(
+                f"{fit.SUPABASE_URL}/rest/v1/nutrition_logs",
+                headers=fit._read_headers(),
+                params={
+                    "select": "logged_at",
+                    "and": f"(logged_at.gte.{window_start.isoformat()}T00:00:00,logged_at.lt.{today.isoformat()}T00:00:00)",
+                },
+            )
+            resp.raise_for_status()
+            days_logged = {str(r["logged_at"])[:10] for r in resp.json()}
+        snap.unlogged_days_7d = sum(
+            1 for i in range(1, 8)
+            if (today - timedelta(days=i)).isoformat() not in days_logged
+        )
     except Exception:
         pass
 
@@ -521,12 +578,94 @@ def _rule_rate_perfect(s: Snapshot) -> Advice | None:
 def _rule_weight_stalled(s: Snapshot) -> Advice | None:
     if not s.weight_stalled:
         return None
+    gap = s.gap_vs_line_kg or 0
+    if gap > 2:
+        # Far behind the line AND stalled — a token tweak won't close this.
+        action = (
+            "A -100 kcal tweak won't close this gap. Drop 200 kcal, add 3k steps, "
+            "and audit the logging — the stall plus the gap says the real intake "
+            "isn't what the log says."
+        )
+    else:
+        action = (
+            "First: check adherence (are you actually hitting targets?). If yes: "
+            "recalibrate — drop 100 kcal, add 2k steps. If stalled 3+ weeks, consider "
+            "a 7-10 day maintenance phase to reset hormones."
+        )
     return Advice(
-        severity="caution",
+        severity="caution" if gap <= 2 else "warning",
         category="weight_trend",
         headline="Weight trend has stalled",
         detail="Scale hasn't moved meaningfully in 2+ weeks. This can be water retention, adaptation, or the deficit has closed as you've lost weight.",
-        action="First: check adherence (are you actually hitting targets?). If yes: recalibrate — drop 100 kcal, add 2k steps. If stalled 3+ weeks, consider a 7-10 day maintenance phase to reset hormones.",
+        action=action,
+    )
+
+
+def _rule_plan_gap(s: Snapshot) -> Advice | None:
+    """Blunt escalation when the trend has drifted off the plan line."""
+    if s.plan_on_track not in ("behind", "well_behind", "off_track"):
+        return None
+    gap = s.gap_vs_line_kg or 0
+    req = s.required_kg_per_week
+    act = s.slope_kg_per_week
+    act_str = f"{act:+.2f} kg/wk" if act is not None else "flat"
+    req_str = f"{req:.2f} kg/wk" if req is not None else "?"
+    finish = s.projected_finish_date or "never at the current rate"
+    if s.plan_on_track == "behind":
+        return Advice(
+            severity="caution",
+            category="plan",
+            headline=f"Behind the plan line by {gap:+.1f} kg",
+            detail=f"The line says {s.target_weight_kg:g} kg by {s.end_date} needs {req_str} from here; you're actually moving at {act_str}.",
+            action="Close it this week: hit the calorie line every day and log everything. A behind week left alone becomes an off-track month.",
+        )
+    if s.plan_on_track == "well_behind":
+        return Advice(
+            severity="warning",
+            category="plan",
+            headline=f"Well behind the plan — {gap:+.1f} kg off the line",
+            detail=f"Required from here: {req_str}. Actual: {act_str}. Projected arrival at {s.target_weight_kg:g} kg: {finish}.",
+            action="This week decides whether the plan survives. Full logging, calorie line hit daily, steps up — or re-baseline now rather than pretend.",
+        )
+    detail = (
+        f"Required from here: {req_str}. Actual: {act_str}. At the current rate you reach "
+        f"{s.target_weight_kg:g} kg: {finish}."
+    )
+    if s.required_rate_unsafe:
+        detail += " The required rate is past the safe 1% of body weight per week — the plan itself is now broken, not just the week."
+    return Advice(
+        severity="warning",
+        category="plan",
+        headline=f"OFF TRACK — {gap:+.1f} kg above the plan line",
+        detail=detail,
+        action="Two honest options: reset the behaviour (log every day, hit the line) or reset the plan (new date or target). Drifting while the dashboard says 'a touch behind' is the only wrong answer.",
+    )
+
+
+def _rule_unlogged_days(s: Snapshot) -> Advice | None:
+    if not s.programme_active or s.unlogged_days_7d < 2:
+        return None
+    return Advice(
+        severity="warning",
+        category="adherence",
+        headline=f"{s.unlogged_days_7d} of the last 7 days have no food log",
+        detail="Unlogged days pass every calorie check by default — they're usually the days the deficit died. A stall is not a mystery when a chunk of the week is invisible.",
+        action="Log everything today, especially the bad stuff. An honest 2,800 beats a fictional 2,300 — the plan can only respond to what it can see.",
+    )
+
+
+def _rule_diet_break_overdue(s: Snapshot) -> Advice | None:
+    """Calendar-based: the plan prescribes a maintenance break every 4-6 weeks."""
+    if not s.programme_active or s.weeks_since_diet_break is None:
+        return None
+    if s.weeks_since_diet_break < 6 or s.week_no < 4:
+        return None
+    return Advice(
+        severity="caution",
+        category="periodisation",
+        headline=f"No diet break in {s.weeks_since_diet_break:.0f} weeks",
+        detail="The programme prescribes 7-10 days at maintenance every 4-6 weeks. Past that, adherence and hormones degrade and stalls get blamed on willpower.",
+        action="Book a 7-day maintenance block (eat at TDEE, keep protein and training). Then cut again. Log it so the plan tracks it.",
     )
 
 
@@ -712,7 +851,10 @@ ALL_RULES = [
     _rule_rate_too_fast,
     _rule_rate_perfect,
     _rule_weight_stalled,
+    _rule_plan_gap,
+    _rule_unlogged_days,
     _rule_diet_break,
+    _rule_diet_break_overdue,
     _rule_poor_sleep_training,
     _rule_resting_hr_rising,
     _rule_hrv_low,
@@ -766,6 +908,16 @@ async def get_advice() -> dict:
             "steps": {"today": snap.steps_today, "target": snap.steps_target},
             "weight_kg": round(snap.current_weight_kg, 1) if snap.current_weight_kg else None,
             "slope_kg_per_week": round(snap.slope_kg_per_week, 2) if snap.slope_kg_per_week else None,
+            "plan": {
+                "on_track": snap.plan_on_track,
+                "gap_vs_line_kg": snap.gap_vs_line_kg,
+                "required_kg_per_week": snap.required_kg_per_week,
+                "required_rate_unsafe": snap.required_rate_unsafe,
+                "projected_end_weight": snap.projected_end_weight,
+                "projected_finish_date": snap.projected_finish_date,
+                "unlogged_days_7d": snap.unlogged_days_7d,
+                "weeks_since_diet_break": snap.weeks_since_diet_break,
+            },
             "sleep_score": snap.sleep_score,
             "resting_hr": snap.resting_hr,
             "hrv_status": snap.hrv_status,

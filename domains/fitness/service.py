@@ -419,6 +419,88 @@ def targets_drifted(programme: dict, live: TdeeResult) -> dict:
     }
 
 
+def compute_plan_maths(
+    programme: dict,
+    current_weight: float | None,
+    slope_kg_per_week: float | None,
+    today: date | None = None,
+) -> dict:
+    """Honest plan arithmetic: where the plan line is, the gap to it, the rate
+    required from here, and where the current rate actually lands.
+
+    This is the single source of truth for "am I on track" — the dashboard
+    hero, the AI summary facts, the advisor and the Monday check-in all read
+    from here so they can't disagree or soften independently.
+
+    on_track tiers (worst first): off_track > well_behind > behind > settling
+    > on_track > ahead. The gap thresholds are vs the linearly-interpolated
+    weekly target line.
+    """
+    today = today or _today()
+    end = date.fromisoformat(programme["end_date"])
+    start_w = float(programme["start_weight_kg"])
+    target_w = float(programme["target_weight_kg"])
+    dur = int(programme["duration_weeks"])
+    wk = week_number(programme, today)
+    eff_week = min(max(wk, 1), dur)
+    target_this_week = round(start_w - (start_w - target_w) * (eff_week / dur), 1)
+    days_remaining = max(0, (end - today).days)
+    weeks_remaining = max(days_remaining / 7.0, 0.15)
+
+    out: dict[str, Any] = {
+        "target_this_week": target_this_week,
+        "weeks_remaining": round(weeks_remaining, 1),
+        "gap_vs_line_kg": None,
+        "required_kg_per_week": None,
+        "required_pct_bw_per_week": None,
+        "required_rate_unsafe": False,
+        "actual_kg_per_week": round(slope_kg_per_week, 2) if slope_kg_per_week is not None else None,
+        "projected_end_weight": None,
+        "projected_finish_date": None,
+        "on_track": "neutral",
+        "on_track_label": "Tracking",
+    }
+    if wk < 1:
+        out["on_track"], out["on_track_label"] = "pre_start", "Starts Monday"
+        return out
+    if current_weight is None:
+        return out
+
+    gap = round(current_weight - target_this_week, 1)
+    required = (current_weight - target_w) / weeks_remaining
+    req_pct = required / current_weight * 100
+    out["gap_vs_line_kg"] = gap
+    out["required_kg_per_week"] = round(required, 2)
+    out["required_pct_bw_per_week"] = round(req_pct, 2)
+    # Sustained loss above ~1% of body weight per week costs muscle — if the
+    # plan now demands that, the plan itself is broken and needs re-baselining.
+    out["required_rate_unsafe"] = req_pct > 1.0
+
+    if slope_kg_per_week is not None:
+        out["projected_end_weight"] = round(current_weight + slope_kg_per_week * weeks_remaining, 1)
+        if slope_kg_per_week < -0.05:
+            weeks_to_target = (current_weight - target_w) / -slope_kg_per_week
+            if 0 < weeks_to_target < 520:
+                out["projected_finish_date"] = (
+                    today + timedelta(days=round(weeks_to_target * 7))
+                ).isoformat()
+
+    if gap <= -0.2:
+        out["on_track"], out["on_track_label"] = "ahead", "Ahead of plan"
+    elif gap <= 0.3:
+        out["on_track"], out["on_track_label"] = "on_track", "On track"
+    elif wk <= 2:
+        # Early programme: weight noise dwarfs a small miss off a micro-target.
+        out["on_track"], out["on_track_label"] = "settling", "Settling in"
+    elif gap <= 1.0:
+        out["on_track"], out["on_track_label"] = "behind", "Behind — tighten up"
+    elif gap <= 2.5:
+        out["on_track"], out["on_track_label"] = "well_behind", "Well behind — act now"
+    else:
+        out["on_track"], out["on_track_label"] = "off_track", "Off track — plan needs resetting"
+    return out
+
+
 async def recalibrate_programme(
     programme: dict,
     current_weight_kg: float,
@@ -473,6 +555,10 @@ async def recalibrate_programme(
         resp.raise_for_status()
         updated = resp.json()[0] if resp.json() else {**programme, **new}
 
+    # Keep the accountability goal rows in lockstep — they used to drift for
+    # months (wrong session count, stale protein target, expired weight goal).
+    goals_synced = await sync_accountability_goals(updated)
+
     return {
         "programme": updated,
         "old": old,
@@ -484,7 +570,75 @@ async def recalibrate_programme(
         "deficit_kcal": live.deficit_kcal,
         "phase_changed": phase_changed,
         "effective_phase": goal["effective_phase"],
+        "goals_synced": goals_synced,
     }
+
+
+async def sync_accountability_goals(programme: dict) -> list[dict]:
+    """Patch active accountability_goals rows to match the programme's targets.
+
+    Matches rows by auto_source (the stable key) and only writes when the value
+    actually differs, so repeated recalibrations are no-ops. Returns the list of
+    changes applied (empty = everything already in sync).
+    """
+    targets = {
+        "nutrition_calories": {
+            "target_value": int(programme["daily_calorie_target"]),
+            "title": f"Daily calories ≤ {int(programme['daily_calorie_target'])}",
+        },
+        "nutrition_protein": {
+            "target_value": int(programme["daily_protein_g"]),
+            "title": f"Protein ≥ {int(programme['daily_protein_g'])}g daily",
+        },
+        "fitness_strength_week": {
+            "target_value": int(programme["weekly_strength_sessions"]),
+            "title": f"{int(programme['weekly_strength_sessions'])} strength sessions per week",
+        },
+        "garmin_steps": {
+            "target_value": int(programme["daily_steps_target"]),
+            "title": f"{int(programme['daily_steps_target']) // 1000}k steps daily",
+        },
+        "weight": {
+            "target_value": float(programme["target_weight_kg"]),
+            "deadline": programme["end_date"],
+        },
+    }
+    changes: list[dict] = []
+    async with httpx.AsyncClient(timeout=10) as c:
+        resp = await c.get(
+            f"{SUPABASE_URL}/rest/v1/accountability_goals",
+            headers=_read_headers(),
+            params={
+                "select": "id,title,target_value,deadline,auto_source",
+                "status": "eq.active",
+                "user_id": "eq.chris",
+            },
+        )
+        resp.raise_for_status()
+        for g in resp.json():
+            want = targets.get(g.get("auto_source") or "")
+            if not want:
+                continue
+            patch = {}
+            if float(g.get("target_value") or 0) != float(want["target_value"]):
+                patch["target_value"] = want["target_value"]
+            if want.get("title") and g.get("title") != want["title"]:
+                patch["title"] = want["title"]
+            if want.get("deadline") and g.get("deadline") != want["deadline"]:
+                patch["deadline"] = want["deadline"]
+            if not patch:
+                continue
+            r = await c.patch(
+                f"{SUPABASE_URL}/rest/v1/accountability_goals",
+                headers=_write_headers(),
+                params={"id": f"eq.{g['id']}"},
+                json=patch,
+            )
+            if r.status_code in (200, 204):
+                changes.append({"goal_id": g["id"], "auto_source": g["auto_source"], **patch})
+            else:
+                logger.warning(f"Goal sync failed for {g['id']}: {r.status_code} {r.text}")
+    return changes
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1026,12 +1180,32 @@ async def compute_dashboard() -> dict:
             else:
                 result["today_workout"] = None
 
+        # Plan maths — the honest picture (gap vs line, required rate,
+        # projection). Single source of truth for every check-in surface.
+        plan = compute_plan_maths(programme, current_weight, trend.slope_kg_per_week)
+        result["plan"] = plan
+
         # Flags — compare against live targets (not stored ones) so the
         # dashboard reflects the adaptive plan.
         live_cal = result["nutrition"]["target_calories"]
         live_pro = result["nutrition"]["target_protein"]
+        gap = plan.get("gap_vs_line_kg") or 0
+        if plan["on_track"] == "off_track":
+            req = plan.get("required_kg_per_week")
+            flags.append(
+                f"OFF TRACK — {gap:+.1f} kg vs the plan line; hitting "
+                f"{programme['target_weight_kg']:g} kg by {programme['end_date']} now needs "
+                f"{req:.2f} kg/wk"
+                + (" (unsafe — re-baseline the plan)" if plan["required_rate_unsafe"] else "")
+            )
+        elif plan["on_track"] in ("behind", "well_behind"):
+            flags.append(f"BEHIND PLAN — {gap:+.1f} kg vs this week's line")
         if trend.stalled:
-            flags.append("WEIGHT TREND STALLED — drop 100 kcal + add 2k steps")
+            # Scale the correction with how far behind the line we are.
+            if gap > 2:
+                flags.append("WEIGHT TREND STALLED — drop 200 kcal + add 3k steps, and review what isn't being logged")
+            else:
+                flags.append("WEIGHT TREND STALLED — drop 100 kcal + add 2k steps")
         if nutrition["calories"] > live_cal * 1.1:
             flags.append(f"Over calorie target by {int(nutrition['calories'] - live_cal)} kcal")
         if nutrition["protein_g"] < live_pro * 0.8 and datetime.now(UK_TZ).hour >= 18:

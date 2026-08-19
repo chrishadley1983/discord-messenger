@@ -111,6 +111,13 @@ Mobility: morning ❌ | evening ❌
   "protect muscle" line. `goal.protein_mode` says whether protein is a fat-loss
   *floor* (`fixed`) or an adaptive muscle target (`adaptive`); frame the protein
   line with `goal.protein_note` / `goal.rule`, not from memory.
+- **Plan verdict first**: the payload's `plan` block is the honest picture —
+  `gap_vs_line_kg`, `required_kg_per_week` vs `weight.slope_kg_per_week`,
+  `projected_end_weight`/`projected_finish_date`, `on_track_label`. If the tier
+  is behind/well_behind/off_track, LEAD with the verdict and those numbers
+  ("Off track: +3.1kg vs line — need 0.9kg/wk, actual 0.1"). The words
+  "a touch", "roughly", "drifting", "more or less" are banned for those tiers.
+  Honest ≠ harsh: no shame, just the arithmetic and one corrective.
 - **Weight display**: ALWAYS show the 7-day trend first, raw second. Day-to-day variance is noise.
 - **Targets remaining**: Show what's left to hit, not what's already consumed — Chris responds to gaps better than totals.
 - **Today's session**: Full exercise list with the week-adjusted reps/holds. Do NOT show generic defaults.

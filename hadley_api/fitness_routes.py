@@ -25,6 +25,7 @@ import asyncio
 import logging
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -549,3 +550,63 @@ async def dashboard_refresh():
         return {"status": "already_building", **_dash_state}
     asyncio.create_task(_do_dashboard_refresh())
     return {"status": "started"}
+
+
+# ── Remote refresh relay poller ─────────────────────────────────────────
+# The public surge page can't reach this LAN-only API, so its Refresh button
+# POSTs sha256(passcode) to the `dashboard-refresh` Supabase Edge Function,
+# which queues a row in dashboard_refresh_requests. This poller drains the
+# queue: a row whose hash matches DASHBOARD_PASSCODE triggers the same
+# rebuild+redeploy as the LAN button; anything else is marked rejected.
+
+_RELAY_POLL_S = 20
+
+
+def _relay_conf() -> tuple[str, dict] | None:
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_KEY", "")
+    if not url or not key or not os.getenv("DASHBOARD_PASSCODE"):
+        return None
+    return (f"{url}/rest/v1/dashboard_refresh_requests",
+            {"apikey": key, "Authorization": f"Bearer {key}"})
+
+
+async def _poll_refresh_relay():
+    import hashlib
+    import httpx
+    conf = _relay_conf()
+    if not conf:
+        logger.warning("Dashboard relay poller disabled: SUPABASE_URL/KEY or DASHBOARD_PASSCODE missing")
+        return
+    rest, headers = conf
+    want = hashlib.sha256(os.environ["DASHBOARD_PASSCODE"].encode()).hexdigest()
+    logger.info("Dashboard relay poller started")
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.get(rest, headers=headers,
+                                params={"select": "id,pass_sha256", "processed_at": "is.null",
+                                        "order": "requested_at.asc", "limit": "20"})
+                r.raise_for_status()
+                rows = r.json()
+                if rows:
+                    accepted = [row["id"] for row in rows if row["pass_sha256"] == want]
+                    for row in rows:
+                        ok = row["id"] in accepted
+                        await c.patch(rest, headers=headers, params={"id": f"eq.{row['id']}"},
+                                      json={"processed_at": datetime.now(timezone.utc).isoformat(),
+                                            "status": "accepted" if ok else "rejected"})
+                    if accepted:
+                        logger.info(f"Dashboard relay: {len(accepted)} remote refresh request(s) accepted")
+                        if not _dash_state["building"]:
+                            asyncio.create_task(_do_dashboard_refresh())
+                    if len(accepted) < len(rows):
+                        logger.warning(f"Dashboard relay: rejected {len(rows) - len(accepted)} request(s) with a wrong passcode hash")
+        except Exception as e:
+            logger.warning(f"Dashboard relay poll failed: {e}")
+        await asyncio.sleep(_RELAY_POLL_S)
+
+
+@router.on_event("startup")
+async def _start_refresh_relay():
+    asyncio.create_task(_poll_refresh_relay())
