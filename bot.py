@@ -22,10 +22,10 @@ from discord.ext import commands
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from claude_client import ClaudeClient
+from cli_chat import chat_with_history_via_cli
 from registry import registry
 from logger import logger
-from config import DISCORD_TOKEN, ANTHROPIC_API_KEY, CLAUDE_MODEL
+from config import DISCORD_TOKEN
 
 # Import domains
 # NutritionDomain disabled - #food-log now routes through Peterbot with Hadley API
@@ -77,11 +77,8 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-# Initialize Claude client - using config vars
-claude = ClaudeClient(
-    api_key=ANTHROPIC_API_KEY,
-    model=CLAUDE_MODEL
-)
+# Domain chat goes through the Hadley API /claude/extract CLI path (OAuth) —
+# the direct-API ClaudeClient died with the revoked DISCORD_BOT_CLAUDE_KEY.
 
 # Initialize scheduler
 scheduler = AsyncIOScheduler(job_defaults={"misfire_grace_time": 60})
@@ -1457,12 +1454,14 @@ async def on_message(message):
     # Get response from Claude
     async with message.channel.typing():
         try:
-            response = await claude.chat_with_history(
+            response = await chat_with_history_via_cli(
                 conversation=conversation_history,
                 system=domain.system_prompt,
                 tools=domain.get_tool_definitions(),
                 tool_handlers=tool_handlers
             )
+            if response is None:
+                raise RuntimeError("cli chat path returned no response")
 
             # Split long messages (Discord has 2000 char limit)
             if len(response) > 2000:
