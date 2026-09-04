@@ -6,6 +6,7 @@ Run with: uvicorn hadley_api.main:app --port 8100
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from hadley_api.auth import require_auth
+from hadley_api import hb_sync
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse, Response
 from datetime import datetime, timedelta
@@ -9365,6 +9366,17 @@ async def hb_proxy(request: Request, path: str):
             status_code=404,
             media_type="application/json",
         )
+
+    # Platform sync: the real route (/api/cron/full-sync) needs CRON_SECRET and
+    # runs 100-285s, past this proxy's 30s timeout — so /hb/workflow/sync-all
+    # 504'd forever and Peter guessed /hb/orders/refresh etc. (401 from the
+    # session-gated orders/[id] route). Run it in the background, 202 now,
+    # and let Peter poll /hb/sync/status. 2026-09-04.
+    if hb_sync.is_status(path):
+        return JSONResponse(content=hb_sync.status())
+    if hb_sync.is_trigger(path):
+        code, body = hb_sync.trigger(HB_BASE_URL)
+        return JSONResponse(status_code=code, content=body)
 
     target_url = f"{HB_BASE_URL}/api/{path}"
 
