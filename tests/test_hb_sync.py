@@ -89,18 +89,25 @@ async def test_trigger_starts_background_run_and_dedupes():
 
     async def fake_runner(base_url, secret):
         calls.append((base_url, secret))
-        hb_sync._state["running"] = True
         await release.wait()
         hb_sync._state["running"] = False
 
     code, body = hb_sync.trigger("http://hb", secret="s3cret", runner=fake_runner)
     assert code == 202 and body["accepted"] and body["already_running"] is False
     assert body["poll"] == "/hb/sync/status"
-    await asyncio.sleep(0)  # let the task start
+    assert hb_sync._state["running"] is True, "trigger must mark running synchronously"
 
+    # Same tick — the task has not had a chance to run yet. This is the race
+    # the review caught: gating on _state['running'] set inside the task let
+    # two back-to-back requests start two full-syncs.
     code2, body2 = hb_sync.trigger("http://hb", secret="s3cret", runner=fake_runner)
     assert code2 == 202 and body2["already_running"] is True
+    assert body2["started_at"] == body["started_at"]
+    await asyncio.sleep(0)  # now let the task start
     assert calls == [("http://hb", "s3cret")], "second trigger must not start a second run"
+
+    code3, _ = hb_sync.trigger("http://hb", secret="s3cret", runner=fake_runner)
+    assert code3 == 202 and calls == [("http://hb", "s3cret")]
 
     release.set()
     await hb_sync._task
@@ -125,11 +132,11 @@ async def test_run_full_sync_records_success(monkeypatch):
     def handler(request: httpx.Request):
         seen["url"] = str(request.url)
         seen["auth"] = request.headers.get("authorization")
+        # Real shape from apps/web/src/app/api/cron/full-sync/route.ts
         return httpx.Response(200, json={
-            "success": True, "duration": 1234,
-            "orders": {"amazon": {"status": "COMPLETED", "processed": 3, "created": 1,
-                                   "updated": 2, "latestDataDate": "x", "huge": [1] * 50}},
-            "blob": {"lots": "of stuff"},
+            "success": True, "duration": 1234, "platformSyncs": 4,
+            "stuckJobsFound": 0, "stuckJobsReset": 0,
+            "weeklyStats": {"listed": {"count": 9, "value": 1}, "sold": {}, "backlog": 3},
         })
 
     real_client = httpx.AsyncClient
@@ -144,10 +151,11 @@ async def test_run_full_sync_records_success(monkeypatch):
     st = hb_sync.status()
     assert st["running"] is False and st["ok"] is True and st["http_status"] == 200
     assert st["runs"] == 1
-    assert st["summary"]["orders"]["amazon"] == {
-        "status": "COMPLETED", "processed": 3, "created": 1, "updated": 2,
+    assert st["summary"] == {
+        "success": True, "duration": 1234, "platformSyncs": 4,
+        "stuckJobsFound": 0, "stuckJobsReset": 0,
     }
-    assert "blob" not in st["summary"]
+    assert "weeklyStats" not in st["summary"]
     assert st["finished_at"] and st["started_at"]
 
 

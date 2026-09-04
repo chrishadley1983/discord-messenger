@@ -112,33 +112,36 @@ _task: Optional[asyncio.Task] = None
 
 
 def _summarise(payload: Any) -> Any:
-    """Keep the useful top-level counters, drop the big nested blobs."""
+    """Keep the top-level counters, drop nested blobs.
+
+    ``/api/cron/full-sync`` returns ``{success, duration, platformSyncs,
+    stuckJobsFound, stuckJobsReset, weeklyStats}`` on success and
+    ``{success: false, error}`` on failure (full-sync/route.ts).
+    """
     if not isinstance(payload, dict):
         return str(payload)[:500]
-    keep: dict[str, Any] = {}
-    for key in ("success", "duration", "totalDurationMs", "syncedAt", "error", "errors"):
-        if key in payload:
-            keep[key] = payload[key]
-    for section in ("orders", "transactions", "stockImports"):
-        block = payload.get(section)
-        if isinstance(block, dict):
-            keep[section] = {
-                platform: {
-                    k: v
-                    for k, v in result.items()
-                    if k in ("status", "processed", "created", "updated", "error")
-                }
-                for platform, result in block.items()
-                if isinstance(result, dict)
-            }
-    return keep
+    return {
+        key: value
+        for key, value in payload.items()
+        if key
+        in (
+            "success",
+            "duration",
+            "platformSyncs",
+            "stuckJobsFound",
+            "stuckJobsReset",
+            "error",
+        )
+    }
 
 
 async def run_full_sync(base_url: str, secret: str) -> None:
     """POST the cron route and record the outcome in ``_state``."""
+    # trigger() already stamped started_at when it scheduled us; only stamp
+    # here when called directly (tests, future callers).
     _state.update(
         running=True,
-        started_at=_now(),
+        started_at=_state["started_at"] if _state["running"] else _now(),
         finished_at=None,
         http_status=None,
         ok=None,
@@ -210,7 +213,10 @@ def trigger(
             "error": "CRON_SECRET not available to the Hadley API - cannot call /api/cron/full-sync",
             "fix": "set CRON_SECRET in Discord-Messenger/.env (copy from apps/web/.env.local) and restart HadleyAPI",
         }
-    if _state["running"] and _task is not None and not _task.done():
+    # Gate on the task object, not on _state["running"]: the flag is only set
+    # once the task first runs, which is after this handler yields — two
+    # triggers in the same tick would otherwise both start a full-sync.
+    if _task is not None and not _task.done():
         return 202, {
             "accepted": True,
             "already_running": True,
@@ -218,13 +224,15 @@ def trigger(
             "poll": "/hb/sync/status",
             "message": "A full sync is already in progress. Poll /hb/sync/status, then re-query orders.",
         }
+    started_at = _now()
+    _state.update(running=True, started_at=started_at, finished_at=None, ok=None, error=None)
     run = runner or run_full_sync  # resolved at call time so tests can patch the module attr
     _task = asyncio.get_running_loop().create_task(run(base_url, key))
     return 202, {
         "accepted": True,
         "already_running": False,
         "job": "full-sync",
-        "started_at": _now(),
+        "started_at": started_at,
         "expected_duration_seconds": EXPECTED_DURATION_S,
         "poll": "/hb/sync/status",
         "message": (
