@@ -92,8 +92,6 @@ Auth is handled automatically — just call the endpoints.
 | Orders | `/hb/orders` | GET | `page`, `pageSize`, `platform`, `status`, `startDate`, `endDate` |
 | Order stats | `/hb/orders/stats` | GET | `platform` |
 | Order status summary | `/hb/orders/status-summary` | GET | `platform`, `days` (7/30/90/all) |
-| eBay orders | `/hb/orders/ebay` | GET | |
-| Amazon orders | `/hb/orders/amazon` | GET | |
 | Dispatch deadlines | `/hb/orders/dispatch-deadlines` | GET | |
 | Inventory | `/hb/inventory` | GET | `page`, `pageSize`, `status`, `condition`, `platform`, `search`, cost/date ranges |
 | Inventory summary | `/hb/inventory/summary` | GET | `excludeSold`, `platform` |
@@ -127,6 +125,23 @@ Auth is handled automatically — just call the endpoints.
 | Bulk add inventory | `/hb/service/inventory` | POST | `{items: [{set_number, name, condition, cost, purchase_id, ...}]}` |
 | Service add purchase | `/hb/service/purchases` | POST | `{source, cost, payment_method, purchase_date, ...}` |
 | Update order status | `/hb/orders/{id}/status` | POST | `{status}` |
+| **Trigger platform sync** (import new orders from eBay/Amazon/BL/BO/Shopify) | `/hb/sync/trigger` | POST | — (returns 202 immediately; runs ~3 min in background) |
+| Sync status | `/hb/sync/status` | GET | — (`running`, `ok`, `summary` of last run) |
+
+### Missing order? Sync first, never guess
+
+If Chris mentions an order that isn't in `/hb/orders` or the pick list, it has
+not been imported yet (the scheduled import runs at 03:45/07:45/11:45/15:45/19:45/23:45 UTC).
+Do this — nothing else:
+
+1. `POST /hb/sync/trigger` → 202 `{accepted: true, poll: "/hb/sync/status"}`
+2. Wait ~3 minutes (`sleep 180`), then `GET /hb/sync/status` until `running` is `false`
+3. Re-query `/hb/picking-list/amazon?format=json` (or `/hb/orders`)
+
+Do **not** try `/hb/orders/refresh`, `/hb/orders/sync`, `/hb/workflow/sync-all`,
+`/hb/cron/*` or `/hb/orders/amazon` — those either don't exist, need a browser
+session (401), or time out (504). The common guesses are aliased to the trigger
+anyway, but `/hb/sync/trigger` is the documented path.
 
 ### Presets (for report endpoints)
 

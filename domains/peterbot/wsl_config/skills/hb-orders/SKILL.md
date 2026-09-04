@@ -128,3 +128,19 @@ No unfulfilled orders across Amazon or eBay.
 
 🔵 eBay: All caught up!
 ```
+
+## Missing / just-placed order?
+
+The pick list and `/hb/orders` only show what has already been imported. If an
+order Chris mentions is missing, trigger the import and re-fetch — never guess
+other endpoint names (see `docs/playbooks/BUSINESS.md` → "Missing order?"):
+
+```
+POST http://172.19.64.1:8100/hb/sync/trigger      → 202 {accepted: true}
+sleep 180
+GET  http://172.19.64.1:8100/hb/sync/status       → running:false, ok:true
+GET  http://172.19.64.1:8100/hb/picking-list/amazon?format=json
+```
+
+`/hb/orders/refresh`, `/hb/orders/sync`, `/hb/workflow/sync-all` and `/hb/cron/*`
+are NOT valid — they 401/404/504.
