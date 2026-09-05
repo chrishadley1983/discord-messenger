@@ -220,15 +220,20 @@ async def _download_attachments(
 
     for att in attachment_urls:
         content_type = att.get("content_type", "")
+        fname_lower = str(att.get("filename", "")).lower()
         is_image = content_type.startswith("image/")
         is_audio = content_type.startswith("audio/")
+        # Data files Chris drops in Discord (e.g. a Fitbod CSV export) — saved to a
+        # local path so Claude can Read them / hand them to an import endpoint.
+        is_data = (content_type in ("text/csv", "application/csv", "text/plain", "application/json")
+                   or fname_lower.endswith((".csv", ".txt", ".json")))
 
-        if not is_image and not is_audio:
+        if not is_image and not is_audio and not is_data:
             updated.append(att)
             continue
 
         # Download to temp file
-        ext = Path(att.get("filename", "file")).suffix or (".jpg" if is_image else ".ogg")
+        ext = Path(att.get("filename", "file")).suffix or (".jpg" if is_image else ".ogg" if is_audio else ".txt")
         temp_name = f"{uuid.uuid4().hex[:12]}{ext}"
         temp_path = ATTACHMENT_TEMP_DIR / temp_name
 
@@ -240,11 +245,12 @@ async def _download_attachments(
                         temp_path.write_bytes(data)
                         temp_files.append(temp_path)
 
-                        if is_image:
+                        if is_image or is_data:
                             wsl_path = _windows_to_wsl_path(temp_path)
                             updated.append({
                                 **att,
                                 "local_path": wsl_path,
+                                "windows_path": str(temp_path),
                             })
                         elif is_audio:
                             # Transcribe voice note

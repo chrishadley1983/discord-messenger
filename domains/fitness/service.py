@@ -50,6 +50,8 @@ SESSIONS_TABLE = "fitness_workout_sessions"
 SETS_TABLE = "fitness_workout_sets"
 MOBILITY_TABLE = "fitness_mobility_sessions"
 CHECKINS_TABLE = "fitness_weekly_checkins"
+CARDIO_TABLE = "fitness_cardio_sessions"
+PLANS_TABLE = "fitness_training_plans"
 
 
 def _today() -> date:
@@ -690,8 +692,11 @@ async def log_workout(
 ) -> dict:
     """Log a workout session + its per-exercise sets.
 
-    `sets` is a list of {exercise_slug, set_no, reps, hold_s, notes}.
-    Exercise slug is resolved to exercise_id before insert.
+    `sets` is a list of {exercise_slug, set_no, reps, hold_s, weight_kg, rir,
+    failed, target_reps, notes, [exercise_name, category, muscle_group,
+    equipment]}. Exercise slug is resolved to exercise_id before insert;
+    unknown slugs are CREATED in the library (never silently dropped) so
+    off-plan work is captured and the plan can adapt to it.
     """
     body = {
         "session_type": session_type,
@@ -708,13 +713,12 @@ async def log_workout(
         session = resp.json()[0]
 
         if sets:
-            slugs = list({s["exercise_slug"] for s in sets})
-            ex_map = await get_exercises_by_slugs(slugs)
+            ex_map = await ensure_exercises(sets)
             set_rows = []
             for s in sets:
                 ex = ex_map.get(s["exercise_slug"])
                 if not ex:
-                    logger.warning(f"Unknown exercise slug: {s['exercise_slug']}")
+                    logger.warning(f"Unknown exercise slug (create failed): {s['exercise_slug']}")
                     continue
                 set_rows.append({
                     "session_id": session["id"],
@@ -722,6 +726,10 @@ async def log_workout(
                     "set_no": s.get("set_no", 1),
                     "reps": s.get("reps"),
                     "hold_s": s.get("hold_s"),
+                    "weight_kg": s.get("weight_kg"),
+                    "rir": s.get("rir"),
+                    "failed": bool(s.get("failed") or False),
+                    "target_reps": s.get("target_reps"),
                     "notes": s.get("notes"),
                 })
             if set_rows:
@@ -1170,9 +1178,9 @@ async def compute_dashboard() -> dict:
             pct = loss / (float(programme["start_weight_kg"]) - float(programme["target_weight_kg"])) * 100
             result["weight"]["progress_pct"] = round(pct, 1)
 
-        # Today's prescribed workout
+        # Today's prescribed workout (plan-aware when split == 'plan')
         if 1 <= wk <= programme["duration_weeks"]:
-            week_sessions = generate_week(programme["split"], wk)
+            week_sessions = await week_sessions_for(programme, wk)
             dow = _today().weekday()
             today_session = next((s for s in week_sessions if s.day_of_week == dow), None)
             if today_session:
@@ -1289,7 +1297,26 @@ async def compute_weekly_review() -> dict:
 
     # Strength sessions done
     sessions = await get_sessions_in_range(week_start, week_end)
-    strength_done = len([s for s in sessions if s["session_type"] not in ("mobility", "rest")])
+    strength_done = len([s for s in sessions if s["session_type"] not in ("mobility", "rest", "cardio")])
+
+    # Plan-driven training block (Phase 2): cardio, progressions, stalls, Garmin HR
+    training_block: dict | None = None
+    strength_target = programme["weekly_strength_sessions"]
+    if programme.get("split") == "plan":
+        try:
+            training_block = await training_week_summary(today)
+            strength_target = training_block["strength"]["target"]
+            cardio_rows = await get_cardio_in_range(week_start, week_end)
+            hrs = [int(c["avg_hr"]) for c in cardio_rows if c.get("avg_hr")]
+            training_block["cardio"]["avg_hr"] = round(sum(hrs) / len(hrs)) if hrs else None
+            training_block["cardio"]["garmin_matched"] = sum(1 for c in cardio_rows if c.get("garmin_activity_id"))
+            training_block["cardio"]["sessions"] = [
+                {"date": c["session_date"], "modality": c["modality"], "intensity": c["intensity"],
+                 "minutes": c.get("duration_min"), "avg_hr": c.get("avg_hr"), "pain": bool(c.get("pain_flag"))}
+                for c in cardio_rows
+            ]
+        except Exception as e:
+            logger.warning(f"weekly review training block failed: {e}")
 
     # Mobility days hit
     async with httpx.AsyncClient(timeout=10) as c:
@@ -1368,8 +1395,9 @@ async def compute_weekly_review() -> dict:
         },
         "strength": {
             "sessions_done": strength_done,
-            "target": programme["weekly_strength_sessions"],
+            "target": strength_target,
         },
+        "training": training_block,
         "mobility": {
             "days_hit": mobility_days,
             "target": 7,
@@ -1432,3 +1460,296 @@ async def save_weekly_checkin(review: dict) -> dict | None:
         if resp.status_code in (200, 201):
             return resp.json()[0] if resp.json() else row
         return None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# GYM TRAINING LOG + ADAPTIVE PLAN (Sep 2026)
+# ══════════════════════════════════════════════════════════════════════
+# Pure logic lives in domains/fitness/training_plan.py; this section is I/O.
+
+from domains.fitness import training_plan as tp  # noqa: E402
+
+
+async def ensure_exercises(sets: list[dict]) -> dict[str, dict]:
+    """Resolve slugs -> exercise rows, creating any that don't exist yet.
+
+    A set may carry `exercise_name`, `category`, `muscle_group`, `equipment`
+    hints for the auto-created row. Category falls back to 'other'.
+    """
+    slugs = list({s["exercise_slug"] for s in sets})
+    ex_map = await get_exercises_by_slugs(slugs)
+    missing = [s for s in slugs if s not in ex_map]
+    if not missing:
+        return ex_map
+    hints = {s["exercise_slug"]: s for s in sets}
+    rows = []
+    for slug in missing:
+        h = hints[slug]
+        measurement = "hold_seconds" if (h.get("hold_s") and not h.get("reps")) else "reps"
+        rows.append({
+            "name": h.get("exercise_name") or slug.replace("-", " ").title(),
+            "slug": slug,
+            "category": h.get("category") or "other",
+            "muscle_group": h.get("muscle_group") or "unknown",
+            "measurement": measurement,
+            "default_sets": 3,
+            "default_reps": h.get("target_reps") or h.get("reps") or 10,
+            "equipment": h.get("equipment"),
+            "progression_note": "Auto-added from a logged session - double progression by default",
+        })
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.post(_url(EXERCISES_TABLE), headers=_write_headers(), json=rows)
+        if r.status_code >= 300:
+            logger.warning(f"ensure_exercises insert failed: {r.status_code} {r.text}")
+    return await get_exercises_by_slugs(slugs)
+
+
+async def get_exercise_meta(slugs: list[str]) -> dict[str, dict]:
+    if not slugs:
+        return {}
+    return await get_exercises_by_slugs(slugs)
+
+
+async def get_sets_history(days: int = 56, slugs: list[str] | None = None) -> dict[str, list[dict]]:
+    """Logged sets grouped by exercise slug, newest session first.
+
+    Returns {slug: [{date, session_type, session_id, sets: [{set_no, reps, weight_kg, rir, failed, target_reps}]}]}.
+    """
+    cutoff = (_today() - timedelta(days=days)).isoformat()
+    params = {
+        "select": "set_no,reps,hold_s,weight_kg,rir,failed,target_reps,notes,"
+                  "exercise:fitness_exercises!inner(slug,name,load_step_kg),"
+                  "session:fitness_workout_sessions!inner(id,session_date,session_type,user_id)",
+        "session.user_id": "eq.chris",
+        "session.session_date": f"gte.{cutoff}",
+        "order": "set_no.asc",
+    }
+    if slugs:
+        params["exercise.slug"] = f"in.({','.join(slugs)})"
+    async with httpx.AsyncClient(timeout=15) as c:
+        resp = await c.get(_url(SETS_TABLE), headers=_read_headers(), params=params)
+        resp.raise_for_status()
+        rows = resp.json()
+
+    grouped: dict[str, dict[str, dict]] = {}
+    for r in rows:
+        ex, sess = r.get("exercise") or {}, r.get("session") or {}
+        if not ex or not sess:
+            continue
+        slug = ex["slug"]
+        key = sess["id"]
+        entry = grouped.setdefault(slug, {}).setdefault(key, {
+            "date": sess["session_date"], "session_type": sess["session_type"],
+            "session_id": key, "sets": [],
+        })
+        entry["sets"].append({
+            "set_no": r["set_no"], "reps": r.get("reps"), "hold_s": r.get("hold_s"),
+            "weight_kg": float(r["weight_kg"]) if r.get("weight_kg") is not None else None,
+            "rir": r.get("rir"), "failed": bool(r.get("failed")), "target_reps": r.get("target_reps"),
+        })
+    out: dict[str, list[dict]] = {}
+    for slug, by_session in grouped.items():
+        sessions = sorted(by_session.values(), key=lambda e: (str(e["date"]), e["session_id"]), reverse=True)
+        for e in sessions:
+            e["sets"].sort(key=lambda s: s["set_no"])
+        out[slug] = sessions
+    return out
+
+
+async def get_workouts_with_sets(days: int = 28) -> list[dict]:
+    """Sessions (newest first) with their sets embedded - the history endpoint."""
+    cutoff = (_today() - timedelta(days=days)).isoformat()
+    async with httpx.AsyncClient(timeout=15) as c:
+        resp = await c.get(
+            _url(SESSIONS_TABLE), headers=_read_headers(),
+            params={
+                "select": "*,sets:fitness_workout_sets(set_no,reps,hold_s,weight_kg,rir,failed,target_reps,notes,"
+                          "exercise:fitness_exercises(slug,name))",
+                "user_id": "eq.chris",
+                "session_date": f"gte.{cutoff}",
+                "order": "session_date.desc",
+            },
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+    for r in rows:
+        r["sets"] = sorted(
+            r.get("sets") or [],
+            key=lambda s: ((s.get("exercise") or {}).get("slug", ""), int(s.get("set_no") or 0)),
+        )
+    return rows
+
+
+# -- Cardio -------------------------------------------------------------
+
+async def log_cardio(
+    *,
+    modality: str,
+    intensity: str = "easy",
+    session_date: str | None = None,
+    duration_min: int | None = None,
+    protocol: list[dict] | None = None,
+    peak_level: float | None = None,
+    work_level: float | None = None,
+    avg_hr: int | None = None,
+    max_hr: int | None = None,
+    calories: int | None = None,
+    distance_m: int | None = None,
+    rpe: int | None = None,
+    limiter: str | None = None,
+    pain_flag: bool = False,
+    notes: str | None = None,
+    garmin_activity_id: str | None = None,
+    programme_id: str | None = None,
+) -> dict:
+    body = {
+        "modality": modality, "intensity": intensity,
+        "session_date": session_date or _today().isoformat(),
+        "duration_min": duration_min, "protocol": protocol,
+        "peak_level": peak_level, "work_level": work_level,
+        "avg_hr": avg_hr, "max_hr": max_hr, "calories": calories, "distance_m": distance_m,
+        "rpe": rpe, "limiter": limiter, "pain_flag": bool(pain_flag), "notes": notes,
+        "garmin_activity_id": garmin_activity_id, "programme_id": programme_id,
+    }
+    async with httpx.AsyncClient(timeout=15) as c:
+        resp = await c.post(_url(CARDIO_TABLE), headers=_write_headers(), json=body)
+        resp.raise_for_status()
+        return resp.json()[0]
+
+
+async def get_cardio_in_range(start: date, end: date) -> list[dict]:
+    async with httpx.AsyncClient(timeout=10) as c:
+        resp = await c.get(
+            _url(CARDIO_TABLE), headers=_read_headers(),
+            params={
+                "select": "*", "user_id": "eq.chris",
+                "session_date": f"gte.{start.isoformat()}",
+                "and": f"(session_date.lte.{end.isoformat()})",
+                "order": "session_date.desc,created_at.desc",
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def last_hard_cardio(days: int = 28) -> dict | None:
+    rows = await get_cardio_in_range(_today() - timedelta(days=days), _today())
+    return next((r for r in rows if r.get("intensity") == "hard"), None)
+
+
+# -- Plans --------------------------------------------------------------
+
+async def get_active_plan() -> dict | None:
+    """Active plan ROW (plan JSON under ['plan']). None if never seeded."""
+    async with httpx.AsyncClient(timeout=10) as c:
+        resp = await c.get(
+            _url(PLANS_TABLE), headers=_read_headers(),
+            params={"select": "*", "user_id": "eq.chris", "status": "eq.active", "limit": "1"},
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        return rows[0] if rows else None
+
+
+async def get_plan_or_default() -> tuple[dict, dict | None]:
+    """(plan_json, row_or_None). Falls back to the built-in default when unseeded."""
+    row = await get_active_plan()
+    if row:
+        return row["plan"], row
+    return tp.default_plan(), None
+
+
+async def save_plan(plan: dict, *, rationale: str, created_by: str = "peter",
+                    name: str | None = None) -> dict:
+    """Supersede the active plan with a new version."""
+    current = await get_active_plan()
+    version = int(current["version"]) + 1 if current else 1
+    programme = await get_active_programme()
+    async with httpx.AsyncClient(timeout=15) as c:
+        if current:
+            r = await c.patch(_url(PLANS_TABLE), headers=_write_headers(),
+                              params={"id": f"eq.{current['id']}"}, json={"status": "superseded"})
+            r.raise_for_status()
+        body = {
+            "programme_id": programme["id"] if programme else None,
+            "version": version, "status": "active",
+            "name": name or plan.get("name") or (current or {}).get("name") or "Training plan",
+            "plan": plan, "rationale": rationale, "created_by": created_by,
+        }
+        resp = await c.post(_url(PLANS_TABLE), headers=_write_headers(), json=body)
+        resp.raise_for_status()
+        return resp.json()[0]
+
+
+async def get_plan_history(limit: int = 10) -> list[dict]:
+    async with httpx.AsyncClient(timeout=10) as c:
+        resp = await c.get(
+            _url(PLANS_TABLE), headers=_read_headers(),
+            params={"select": "id,version,status,name,rationale,created_by,created_at",
+                    "user_id": "eq.chris", "order": "version.desc", "limit": str(limit)},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+# -- Composite reads ----------------------------------------------------
+
+async def week_sessions_for(programme: dict, week_no: int, today: date | None = None) -> list[PrescribedSession]:
+    """Plan-aware replacement for generate_week(programme['split'], wk).
+
+    split == 'plan' -> project the stored plan onto this week (logged sessions on
+    their real days, remaining rotation on the next free days). Other splits
+    keep the legacy code-generated prescription.
+    """
+    split = programme.get("split") or "5x_short"
+    if split != tp.PLAN_SPLIT:
+        return generate_week(split, max(1, week_no))
+    today = today or _today()
+    plan, _ = await get_plan_or_default()
+    ws = tp.week_start_of(today)
+    logged = await get_sessions_in_range(ws, ws + timedelta(days=6))
+    return tp.build_week_sessions(plan, ws, logged, today)
+
+
+async def next_session_bundle(session_type: str | None = None) -> dict:
+    """Everything the skill needs to brief the next strength session."""
+    plan, row = await get_plan_or_default()
+    today = _today()
+    recent = await get_sessions_in_range(today - timedelta(days=28), today)
+    st = session_type or tp.next_session_type(plan, recent)
+    prior_count = len([s for s in recent if s.get("session_type") == st])
+    spec = (plan.get("sessions") or {}).get(st) or {}
+    slugs = [e["slug"] for e in spec.get("exercises", [])]
+    history = await get_sets_history(days=84, slugs=slugs) if slugs else {}
+    meta = await get_exercise_meta(slugs)
+    rec = tp.compute_next_session(plan, st, history, meta, prior_count)
+    ok, gap = tp.rest_gap_ok(plan, recent, today)
+    rec["rest_gap_ok"] = ok
+    rec["days_since_last_strength"] = gap
+    rec["plan_version"] = row["version"] if row else None
+    rec["suggested"] = session_type is None
+    return rec
+
+
+async def training_week_summary(today: date | None = None) -> dict:
+    today = today or _today()
+    plan, row = await get_plan_or_default()
+    ws = tp.week_start_of(today)
+    we = ws + timedelta(days=6)
+    strength = tp.strength_sessions_only(await get_sessions_in_range(ws, we))
+    cardio = await get_cardio_in_range(ws, we)
+    history = await get_sets_history(days=42)
+    rules = (plan.get("progression") or {}).get("strength") or {}
+    return {
+        "week_start": ws.isoformat(),
+        "strength": {
+            "done": len(strength),
+            "target": int((plan.get("weekly") or {}).get("strength_sessions", 3)),
+            "sessions": [{"date": s["session_date"], "type": s["session_type"], "rpe": s.get("rpe")} for s in strength],
+            "next": tp.next_session_type(plan, strength),
+        },
+        "cardio": tp.cardio_week_summary(plan, cardio),
+        "progressions_this_week": tp.progressions_since(history, ws),
+        "stalled": tp.stalled_exercises(history, int(rules.get("stall_sessions", 3))),
+        "plan_version": row["version"] if row else None,
+    }

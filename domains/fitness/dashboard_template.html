@@ -355,6 +355,7 @@ function render(){
     document.querySelectorAll(".panel").forEach(x=>x.classList.remove("active"));
     t.classList.add("active"); $("#p-"+t.dataset.t).classList.add("active");
     if(t.dataset.t==="trends") drawCharts();
+    if(t.dataset.t==="training") drawTrainingCharts();
     if(t.dataset.t==="progress") requestAnimationFrame(animateJourney);
   });
   renderToday(); renderProgress(); renderTraining(); renderTargets();
@@ -620,8 +621,99 @@ function exRow(ex){
   }
   return row;
 }
+let tcharts=[];
+function actionWord(a){return a==="increase"?"one plate up":a==="hold"?"hold":a==="deload"?"deload":"find a load";}
+function actionCls(a){return a==="increase"?"good":a==="deload"?"bad":a==="hold"?"warn":"neutral";}
+function renderTrainingLog(p){
+  const t=DATA.training; if(!t) return;
+  const w=t.week||{}, st=w.strength||{}, cd=w.cardio||{};
+  // This week strip
+  const strip=ce("div","mod");
+  strip.innerHTML='<div class="modhead"><h3>This week</h3><span class="meta">plan v'+esc(t.plan_version||"—")+' · '+esc(t.plan_name||"")+'</span></div>'+
+    '<div class="tgt"><span>Strength sessions</span><b>'+esc(st.done||0)+' / '+esc(st.target||3)+'</b></div>'+
+    '<div class="tgt"><span>Easy cardio</span><b>'+esc(cd.easy_done||0)+' / '+esc(cd.easy_target||5)+'</b></div>'+
+    '<div class="tgt"><span>Hard cardio</span><b>'+esc(cd.hard_done||0)+' / '+esc(cd.hard_target||1)+'</b></div>'+
+    ((w.progressions_this_week||[]).length?'<div class="tgt"><span>Load went up</span><b>'+esc(w.progressions_this_week.map(x=>x.slug.replace(/-/g," ")+" "+x.from_kg+"→"+x.to_kg+" kg").join(", "))+'</b></div>':'')+
+    ((w.stalled||[]).length?'<div class="tgt"><span>Stalled</span><b>'+esc(w.stalled.map(x=>x.slug.replace(/-/g," ")+" @ "+x.weight_kg+" kg").join(", "))+'</b></div>':'');
+  p.appendChild(strip);
+  // Next session
+  const n=t.next;
+  if(n){
+    const card=ce("div","mod");
+    const gap=n.rest_gap_ok===false?'<div style="font-size:12.5px;color:var(--bad);margin-bottom:8px">Trained '+(n.days_since_last_strength===0?"today":"yesterday")+' — make today cardio, lift tomorrow.</div>':'';
+    card.innerHTML='<div class="modhead"><h3>Next · '+esc(n.label||n.session_type)+(n.order_variant?' (order '+esc(n.order_variant)+')':'')+'</h3><span class="meta">'+(n.status==="proposed"?"proposed — log what you do and it adapts":"targets from your log")+'</span></div>'+gap;
+    (n.exercises||[]).forEach(e=>{
+      const row=ce("div","ex");
+      const tgt=e.weight_kg!=null?fix(e.weight_kg,1)+" kg":(e.action==="increase"&&e.last_kg!=null?"one plate up from "+fix(e.last_kg,1)+" kg":e.last_kg!=null?fix(e.last_kg,1)+" kg":"—");
+      row.innerHTML='<div><div class="exn">'+esc(e.name)+'</div><div class="exd">'+esc(e.sets)+' × '+esc(e.target_reps)+' · '+esc(tgt)+'</div><div class="exc">'+esc(e.reason||"")+'</div></div>'+
+        '<span class="delta '+actionCls(e.action)+'" style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;font-weight:700">'+esc(actionWord(e.action))+'</span>';
+      card.appendChild(row);
+    });
+    p.appendChild(card);
+  }
+  // Next hard cardio
+  const h=t.next_hard;
+  if(h){
+    const c=ce("div","mod");
+    const blocks=(t.next_hard_blocks||[]).map(b=>{const m=Math.floor(b.seconds/60), s=b.seconds%60; return (b.phase==="peak"?"<b>":"")+esc(b.phase)+" "+m+":"+String(s).padStart(2,"0")+(b.level!=null?" L"+b.level:"")+(b.phase==="peak"?"</b>":"");}).join(" → ");
+    c.innerHTML='<div class="modhead"><h3>Next hard cardio · '+esc(h.modality||"stairmaster")+'</h3><span class="meta">'+esc(h.stage||"")+'</span></div>'+
+      '<div style="font-size:13.5px;color:var(--ink2);margin-bottom:8px">'+esc(h.reason||"")+'</div>'+
+      (blocks?'<div style="font-size:12px;color:var(--muted);line-height:1.7">'+blocks+'</div>':'')+
+      (h.note?'<div class="exc" style="margin-top:6px">'+esc(h.note)+'</div>':'');
+    p.appendChild(c);
+  }
+  // Load progress charts (drawn lazily when the tab opens)
+  const ls=(t.load_series||[]).filter(x=>x.points&&x.points.length);
+  if(ls.length){
+    p.appendChild(sechead("·","Load progress"));
+    const grid=ce("div","grid g2"); grid.id="loadgrid"; p.appendChild(grid);
+    ls.forEach((s,i)=>{
+      const last=s.points[s.points.length-1], first=s.points[0];
+      const d=last.kg-first.kg, dtxt=s.points.length>1?((d>0?"▲ +":d<0?"▼ ":"→ ")+fix(Math.abs(d),1)+" kg"):"";
+      const cc=ce("div","chartcard");
+      cc.innerHTML='<div class="ch-h"><h4>'+esc(s.name)+'</h4><span class="delta '+(d>0?"down":d<0?"up":"")+'">'+esc(dtxt)+'</span></div><div class="legend"><span>'+esc(fix(last.kg,1))+' kg · '+esc(s.points.length)+' session'+(s.points.length===1?"":"s")+'</span></div>';
+      const cv=ce("canvas"); cv.dataset.idx=i; cc.appendChild(cv); grid.appendChild(cc);
+    });
+    if(ls.length%2===1) grid.lastChild.style.gridColumn="1 / -1";
+  }
+  // Recent sessions
+  const ss=t.sessions||[];
+  if(ss.length){
+    p.appendChild(sechead("·","Recent sessions"));
+    ss.slice(0,8).forEach(s=>{
+      const c=ce("div","mod");
+      c.innerHTML='<div class="modhead"><h3>'+esc(s.date)+' · '+esc(s.label)+'</h3><span class="meta">'+(s.rpe?"RPE "+esc(s.rpe)+" · ":"")+(s.duration_min?esc(s.duration_min)+" min · ":"")+esc(s.source)+(s.garmin?" · ⌚":"")+'</span></div>'+
+        (s.exercises||[]).map(e=>'<div class="tgt"><span>'+esc(e.name)+'</span><b style="font-size:14px">'+esc(e.detail)+'</b></div>').join("");
+      p.appendChild(c);
+    });
+  }
+  // Cardio log
+  const cl=t.cardio||[];
+  if(cl.length){
+    p.appendChild(sechead("·","Cardio log"));
+    const c=ce("div","mod");
+    c.innerHTML='<div class="modhead"><h3>Last '+esc(cl.length)+' session'+(cl.length===1?"":"s")+'</h3><span class="meta">⌚ = matched to Garmin</span></div>'+
+      cl.slice(0,12).map(x=>'<div class="rotrow"><span>'+esc(x.date)+' · '+esc(x.modality)+(x.intensity==="hard"?' <span class="badge">hard</span>':'')+(x.pain?' <span class="badge" style="color:var(--bad)">hip</span>':'')+'</span><span style="color:var(--muted);font-size:12.5px">'+
+        (x.minutes?esc(x.minutes)+" min":"")+(x.peak_seconds?" · peak "+esc(x.peak_seconds)+"s":"")+(x.level?" · L"+esc(x.level):"")+(x.avg_hr?" · "+esc(x.avg_hr)+" bpm":"")+(x.garmin?" ⌚":"")+'</span></div>').join("");
+    p.appendChild(c);
+  }
+}
+function drawTrainingCharts(){
+  const t=DATA.training; if(!t) return;
+  tcharts.forEach(c=>c.destroy()); tcharts=[];
+  const ls=(t.load_series||[]).filter(x=>x.points&&x.points.length);
+  document.querySelectorAll("#loadgrid canvas").forEach(cv=>{
+    const s=ls[+cv.dataset.idx]; if(!s) return;
+    const labels=s.points.map(x=>x.date.slice(5));
+    tcharts.push(new Chart(cv,{type:"line",data:{labels,datasets:[{data:s.points.map(x=>x.kg),borderColor:"#221d17",backgroundColor:"rgba(34,29,23,.06)",fill:true,stepped:true,pointRadius:3.5,
+      pointBackgroundColor:s.points.map(x=>x.failed?"#8c2f2a":"#4f7a3f"),borderWidth:2}]},
+      options:axisOpts({unit:" kg",maxTicks:4})}));
+  });
+}
 function renderTraining(){
   const p=$("#p-training"); p.innerHTML=""; const pl=DATA.plan;
+  renderTrainingLog(p);
+  if(DATA.training) p.appendChild(sechead("·","The plan this week"));
   if(pl&&pl.days){
     const week=ce("div","week");
     pl.days.forEach((d,i)=>week.appendChild(ce("div","day"+(i===pl.today_index?" today":"")+(d.is_rest?" rest":""),
@@ -634,8 +726,8 @@ function renderTraining(){
     (today.exercises||[]).forEach(ex=>card.appendChild(exRow(ex)));
     if(!today.exercises||!today.exercises.length) card.innerHTML+='<div style="color:var(--ink2);font-size:13.5px;line-height:1.5">'+(today.is_rest?'Rest day — 10-min mobility only if tight. The daily walk still stands.':'Walk + 10-min hip mobility.')+'</div>';
     p.appendChild(card);
-    // rest of week
-    p.appendChild(sechead("·","The rest of the week"));
+    // rest of week (only when another day actually has a session)
+    if(pl.days.some((d,i)=>i!==pl.today_index&&d.exercises&&d.exercises.length)) p.appendChild(sechead("·","The rest of the week"));
     pl.days.forEach((d,i)=>{
       if(i===pl.today_index||!d.exercises||!d.exercises.length) return;
       const c=ce("div","mod");

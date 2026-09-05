@@ -17,6 +17,21 @@ Endpoints powering the 13-week post-Japan fat-loss programme:
 - POST /fitness/weekly-checkin         — persist a Sunday check-in snapshot
 - GET  /fitness/goal                   — resolved goal phase + live targets
 - PUT  /fitness/goal                   — update the active programme's goal/phase config
+
+Gym training log + adaptive plan (Sep 2026):
+- GET  /fitness/next-session?type=     — next strength session, targets derived from logged history
+- GET  /fitness/workouts?days=28       — logged sessions with sets (history)
+- POST /fitness/cardio                 — log a cardio session (easy / hard, protocol blocks)
+- GET  /fitness/cardio?days=28         — cardio history
+- GET  /fitness/training-summary       — this week: strength + cardio vs plan, stalls, wins
+- GET  /fitness/plan                   — the active training plan (versioned data)
+- PUT  /fitness/plan                   — replace / patch the plan (new version, rationale recorded)
+- GET  /fitness/plan/history           — plan versions
+
+Phase 2 (Garmin activities + Fitbod import):
+- POST /fitness/garmin/sync?days=7     — pull recent Garmin activities, link cardio/strength logs, auto-create unlogged cardio
+- GET  /fitness/garmin/activities      — synced activities
+- POST /fitness/import/fitbod          — import a Fitbod CSV export (body: {csv, dry_run})
 """
 
 from __future__ import annotations
@@ -53,7 +68,53 @@ class WorkoutSet(BaseModel):
     set_no: int = 1
     reps: Optional[int] = None
     hold_s: Optional[int] = None
+    weight_kg: Optional[float] = None      # load on the stack / bar
+    rir: Optional[int] = None              # reps in reserve (0 = failure)
+    failed: bool = False                   # stopped short of target_reps
+    target_reps: Optional[int] = None
     notes: Optional[str] = None
+    # hints used only when the slug is new to the library (auto-created)
+    exercise_name: Optional[str] = None
+    category: Optional[str] = None         # push / pull / legs / core / conditioning / other
+    muscle_group: Optional[str] = None
+    equipment: Optional[str] = None
+
+
+class LogCardioRequest(BaseModel):
+    modality: str                          # stairmaster / treadmill / bike / rower / elliptical / walk / other
+    intensity: str = "easy"                # easy | hard
+    duration_min: Optional[int] = None
+    protocol: Optional[list[dict]] = None  # [{phase, seconds, level}] — or use the shortcuts below
+    peak_level: Optional[float] = None
+    work_level: Optional[float] = None
+    peak_seconds: Optional[int] = None     # shortcut: instantiate the plan pyramid with these
+    hard_seconds: Optional[int] = None
+    avg_hr: Optional[int] = None
+    max_hr: Optional[int] = None
+    calories: Optional[int] = None
+    distance_m: Optional[int] = None
+    rpe: Optional[int] = None
+    limiter: Optional[str] = None          # legs / breathing / hip / time
+    pain_flag: bool = False
+    notes: Optional[str] = None
+    garmin_activity_id: Optional[str] = None
+    session_date: Optional[str] = None
+
+
+class FitbodImportRequest(BaseModel):
+    csv: Optional[str] = None            # raw CSV text
+    file_path: Optional[str] = None      # or a local/WSL path the API can read
+    dry_run: bool = False
+    include_warmups: bool = False
+    skip_if_day_logged: bool = True
+
+
+class UpdatePlanRequest(BaseModel):
+    plan: Optional[dict] = None            # full replacement
+    patch: Optional[dict] = None           # targeted edit — see training_plan.apply_plan_patch
+    use_default: bool = False              # (re)seed from the built-in default plan
+    rationale: str = "Updated via Peter"
+    created_by: str = "peter"
 
 
 class LogWorkoutRequest(BaseModel):
@@ -122,10 +183,10 @@ async def get_today():
 
     wk = fit.week_number(programme)
     dow = fit._today().weekday()
-    sessions = generate_week(programme["split"], max(1, wk))
+    sessions = await fit.week_sessions_for(programme, max(1, wk))
     today_session = next((s for s in sessions if s.day_of_week == dow), None)
 
-    return {
+    out = {
         "programme_id": programme["id"],
         "week_no": wk,
         "day_of_week": dow,
@@ -136,6 +197,20 @@ async def get_today():
         },
         "workout": session_to_dict(today_session) if today_session else None,
     }
+    # Plan-driven split: the week view is a projection, so also say what the
+    # NEXT strength session is (rotation + rest gap) regardless of the day.
+    if programme.get("split") == "plan":
+        try:
+            nxt = await fit.next_session_bundle()
+            out["next_session"] = {
+                "session_type": nxt["session_type"], "label": nxt.get("label"),
+                "rest_gap_ok": nxt.get("rest_gap_ok"), "days_since_last_strength": nxt.get("days_since_last_strength"),
+                "exercises": [{"name": e["name"], "slug": e["slug"], "sets": e["sets"], "target_reps": e["target_reps"],
+                               "weight_kg": e["weight_kg"], "action": e["action"]} for e in nxt.get("exercises", [])],
+            }
+        except Exception as e:  # never break the digest over the projection
+            logger.warning(f"/fitness/today next_session failed: {e}")
+    return out
 
 
 @router.get("/dashboard")
@@ -285,6 +360,56 @@ async def get_mobility_today():
     }
 
 
+@router.get("/next-session")
+async def get_next_session(type: Optional[str] = Query(None, description="upper | lower | full_body — omit for the rotation's next")):
+    """Next strength session with per-exercise targets derived from logged history.
+
+    Double progression: every set at/above target with >= 2 reps in reserve ->
+    one plate up; a failed set -> hold; failed twice running -> ~10% deload.
+    Also returns `rest_gap_ok` (>= 1 rest day since the last strength session).
+    """
+    return await fit.next_session_bundle(type)
+
+
+@router.get("/workouts")
+async def list_workouts(days: int = Query(28, ge=1, le=365)):
+    """Logged strength sessions (newest first) with sets embedded."""
+    rows = await fit.get_workouts_with_sets(days)
+    return {"days": days, "count": len(rows), "sessions": rows}
+
+
+@router.get("/cardio")
+async def list_cardio(days: int = Query(28, ge=1, le=365)):
+    today = fit._today()
+    rows = await fit.get_cardio_in_range(today - fit.timedelta(days=days), today)
+    return {"days": days, "count": len(rows), "sessions": rows}
+
+
+@router.get("/training-summary")
+async def get_training_summary():
+    """This ISO week vs the plan: strength done/target + next type, cardio easy/hard, stalls, wins."""
+    return await fit.training_week_summary()
+
+
+@router.get("/plan")
+async def get_plan():
+    """The active training plan (data). `seeded=false` means the built-in default is being served."""
+    plan, row = await fit.get_plan_or_default()
+    return {
+        "seeded": row is not None,
+        "version": row["version"] if row else None,
+        "name": row["name"] if row else plan.get("name"),
+        "rationale": row.get("rationale") if row else None,
+        "created_at": row.get("created_at") if row else None,
+        "plan": plan,
+    }
+
+
+@router.get("/plan/history")
+async def get_plan_history(limit: int = Query(10, ge=1, le=50)):
+    return {"versions": await fit.get_plan_history(limit)}
+
+
 @router.get("/advice")
 async def get_fitness_advice():
     """PT/nutritionist-quality advice based on all available signals.
@@ -303,17 +428,143 @@ async def get_fitness_advice():
 async def log_workout(req: LogWorkoutRequest):
     programme = await fit.get_active_programme()
     wk = fit.week_number(programme) if programme else None
+    sets = [s.model_dump() for s in req.sets]
     session = await fit.log_workout(
         session_type=req.session_type,
         session_date=req.session_date,
         duration_min=req.duration_min,
         rpe=req.rpe,
         notes=req.notes,
-        sets=[s.model_dump() for s in req.sets],
+        sets=sets,
         programme_id=programme["id"] if programme else None,
         week_no=wk,
     )
-    return {"session": session, "status": "logged"}
+    out: dict = {"session": session, "status": "logged", "plan_changes": [], "next_time": None, "week": None}
+
+    # Adapt the plan to what was actually done (off-plan exercises / session
+    # types get added, never dropped), then brief the NEXT time this session
+    # type comes round + the week picture — so the skill can coach in one reply.
+    if programme and programme.get("split") == "plan":
+        try:
+            plan, row = await fit.get_plan_or_default()
+            new_plan, changes = fit.tp.reconcile_plan(plan, req.session_type, sets)
+            if changes or row is None:
+                saved = await fit.save_plan(
+                    new_plan,
+                    rationale=("Adapted from logged session: " + "; ".join(changes)) if changes else "Seeded on first logged session",
+                    created_by="auto",
+                )
+                out["plan_changes"] = changes
+                out["plan_version"] = saved["version"]
+            else:
+                out["plan_version"] = row["version"]
+        except Exception as e:
+            logger.warning(f"plan reconcile failed: {e}")
+            out["plan_changes"] = [f"(plan not updated: {e})"]
+        try:
+            out["next_time"] = await fit.next_session_bundle(req.session_type)
+            out["week"] = await fit.training_week_summary()
+        except Exception as e:
+            logger.warning(f"post-log briefing failed: {e}")
+    return out
+
+
+@router.post("/cardio", dependencies=[Depends(require_auth)])
+async def log_cardio(req: LogCardioRequest):
+    """Log a cardio session. Returns the week picture + the next hard-session prescription."""
+    programme = await fit.get_active_programme()
+    plan, _ = await fit.get_plan_or_default()
+    protocol = req.protocol
+    if protocol is None and req.intensity == "hard" and req.modality == (plan.get("cardio", {}).get("hard", {}).get("modality", "stairmaster")):
+        template = plan["cardio"]["hard"].get("protocol") or []
+        if template and any(v is not None for v in (req.peak_level, req.work_level, req.peak_seconds, req.hard_seconds)):
+            protocol = fit.tp.build_protocol(template, hard_level=req.work_level, peak_level=req.peak_level or req.work_level,
+                                             peak_seconds=req.peak_seconds, hard_seconds=req.hard_seconds)
+    row = await fit.log_cardio(
+        modality=req.modality, intensity=req.intensity, session_date=req.session_date,
+        duration_min=req.duration_min, protocol=protocol, peak_level=req.peak_level, work_level=req.work_level,
+        avg_hr=req.avg_hr, max_hr=req.max_hr, calories=req.calories, distance_m=req.distance_m, rpe=req.rpe,
+        limiter=req.limiter, pain_flag=req.pain_flag, notes=req.notes, garmin_activity_id=req.garmin_activity_id,
+        programme_id=programme["id"] if programme else None,
+    )
+    # Link to a watch-recorded activity if one has already been synced today (no Garmin call).
+    try:
+        from domains.fitness.garmin_activities import link_cardio_row
+        linked = await link_cardio_row(row)
+        if linked:
+            row = linked
+    except Exception as e:
+        logger.warning(f"cardio garmin link failed: {e}")
+    week = await fit.training_week_summary()
+    wk = fit.week_number(programme) if programme else None
+    last_hard = await fit.last_hard_cardio()
+    return {
+        "session": row, "status": "logged", "garmin_linked": bool(row.get("garmin_activity_id")),
+        "week": week,
+        "next_hard": fit.tp.next_cardio_hard(plan, last_hard, wk),
+    }
+
+
+@router.post("/garmin/sync", dependencies=[Depends(require_auth)])
+async def garmin_sync(days: int = Query(7, ge=1, le=60)):
+    """Sync recent Garmin activities into `garmin_activities`, then link logged cardio /
+    strength sessions to them (copying HR + calories) and auto-create `source=garmin`
+    cardio rows for recorded activities nobody logged (>= 15 min). Idempotent."""
+    from domains.fitness.garmin_activities import sync_and_link
+    return await sync_and_link(days)
+
+
+@router.get("/garmin/activities")
+async def garmin_activities(days: int = Query(28, ge=1, le=365)):
+    from domains.fitness.garmin_activities import get_activities
+    today = fit._today()
+    rows = await get_activities(today - fit.timedelta(days=days), today)
+    return {"days": days, "count": len(rows), "activities": rows}
+
+
+@router.post("/import/fitbod", dependencies=[Depends(require_auth)])
+async def import_fitbod(req: FitbodImportRequest):
+    """Import a Fitbod CSV export. Sessions are grouped per day, exercise names mapped to
+    library slugs (unknown ones auto-created), logged via the normal path (plan adapts),
+    and deduped on a content hash (`external_id`) + same-day Peter logs."""
+    from domains.fitness.fitbod_import import parse_fitbod_csv, import_sessions
+    text = req.csv
+    if not text and req.file_path:
+        p = req.file_path
+        if p.startswith("/mnt/"):  # WSL path -> Windows
+            parts = p.split("/")
+            p = f"{parts[2].upper()}:\\" + "\\".join(parts[3:])
+        try:
+            text = Path(p).read_text(encoding="utf-8-sig")
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": f"cannot read file: {e}"})
+    if not text:
+        return JSONResponse(status_code=400, content={"error": "Provide csv text or file_path"})
+    sessions = parse_fitbod_csv(text, include_warmups=req.include_warmups)
+    result = await import_sessions(sessions, dry_run=req.dry_run, skip_if_day_logged=req.skip_if_day_logged)
+    result["parsed"] = len(sessions)
+    return result
+
+
+@router.put("/plan", dependencies=[Depends(require_auth)])
+async def update_plan(req: UpdatePlanRequest):
+    """Replace or patch the training plan. Every call writes a new version with its rationale."""
+    current, row = await fit.get_plan_or_default()
+    changes: list[str] = []
+    if req.use_default:
+        new_plan = fit.tp.default_plan()
+        changes = ["reset to the built-in default plan"]
+    elif req.plan is not None:
+        new_plan = req.plan
+        changes = ["full plan replaced"]
+    elif req.patch:
+        new_plan, changes = fit.tp.apply_plan_patch(current, req.patch)
+        if not changes:
+            return {"status": "no_change", "version": row["version"] if row else None, "plan": current}
+    else:
+        return JSONResponse(status_code=400, content={"error": "Provide plan, patch, or use_default"})
+    saved = await fit.save_plan(new_plan, rationale=req.rationale, created_by=req.created_by)
+    return {"status": "saved", "version": saved["version"], "changes": changes, "plan": saved["plan"]}
 
 
 @router.post("/mobility", dependencies=[Depends(require_auth)])

@@ -88,6 +88,15 @@ class Snapshot:
     recent_rpe: list[int] = field(default_factory=list)
     mobility_streak: int = 0
     mobility_done_today: bool = False
+    # Gym plan signals (Sep 2026)
+    cardio_easy_week: int = 0
+    cardio_easy_target: int = 0          # 0 = no cardio prescription (legacy splits)
+    cardio_hard_week: int = 0
+    cardio_hard_target: int = 0
+    stalled_exercises: list[dict] = field(default_factory=list)   # [{slug, weight_kg, sessions}]
+    progressions_this_week: list[dict] = field(default_factory=list)  # [{slug, from_kg, to_kg}]
+    cardio_pain_flag: bool = False       # hip pain reported on the last hard session
+    days_since_last_strength: int | None = None
 
     # Time
     hour_of_day: int = 12
@@ -127,14 +136,14 @@ async def build_snapshot() -> Snapshot:
     snap.steps_target = int(programme["daily_steps_target"])
     snap.strength_target = int(programme["weekly_strength_sessions"])
 
-    # Today's prescribed workout
+    # Today's prescribed workout (plan-aware when split == 'plan')
     if 1 <= snap.week_no <= programme["duration_weeks"]:
-        sessions = generate_week(programme["split"], snap.week_no)
+        sessions = await fit.week_sessions_for(programme, snap.week_no)
         today_session = next(
             (s for s in sessions if s.day_of_week == today.weekday()), None
         )
         if today_session:
-            snap.is_training_day = today_session.session_type not in ("rest", "mobility")
+            snap.is_training_day = today_session.session_type not in ("rest", "mobility", "cardio")
             snap.session_type = today_session.session_type
 
     # Weight — filter history to programme start so pre-cut data doesn't fake trends
@@ -201,6 +210,25 @@ async def build_snapshot() -> Snapshot:
         int(s["rpe"]) for s in recent_sessions
         if s.get("rpe") is not None
     ]
+
+    # Gym plan signals: cardio counts, stalls, wins, pain flag
+    if programme.get("split") == "plan":
+        try:
+            summary = await fit.training_week_summary(today)
+            snap.strength_target = int(summary["strength"]["target"])
+            snap.cardio_easy_week = int(summary["cardio"]["easy_done"])
+            snap.cardio_easy_target = int(summary["cardio"]["easy_target"])
+            snap.cardio_hard_week = int(summary["cardio"]["hard_done"])
+            snap.cardio_hard_target = int(summary["cardio"]["hard_target"])
+            snap.stalled_exercises = summary["stalled"]
+            snap.progressions_this_week = summary["progressions_this_week"]
+            last_hard = await fit.last_hard_cardio()
+            snap.cardio_pain_flag = bool(last_hard and last_hard.get("pain_flag"))
+            strength_only = [s for s in recent_sessions if s["session_type"] not in ("mobility", "rest", "cardio")]
+            if strength_only:
+                snap.days_since_last_strength = (today - date.fromisoformat(str(strength_only[0]["session_date"]))).days
+        except Exception as e:
+            logger.warning(f"advisor: training summary failed: {e}")
 
     # Mobility
     mob = await fit.mobility_today()
@@ -791,6 +819,74 @@ def _rule_missed_sessions(s: Snapshot) -> Advice | None:
     )
 
 
+def _rule_cardio_behind(s: Snapshot) -> Advice | None:
+    """5 easy + 1 hard per week. Nudge from Thursday if the count is off pace."""
+    if s.cardio_easy_target <= 0 or s.day_of_week < 3:
+        return None
+    days_left = 6 - s.day_of_week
+    easy_needed = s.cardio_easy_target - s.cardio_easy_week
+    hard_needed = s.cardio_hard_target - s.cardio_hard_week
+    if easy_needed <= 0 and hard_needed <= 0:
+        return None
+    if easy_needed > days_left and hard_needed > 0:
+        return Advice(
+            severity="caution", category="cardio",
+            headline=f"Cardio off pace — {s.cardio_easy_week}/{s.cardio_easy_target} easy, {s.cardio_hard_week}/{s.cardio_hard_target} hard",
+            detail=f"{days_left} day(s) left. Easy sessions are the cheapest calories in the deficit and a brisk walk counts — this is not a gym-only target.",
+            action="Get the hard stairmaster session in on a non-strength day, and a brisk 30-min walk on every other day that is left.",
+        )
+    if hard_needed > 0 and days_left <= 2:
+        return Advice(
+            severity="info", category="cardio",
+            headline="Hard cardio session still outstanding this week",
+            detail=f"{s.cardio_easy_week}/{s.cardio_easy_target} easy done, but the interval session has not happened yet.",
+            action="Do the stairmaster pyramid tomorrow, legs permitting, or swap to the bike if the hip is talking.",
+        )
+    if easy_needed > days_left:
+        return Advice(
+            severity="info", category="cardio",
+            headline=f"Easy cardio behind — {s.cardio_easy_week}/{s.cardio_easy_target}",
+            detail="The rest will not fit at one per day. Close the gap, do not chase it.",
+            action="Walk 30 min on each remaining day; log it and move on.",
+        )
+    return None
+
+
+def _rule_cardio_pain_swap(s: Snapshot) -> Advice | None:
+    if not s.cardio_pain_flag:
+        return None
+    return Advice(
+        severity="warning", category="cardio",
+        headline="Hip pain flagged on the last hard session",
+        detail="The plan rule: sharp or pinching pain means stop, not push. Muscle burn is fine; joint pain is not.",
+        action="Do this week's hard session on the bike. If it recurs on the bike too, book the physio screen before the next stairmaster.",
+    )
+
+
+def _rule_load_stall(s: Snapshot) -> Advice | None:
+    if not s.stalled_exercises:
+        return None
+    names = ", ".join(f"{e['slug'].replace('-', ' ')} ({e['weight_kg']:g} kg)" for e in s.stalled_exercises[:3])
+    return Advice(
+        severity="info", category="training",
+        headline=f"Load stalled on {len(s.stalled_exercises)} exercise(s)",
+        detail=f"Same top load for {s.stalled_exercises[0]['sessions']} sessions running: {names}. In a deficit a stall is normal, but three sessions flat is the point to change something rather than repeat it.",
+        action="Pick one lever: add a rep to every set at the same load, slow the lowering to 3 s, or drop one plate and rebuild with 2 in reserve. Do not just repeat the session.",
+    )
+
+
+def _rule_progression_win(s: Snapshot) -> Advice | None:
+    if not s.progressions_this_week:
+        return None
+    wins = ", ".join(f"{w['slug'].replace('-', ' ')} {w['from_kg']:g}→{w['to_kg']:g} kg" for w in s.progressions_this_week[:4])
+    return Advice(
+        severity="positive", category="training",
+        headline=f"Load went up on {len(s.progressions_this_week)} exercise(s) this week",
+        detail=f"{wins}. Adding load while in a deficit means you are keeping the muscle the calories are meant to protect.",
+        action="Keep the same rule: only add a plate when every set hits target with 2 in reserve.",
+    )
+
+
 def _rule_mobility_dropped(s: Snapshot) -> Advice | None:
     if s.mobility_streak > 0 or s.mobility_done_today:
         return None
@@ -862,6 +958,10 @@ ALL_RULES = [
     _rule_good_sleep,
     _rule_rpe_creep,
     _rule_missed_sessions,
+    _rule_cardio_behind,
+    _rule_cardio_pain_swap,
+    _rule_load_stall,
+    _rule_progression_win,
     _rule_mobility_dropped,
     _rule_mobility_consistent,
     _rule_everything_on_point,
@@ -923,6 +1023,13 @@ async def get_advice() -> dict:
             "hrv_status": snap.hrv_status,
             "mobility_streak": snap.mobility_streak,
             "strength_sessions": {"done": snap.strength_sessions_week, "target": snap.strength_target},
+            "cardio": {
+                "easy": {"done": snap.cardio_easy_week, "target": snap.cardio_easy_target},
+                "hard": {"done": snap.cardio_hard_week, "target": snap.cardio_hard_target},
+                "pain_flag": snap.cardio_pain_flag,
+            },
+            "stalled_exercises": snap.stalled_exercises,
+            "progressions_this_week": snap.progressions_this_week,
         },
         "counts": {
             "warning": sum(1 for a in advice_list if a.severity == "warning"),

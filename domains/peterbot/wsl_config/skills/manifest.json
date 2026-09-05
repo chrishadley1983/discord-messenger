@@ -1000,21 +1000,25 @@
   },
   "log-workout": {
     "triggers": [
-      "done push workout",
-      "done legs workout",
+      "gym done",
+      "finished upper",
+      "finished lower",
+      "finished full body",
+      "done upper body",
+      "done lower body",
+      "session 2",
+      "training log",
+      "lat pulldown",
+      "chest press",
+      "seated row",
+      "leg press",
       "finished workout",
       "logged workout",
-      "just did my push session",
-      "completed push",
-      "completed legs",
-      "finished legs a",
-      "finished legs b",
-      "finished pull",
-      "finished full body"
+      "just did my session"
     ],
     "conversational": true,
     "scheduled": false,
-    "description": "Log a completed bodyweight workout session from natural language",
+    "description": "Log a gym strength session (machines, loads, reps, reps-in-reserve, failures) from natural language and coach the next one",
     "channel": null
   },
   "meal-plan": {
@@ -1669,5 +1673,57 @@
     "scheduled": false,
     "description": "Record 11+ practice paper marks Chris sends conversationally",
     "channel": "#peterbot"
+  },
+  "log-cardio": {
+    "triggers": [
+      "stairmaster",
+      "cardio done",
+      "easy cardio",
+      "did the bike",
+      "bike done",
+      "treadmill",
+      "rower",
+      "elliptical",
+      "intervals done",
+      "pyramid done",
+      "went for a walk",
+      "walk done"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Log a cardio session (stairmaster intervals, bike, treadmill, walk) from natural language and prescribe the next hard session",
+    "channel": null
+  },
+  "training-plan": {
+    "triggers": [
+      "what's my next session",
+      "next session",
+      "what am i doing at the gym",
+      "training plan",
+      "my plan",
+      "change my plan",
+      "swap",
+      "add to my upper",
+      "drop from my",
+      "plan history",
+      "gym plan"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Show, discuss and edit the Reset Cut gym training plan (sessions, exercises, cardio protocol, targets) and brief the next session",
+    "channel": null
+  },
+  "fitbod-import": {
+    "triggers": [
+      "fitbod",
+      "import my workouts",
+      "import fitbod",
+      "fitbod export",
+      "fitbod csv"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Import a Fitbod workout export (CSV) into the Reset Cut training log — from a Discord attachment or a file path",
+    "channel": null
   }
 }

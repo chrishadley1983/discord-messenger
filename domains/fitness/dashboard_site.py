@@ -356,6 +356,98 @@ async def _ai_summary(facts: dict) -> str:
 
 # ── data assembly ──────────────────────────────────────────────────────
 
+async def _training_payload(programme: dict | None, library: dict) -> dict | None:
+    """Training tab data for the plan-driven programme: this week, next session,
+    next hard cardio, recent sessions, per-exercise load series, cardio history."""
+    if not programme or programme.get("split") != "plan":
+        return None
+    from domains.fitness import training_plan as tp
+    from datetime import timedelta
+    try:
+        plan, row = await fit.get_plan_or_default()
+        week = await fit.training_week_summary()
+        nxt = await fit.next_session_bundle()
+        wk = fit.week_number(programme)
+        last_hard = await fit.last_hard_cardio()
+        next_hard = tp.next_cardio_hard(plan, last_hard, wk)
+        workouts = await fit.get_workouts_with_sets(56)
+        today = fit._today()
+        cardio = await fit.get_cardio_in_range(today - timedelta(days=56), today)
+        history_by_slug = await fit.get_sets_history(days=84)
+    except Exception as e:
+        logger.warning(f"Dashboard: training payload failed: {e}")
+        return None
+
+    def _fmt_sets(sets):
+        by = {}
+        for s in sets:
+            slug = (s.get("exercise") or {}).get("slug", "?")
+            by.setdefault(slug, []).append(s)
+        out = []
+        for slug, ss in by.items():
+            name = library.get(slug, {}).get("name", slug)
+            w = [float(x["weight_kg"]) for x in ss if x.get("weight_kg") is not None]
+            reps = [str(x["reps"]) + ("✗" if x.get("failed") else "") for x in ss if x.get("reps") is not None]
+            holds = [f"{x['hold_s']}s" for x in ss if x.get("hold_s")]
+            detail = (f"{max(w):g} kg · " if w else "") + ("/".join(reps) if reps else "/".join(holds))
+            out.append({"name": name, "detail": detail})
+        return out
+
+    sessions = [{
+        "date": s["session_date"], "type": s["session_type"],
+        "label": (plan.get("sessions", {}).get(s["session_type"]) or {}).get("label", s["session_type"].replace("_", " ").title()),
+        "rpe": s.get("rpe"), "duration_min": s.get("duration_min"), "source": s.get("source", "peter"),
+        "garmin": bool(s.get("garmin_activity_id")), "exercises": _fmt_sets(s.get("sets") or []),
+    } for s in workouts if s["session_type"] not in ("mobility", "rest", "cardio")]
+
+    load_series = []
+    for slug, hist in history_by_slug.items():
+        pts = []
+        for h in reversed(hist):
+            ws = [float(x["weight_kg"]) for x in h["sets"] if x.get("weight_kg") is not None]
+            rs = [int(x["reps"]) for x in h["sets"] if x.get("reps") is not None]
+            if ws:
+                pts.append({"date": h["date"], "kg": max(ws), "reps": min(rs) if rs else None,
+                            "failed": any(x.get("failed") for x in h["sets"])})
+        if pts:
+            load_series.append({"slug": slug, "name": library.get(slug, {}).get("name", slug), "points": pts})
+    load_series.sort(key=lambda x: (-len(x["points"]), x["name"]))
+
+    def _peak(c):
+        for b in (c.get("protocol") or []):
+            if b.get("phase") == "peak":
+                return b.get("seconds")
+        return None
+    cardio_hist = [{
+        "date": c["session_date"], "modality": c["modality"], "intensity": c["intensity"],
+        "minutes": c.get("duration_min"), "avg_hr": c.get("avg_hr"), "calories": c.get("calories"),
+        "peak_seconds": _peak(c), "level": c.get("work_level") or c.get("peak_level"),
+        "limiter": c.get("limiter"), "pain": bool(c.get("pain_flag")), "source": c.get("source", "peter"),
+        "garmin": bool(c.get("garmin_activity_id")),
+    } for c in cardio]
+
+    return {
+        "plan_version": row["version"] if row else None,
+        "plan_name": plan.get("name"),
+        "week": week,
+        "next": {
+            "session_type": nxt["session_type"], "label": nxt.get("label"), "status": nxt.get("status"),
+            "order_variant": nxt.get("order_variant"), "rest_gap_ok": nxt.get("rest_gap_ok"),
+            "days_since_last_strength": nxt.get("days_since_last_strength"),
+            "exercises": [{"name": e["name"], "sets": e["sets"], "target_reps": e["target_reps"],
+                           "weight_kg": e["weight_kg"], "action": e["action"], "reason": e["reason"],
+                           "last_kg": (e.get("last") or {}).get("top_weight")} for e in nxt.get("exercises", [])],
+        },
+        "next_hard": {k: next_hard.get(k) for k in ("modality", "stage", "reason", "peak_seconds", "hard_level", "peak_level", "note")},
+        "next_hard_blocks": next_hard.get("protocol"),
+        "sessions": sessions,
+        "load_series": load_series,
+        "cardio": cardio_hist,
+        "progression_rules": plan.get("progression", {}).get("strength", {}),
+        "constraints": plan.get("constraints", []),
+    }
+
+
 async def _build_data() -> dict:
     programme = await fit.get_active_programme()
     dash = await fit.compute_dashboard()
@@ -491,7 +583,10 @@ async def _build_data() -> dict:
     # weekly plan
     split = programme["split"] if programme else "4x_upper_lower"
     try:
-        sessions = {s.day_of_week: session_to_dict(s) for s in generate_week(split, eff_week)}
+        if programme:
+            sessions = {s.day_of_week: session_to_dict(s) for s in await fit.week_sessions_for(programme, eff_week)}
+        else:
+            sessions = {s.day_of_week: session_to_dict(s) for s in generate_week(split, eff_week)}
     except Exception as e:
         logger.warning(f"Dashboard: week generation failed: {e}")
         sessions = {}
@@ -520,6 +615,8 @@ async def _build_data() -> dict:
                      "type": s.get("session_type"), "is_rest": bool(s.get("is_rest")),
                      "note": s.get("notes") or "", "exercises": exs})
 
+    training = await _training_payload(programme, library)
+    plan_driven = training is not None
     strength_n = int(programme["weekly_strength_sessions"]) if programme else 4
     steps_aim_k = (int(programme["daily_steps_target"]) // 1000) if programme else 15
     if protein_spec.get("mode") == "fixed":
@@ -532,7 +629,9 @@ async def _build_data() -> dict:
         "targets": [
             ["Calories", f"~{int(tgt_cal):,} kcal"], ["Protein", protein_target_str],
             ["Water", "3 L (3.5 L training days)"], ["Steps", f"{steps_aim_k}k/day"],
-            ["Strength", f"{strength_n} × 30 min / week"], ["Mobility", "10 min daily"],
+            ["Strength", f"{strength_n} × 40 min gym / week" if plan_driven else f"{strength_n} × 30 min / week"],
+            *([["Cardio", "5 easy + 1 hard (stairmaster) / week"]] if plan_driven else []),
+            ["Mobility", "10 min daily"],
             ["Sleep", "8h · 22:30–06:30"],
         ],
         "paras": [
@@ -541,13 +640,19 @@ async def _build_data() -> dict:
             f"Calories are ~{int(tgt_cal):,} now and auto-ease as you lose weight (the deficit stays honest "
             "as BMR drops). Steps are the accelerator, not the foundation: a sedentary day still loses fat, "
             "an active one loses more — so a low-step day is never a failure.",
-            "Training is bodyweight + bands + light (<5 kg) loads, hip- and sciatica-friendly (no running, no loaded "
-            "spinal flexion). Breakfast and lunch are locked for simplicity; dinner flexes with the family.",
+            ("Training is a 3-day gym split (upper / lower / full body) on pin-loaded machines with double progression: "
+             "every set at target with two reps in reserve earns one plate; a failed set holds; two failed sessions deload. "
+             "Cardio is five easy sessions plus one hard stairmaster pyramid a week. Hip rule: sharp or pinching pain means "
+             "stop and switch to the bike. Breakfast and lunch are locked for simplicity; dinner flexes with the family."
+             if plan_driven else
+             "Training is bodyweight + bands + light (<5 kg) loads, hip- and sciatica-friendly (no running, no loaded "
+             "spinal flexion). Breakfast and lunch are locked for simplicity; dinner flexes with the family."),
         ],
         "rules": [
             phase.get("rule") or f"Hit ~{tgt_pro} g protein.",
             "Log everything (the coach tracks it).",
-            f"Walk daily, lift {strength_n}×, 10-min hip mobility every day.",
+            (f"Lift {strength_n}× (any days, a rest day between), 5 easy + 1 hard cardio, 10-min hip mobility every day."
+             if plan_driven else f"Walk daily, lift {strength_n}×, 10-min hip mobility every day."),
             "Bed 22:30, caffeine before noon, last food ≥2h before bed.",
             "Weigh in each Monday on the Withings Body scale — that's your checkpoint.",
         ],
@@ -579,6 +684,7 @@ async def _build_data() -> dict:
         "mobility": _mobility_rotation(library, today_index),
         "exercises": list(used_slugs.values()),
         "rationale": rationale,
+        "training": training,
     }
 
 

@@ -340,6 +340,14 @@ async def _sync_garmin_to_supabase(
 
         logger.info(f"Garmin sync: upserted {ok}/{len(records)} day rows (days={days})")
 
+        # Phase 2: per-activity sync + cardio/strength linking (best-effort).
+        try:
+            from domains.fitness.garmin_activities import sync_and_link
+            res = await sync_and_link(days=max(days, 3))
+            logger.info(f"Garmin activities: {res}")
+        except Exception as e:
+            logger.warning(f"Garmin activities sync failed: {e}")
+
     except Exception as e:
         logger.error(f"Garmin sync failed: {e}")
 
@@ -415,6 +423,16 @@ async def get_weekly_health_data() -> dict[str, Any]:
             logger.warning(f"Failed to get goals: {goals}")
             goals = {}
 
+        # Plan-driven training week (strength vs target, cardio easy/hard, PRs, stalls)
+        training = None
+        try:
+            from domains.fitness import service as fit
+            prog = await fit.get_active_programme()
+            if prog and prog.get("split") == "plan":
+                training = await fit.training_week_summary()
+        except Exception as e:
+            logger.warning(f"Weekly training summary failed: {e}")
+
         return {
             "weight": weight,
             "nutrition": nutrition,
@@ -423,6 +441,7 @@ async def get_weekly_health_data() -> dict[str, Any]:
             "heart_rate": hr,
             "goals": goals,
             "targets": targets,
+            "training": training,
             "week_ending": datetime.now(UK_TZ).strftime("%Y-%m-%d")
         }
 

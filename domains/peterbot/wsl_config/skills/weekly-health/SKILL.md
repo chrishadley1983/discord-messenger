@@ -105,6 +105,11 @@ Best: 8.2h | Worst: 5.8h
 **Resting HR** ❤️
 Avg: 59bpm | Range: 54-65bpm
 
+**Training** 🏋️
+Strength: 2/3 sessions (next: lower)
+Cardio: 4/5 easy · 1/1 hard
+Load up: lat pulldown 33→35.5 kg | Stalled: —
+
 ---
 **PT Grade: B+** 📋
 
@@ -127,6 +132,7 @@ Grade scale: A+ (≥90%), A (≥80%), B (≥70%), C (≥60%), D (≥50%), F (<50
 - Use actual numbers from the data - don't make up values
 - **Nutrition averages already exclude partial-tracking days** — `days_tracked` is the count of *properly logged* days, and the averages are over those only. If `incomplete_count > 0`, append a brief note after the nutrition block listing the excluded day(s) from `incomplete_days`, e.g. "(Fri excluded — only 479 cal logged, looks like a missed tracking day)". Never average a partial day into the headline numbers.
 - **Protein "hit" uses the live target** in `protein_target_used` (the programme's current floor, e.g. 125g), NOT a hardcoded 160g. Report `protein_days_hit / days_tracked`.
+- **Training block** comes from `training` (null = no plan-driven programme → omit the block). Use `strength.done/target/next`, `cardio.easy_done/easy_target/hard_done/hard_target`, `progressions_this_week` (from→to kg) and `stalled`. Never invent loads.
 - If a section has no data (empty object), show "⚠️ No data this week"
 - Compare everything to targets where available
 - Celebrate wins explicitly

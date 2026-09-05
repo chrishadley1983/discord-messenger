@@ -82,6 +82,14 @@ AUTO_SOURCE_REGISTRY = {
         "filter": {"user_id": "eq.chris"},
         "agg": "count_week",
     },
+    "fitness_cardio_week": {
+        # Count of cardio sessions (easy + hard) in the current ISO week.
+        "table": "fitness_cardio_sessions",
+        "column": "id",
+        "date_col": "session_date",
+        "filter": {"user_id": "eq.chris"},
+        "agg": "count_week",
+    },
     "fitness_mobility_today": {
         # Returns 1 if any mobility session logged today, else 0.
         "table": "fitness_mobility_sessions",
