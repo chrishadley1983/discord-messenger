@@ -247,18 +247,74 @@ def _status_from_delta(delta_pct, good_up=True):
 
 # ── AI summary via jobs-channel ────────────────────────────────────────
 
+async def _completed_days_nutrition(days: int = 7) -> dict:
+    """Per-day calorie/protein totals for the last N COMPLETED days (yesterday
+    back). The daily build runs early morning — before breakfast is logged —
+    so 'today' is always a partial snapshot at build time. Logging adherence
+    must be judged on these completed days, never on today's zeros."""
+    today = datetime.now(UK_TZ).date()
+    start = today - timedelta(days=days)
+    async with httpx.AsyncClient(timeout=10) as c:
+        resp = await c.get(
+            f"{fit.SUPABASE_URL}/rest/v1/nutrition_logs",
+            headers=fit._read_headers(),
+            params={
+                "select": "logged_at,calories,protein_g",
+                "and": f"(logged_at.gte.{start.isoformat()}T00:00:00,"
+                       f"logged_at.lt.{today.isoformat()}T00:00:00)",
+            },
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+    by_day: dict[str, dict] = {}
+    for r in rows:
+        d = str(r["logged_at"])[:10]
+        agg = by_day.setdefault(d, {"cal": 0.0, "pro": 0.0})
+        agg["cal"] += float(r.get("calories") or 0)
+        agg["pro"] += float(r.get("protein_g") or 0)
+    out = []
+    for i in range(days, 0, -1):
+        d = today - timedelta(days=i)
+        v = by_day.get(d.isoformat())
+        out.append({
+            "date": d.isoformat(), "day": DAY_NAMES[d.weekday()],
+            "calories": round(v["cal"]) if v else 0,
+            "protein_g": round(v["pro"], 1) if v else 0,
+            "logged": v is not None,
+        })
+    return {"days": out, "unlogged_count": sum(1 for r in out if not r["logged"])}
+
+
 async def _ai_summary(facts: dict) -> str:
     g = facts.get("goal", {})
     prompt = (
         "You are Pete, Chris's expert personal trainer and nutrition coach. "
-        "Write a concise expert summary (4–6 sentences, plain text, NO markdown headings) "
-        "of his cut using the data below. Frame everything around his CURRENT goal/phase "
-        f"(\"{g.get('label','')}\": {g.get('focus','')}). Cover: progress vs his target weight and "
-        "this week's trend-weight line; what's going well; the ONE thing to focus on this week; "
-        "and a calm, encouraging close. He is tapering sertraline (GP-supervised) so keep the "
-        "tone supportive, never guilt-trippy; frame walking as stress relief. Be specific with his "
-        "numbers and use the protein target from the data — never invent a different one. When "
-        "done, call the reply tool with the job_id and your summary text only.\n\n"
+        "Write a concise summary (4–6 sentences, plain text, NO markdown headings) "
+        "of his cut using the data below. Non-negotiable structure:\n"
+        "1. LEAD with the honest position: the on_track_label verdict, the gap vs this "
+        "week's line (plan.gap_vs_line_kg), and required vs actual rate "
+        "(plan.required_kg_per_week vs hero.slope). If plan.projected_finish_date or "
+        "projected_end_weight show the current rate missing the deadline, SAY SO with the "
+        "numbers — e.g. 'at this rate you arrive in March, not December'. Softening words "
+        "('a touch', 'roughly', 'drifting', 'more or less on track') are banned when the "
+        "tier is behind/well_behind/off_track.\n"
+        "2. Name the primary cause bluntly — if the data shows unlogged days or a stall, "
+        "that IS the story, not a footnote. Judge logging and intake ONLY on "
+        "nutrition_completed_days (the last 7 finished days): logged=false days are the "
+        "genuinely unlogged ones; logged=true days show real intake vs targets. "
+        "TIMING RULE: this build runs early morning, so the 'today' metrics are a "
+        "same-moment partial snapshot and normally read 0 before breakfast is logged — "
+        "NEVER describe today's zeros as missed logging or an unlogged day.\n"
+        "3. ONE corrective focus for this week, with a number attached (a calorie line, a "
+        "protein floor, a step count).\n"
+        "4. One genuine positive, briefly — it must not outweigh the gap.\n"
+        f"Frame around his CURRENT goal phase (\"{g.get('label','')}\": {g.get('focus','')}) "
+        "and use the protein target from the data — never invent a different one. "
+        "Tone: a direct coach who respects Chris enough to tell him the truth. He is "
+        "tapering sertraline (GP-supervised): no shame, no catastrophising, no 'you failed' "
+        "framing — the numbers are the problem, not his character; walking stays framed as "
+        "stress relief. Honest and warm are not opposites — be both. When done, call the "
+        "reply tool with the job_id and your summary text only.\n\n"
         f"DATA:\n{json.dumps(facts, default=str)}"
     )
     try:
@@ -272,22 +328,125 @@ async def _ai_summary(facts: dict) -> str:
             logger.warning(f"Dashboard AI summary: channel returned {r.status_code}/empty")
     except Exception as e:
         logger.warning(f"Dashboard AI summary via channel failed: {e}")
-    # Fallback — deterministic, still useful. Protein line comes from the goal
-    # phase (its protein_note), so it tracks the current target, never 180g.
+    # Fallback — deterministic and just as honest as the AI version.
     h = facts.get("hero", {})
+    p = facts.get("plan") or {}
     protein_line = g.get("protein_note") or (
         f"hold protein around {g.get('protein_target','?')}g"
     )
-    return (
-        f"You're {h.get('current_weight','?')}kg, down {h.get('cumulative_loss','?')}kg toward "
-        f"{h.get('target_weight','?')}kg ({h.get('progress_pct','?')}% there) with "
-        f"{h.get('days_remaining','?')} days to go. Trend is the only number that matters week to "
-        f"week — {protein_line}, and treat the daily walk as much for your head as your waistline. "
-        "Lock breakfast and lunch, let dinner flex with the family, and keep showing up. Steady wins this."
-    )
+    parts = [
+        f"{h.get('on_track_label','Tracking')}: trend {h.get('current_weight','?')} kg vs "
+        f"{h.get('target_this_week','?')} kg on this week's line"
+    ]
+    if p.get("gap_vs_line_kg") is not None:
+        parts[0] += f" ({p['gap_vs_line_kg']:+.1f} kg)"
+    if p.get("required_kg_per_week") is not None:
+        actual = h.get("slope")
+        parts.append(
+            f"Hitting {h.get('target_weight','?')} kg by the deadline needs "
+            f"{p['required_kg_per_week']:.2f} kg/wk from here; actual is "
+            f"{actual if actual not in (None, '—') else 'flat'} kg/wk"
+        )
+    if p.get("projected_end_weight") is not None:
+        parts.append(f"At the current rate you finish at {p['projected_end_weight']} kg")
+    parts.append(f"This week: hit the calorie line daily and {protein_line}")
+    parts.append("The daily walk stays — for your head as much as the deficit")
+    return ". ".join(parts) + "."
 
 
 # ── data assembly ──────────────────────────────────────────────────────
+
+async def _training_payload(programme: dict | None, library: dict) -> dict | None:
+    """Training tab data for the plan-driven programme: this week, next session,
+    next hard cardio, recent sessions, per-exercise load series, cardio history."""
+    if not programme or programme.get("split") != "plan":
+        return None
+    from domains.fitness import training_plan as tp
+    from datetime import timedelta
+    try:
+        plan, row = await fit.get_plan_or_default()
+        week = await fit.training_week_summary()
+        nxt = await fit.next_session_bundle()
+        wk = fit.week_number(programme)
+        last_hard = await fit.last_hard_cardio()
+        next_hard = tp.next_cardio_hard(plan, last_hard, wk)
+        workouts = await fit.get_workouts_with_sets(56)
+        today = fit._today()
+        cardio = await fit.get_cardio_in_range(today - timedelta(days=56), today)
+        history_by_slug = await fit.get_sets_history(days=84)
+    except Exception as e:
+        logger.warning(f"Dashboard: training payload failed: {e}")
+        return None
+
+    def _fmt_sets(sets):
+        by = {}
+        for s in sets:
+            slug = (s.get("exercise") or {}).get("slug", "?")
+            by.setdefault(slug, []).append(s)
+        out = []
+        for slug, ss in by.items():
+            name = library.get(slug, {}).get("name", slug)
+            w = [float(x["weight_kg"]) for x in ss if x.get("weight_kg") is not None]
+            reps = [str(x["reps"]) + ("✗" if x.get("failed") else "") for x in ss if x.get("reps") is not None]
+            holds = [f"{x['hold_s']}s" for x in ss if x.get("hold_s")]
+            detail = (f"{max(w):g} kg · " if w else "") + ("/".join(reps) if reps else "/".join(holds))
+            out.append({"name": name, "detail": detail})
+        return out
+
+    sessions = [{
+        "date": s["session_date"], "type": s["session_type"],
+        "label": (plan.get("sessions", {}).get(s["session_type"]) or {}).get("label", s["session_type"].replace("_", " ").title()),
+        "rpe": s.get("rpe"), "duration_min": s.get("duration_min"), "source": s.get("source", "peter"),
+        "garmin": bool(s.get("garmin_activity_id")), "exercises": _fmt_sets(s.get("sets") or []),
+    } for s in workouts if s["session_type"] not in ("mobility", "rest", "cardio")]
+
+    load_series = []
+    for slug, hist in history_by_slug.items():
+        pts = []
+        for h in reversed(hist):
+            ws = [float(x["weight_kg"]) for x in h["sets"] if x.get("weight_kg") is not None]
+            rs = [int(x["reps"]) for x in h["sets"] if x.get("reps") is not None]
+            if ws:
+                pts.append({"date": h["date"], "kg": max(ws), "reps": min(rs) if rs else None,
+                            "failed": any(x.get("failed") for x in h["sets"])})
+        if pts:
+            load_series.append({"slug": slug, "name": library.get(slug, {}).get("name", slug), "points": pts})
+    load_series.sort(key=lambda x: (-len(x["points"]), x["name"]))
+
+    def _peak(c):
+        for b in (c.get("protocol") or []):
+            if b.get("phase") == "peak":
+                return b.get("seconds")
+        return None
+    cardio_hist = [{
+        "date": c["session_date"], "modality": c["modality"], "intensity": c["intensity"],
+        "minutes": c.get("duration_min"), "avg_hr": c.get("avg_hr"), "calories": c.get("calories"),
+        "peak_seconds": _peak(c), "level": c.get("work_level") or c.get("peak_level"),
+        "limiter": c.get("limiter"), "pain": bool(c.get("pain_flag")), "source": c.get("source", "peter"),
+        "garmin": bool(c.get("garmin_activity_id")),
+    } for c in cardio]
+
+    return {
+        "plan_version": row["version"] if row else None,
+        "plan_name": plan.get("name"),
+        "week": week,
+        "next": {
+            "session_type": nxt["session_type"], "label": nxt.get("label"), "status": nxt.get("status"),
+            "order_variant": nxt.get("order_variant"), "rest_gap_ok": nxt.get("rest_gap_ok"),
+            "days_since_last_strength": nxt.get("days_since_last_strength"),
+            "exercises": [{"name": e["name"], "sets": e["sets"], "target_reps": e["target_reps"],
+                           "weight_kg": e["weight_kg"], "action": e["action"], "reason": e["reason"],
+                           "last_kg": (e.get("last") or {}).get("top_weight")} for e in nxt.get("exercises", [])],
+        },
+        "next_hard": {k: next_hard.get(k) for k in ("modality", "stage", "reason", "peak_seconds", "hard_level", "peak_level", "note")},
+        "next_hard_blocks": next_hard.get("protocol"),
+        "sessions": sessions,
+        "load_series": load_series,
+        "cardio": cardio_hist,
+        "progression_rules": plan.get("progression", {}).get("strength", {}),
+        "constraints": plan.get("constraints", []),
+    }
+
 
 async def _build_data() -> dict:
     programme = await fit.get_active_programme()
@@ -336,26 +495,23 @@ async def _build_data() -> dict:
         end = date.fromisoformat(programme["end_date"])
         days_remaining = max(0, (end - datetime.now(UK_TZ).date()).days)
 
-    # trajectory line for "this week"
+    # Plan maths — single source of truth (service.compute_plan_maths): the
+    # weekly line, gap, required-vs-actual rate and projection. The old inline
+    # buckets capped the worst case at "A touch behind" — even 7 kg off the
+    # line — which is exactly the softness this replaces.
     eff_week = min(max(week_no, 1), dur)
-    target_this_week = None
-    if start_w is not None:
-        target_this_week = _round(start_w - (start_w - target_w) * (eff_week / dur), 1)
-
-    if week_no < 1:
-        on_track, on_label = "warn", "Starts Monday"
-    elif current is None or target_this_week is None:
-        on_track, on_label = "neutral", "Tracking"
-    elif current <= target_this_week - 0.2:
-        on_track, on_label = "ahead", "Ahead of plan"
-    elif current <= target_this_week + 0.3:
-        on_track, on_label = "on track", "On track"
-    elif week_no <= 2:
-        # Early programme: weight noise dwarfs a 0.3 kg miss off a micro-target.
-        # Don't flag "behind" and don't guilt-trip while the baseline settles.
-        on_track, on_label = "settling", "Settling in"
+    plan = fit.compute_plan_maths(programme, current, slope) if programme else None
+    if plan:
+        target_this_week = plan["target_this_week"]
+        on_track_key, on_label = plan["on_track"], plan["on_track_label"]
+        # template CSS buckets: warn/neutral/ahead/on track/settling/behind
+        css_map = {"pre_start": "warn", "neutral": "neutral", "ahead": "ahead",
+                   "on_track": "on track", "settling": "settling",
+                   "behind": "behind", "well_behind": "behind", "off_track": "behind"}
+        on_track = css_map.get(on_track_key, "neutral")
     else:
-        on_track, on_label = "behind", "A touch behind"
+        target_this_week = None
+        on_track, on_track_key, on_label = "neutral", "neutral", "Tracking"
 
     hero = {
         "current_weight": _round(current) if current else "—",
@@ -370,6 +526,14 @@ async def _build_data() -> dict:
         "days_remaining": days_remaining if days_remaining is not None else "—",
         "target_this_week": target_this_week if target_this_week is not None else "—",
         "on_track": on_track, "on_track_label": on_label,
+        "on_track_tier": on_track_key,
+        "gap_vs_line_kg": plan.get("gap_vs_line_kg") if plan else None,
+        "required_kg_per_week": plan.get("required_kg_per_week") if plan else None,
+        "required_rate_unsafe": plan.get("required_rate_unsafe") if plan else False,
+        "projected_end_weight": plan.get("projected_end_weight") if plan else None,
+        "projected_finish_date": plan.get("projected_finish_date") if plan else None,
+        "start_date": programme["start_date"] if programme else None,
+        "end_date": programme["end_date"] if programme else None,
     }
 
     # Resolve the active goal phase — it drives the protein target and all the
@@ -419,7 +583,10 @@ async def _build_data() -> dict:
     # weekly plan
     split = programme["split"] if programme else "4x_upper_lower"
     try:
-        sessions = {s.day_of_week: session_to_dict(s) for s in generate_week(split, eff_week)}
+        if programme:
+            sessions = {s.day_of_week: session_to_dict(s) for s in await fit.week_sessions_for(programme, eff_week)}
+        else:
+            sessions = {s.day_of_week: session_to_dict(s) for s in generate_week(split, eff_week)}
     except Exception as e:
         logger.warning(f"Dashboard: week generation failed: {e}")
         sessions = {}
@@ -448,6 +615,8 @@ async def _build_data() -> dict:
                      "type": s.get("session_type"), "is_rest": bool(s.get("is_rest")),
                      "note": s.get("notes") or "", "exercises": exs})
 
+    training = await _training_payload(programme, library)
+    plan_driven = training is not None
     strength_n = int(programme["weekly_strength_sessions"]) if programme else 4
     steps_aim_k = (int(programme["daily_steps_target"]) // 1000) if programme else 15
     if protein_spec.get("mode") == "fixed":
@@ -460,7 +629,9 @@ async def _build_data() -> dict:
         "targets": [
             ["Calories", f"~{int(tgt_cal):,} kcal"], ["Protein", protein_target_str],
             ["Water", "3 L (3.5 L training days)"], ["Steps", f"{steps_aim_k}k/day"],
-            ["Strength", f"{strength_n} × 30 min / week"], ["Mobility", "10 min daily"],
+            ["Strength", f"{strength_n} × 40 min gym / week" if plan_driven else f"{strength_n} × 30 min / week"],
+            *([["Cardio", "5 easy + 1 hard (stairmaster) / week"]] if plan_driven else []),
+            ["Mobility", "10 min daily"],
             ["Sleep", "8h · 22:30–06:30"],
         ],
         "paras": [
@@ -469,13 +640,19 @@ async def _build_data() -> dict:
             f"Calories are ~{int(tgt_cal):,} now and auto-ease as you lose weight (the deficit stays honest "
             "as BMR drops). Steps are the accelerator, not the foundation: a sedentary day still loses fat, "
             "an active one loses more — so a low-step day is never a failure.",
-            "Training is bodyweight + bands + light (<5 kg) loads, hip- and sciatica-friendly (no running, no loaded "
-            "spinal flexion). Breakfast and lunch are locked for simplicity; dinner flexes with the family.",
+            ("Training is a 3-day gym split (upper / lower / full body) on pin-loaded machines with double progression: "
+             "every set at target with two reps in reserve earns one plate; a failed set holds; two failed sessions deload. "
+             "Cardio is five easy sessions plus one hard stairmaster pyramid a week. Hip rule: sharp or pinching pain means "
+             "stop and switch to the bike. Breakfast and lunch are locked for simplicity; dinner flexes with the family."
+             if plan_driven else
+             "Training is bodyweight + bands + light (<5 kg) loads, hip- and sciatica-friendly (no running, no loaded "
+             "spinal flexion). Breakfast and lunch are locked for simplicity; dinner flexes with the family."),
         ],
         "rules": [
             phase.get("rule") or f"Hit ~{tgt_pro} g protein.",
             "Log everything (the coach tracks it).",
-            f"Walk daily, lift {strength_n}×, 10-min hip mobility every day.",
+            (f"Lift {strength_n}× (any days, a rest day between), 5 easy + 1 hard cardio, 10-min hip mobility every day."
+             if plan_driven else f"Walk daily, lift {strength_n}×, 10-min hip mobility every day."),
             "Bed 22:30, caffeine before noon, last food ≥2h before bed.",
             "Weigh in each Monday on the Withings Body scale — that's your checkpoint.",
         ],
@@ -484,7 +661,15 @@ async def _build_data() -> dict:
                       "not medical advice.",
     }
 
-    facts = {"hero": hero, "metrics": [{k: m[k] for k in ("label", "value", "sub", "status")} for m in metrics],
+    try:
+        completed_days = await _completed_days_nutrition(7)
+    except Exception as e:
+        logger.warning(f"Dashboard: completed-days nutrition fetch failed: {e}")
+        completed_days = None
+
+    facts = {"hero": hero, "plan": plan,
+             "metrics": [{k: m[k] for k in ("label", "value", "sub", "status")} for m in metrics],
+             "nutrition_completed_days": completed_days,
              "trends_summary": summ,
              "goal": {"phase": goal.get("effective_phase"), "label": phase.get("label"),
                       "focus": phase.get("focus"), "protein_target": tgt_pro,
@@ -499,6 +684,7 @@ async def _build_data() -> dict:
         "mobility": _mobility_rotation(library, today_index),
         "exercises": list(used_slugs.values()),
         "rationale": rationale,
+        "training": training,
     }
 
 

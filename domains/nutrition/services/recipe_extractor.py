@@ -1,6 +1,6 @@
 """Extract structured recipe data from web pages via Chrome CDP.
 
-Connects to an existing Chrome instance (port 9222) to access paywalled
+Connects to an existing Chrome instance (port 9225) to access paywalled
 sites like NYT Cooking using Chris's logged-in session.
 
 Primary extraction: Schema.org JSON-LD (@type: Recipe) — used by NYT Cooking,
@@ -13,7 +13,7 @@ import re
 
 from logger import logger
 
-CDP_ENDPOINT = "http://localhost:9222"
+CDP_ENDPOINT = "http://localhost:9225"
 
 
 def _parse_iso_duration(duration: str) -> int | None:

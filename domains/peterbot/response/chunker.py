@@ -60,8 +60,13 @@ def chunk(
     if len(text) <= config.max_chars:
         return [text]
 
-    # Split preserving code fences
-    chunks = split_preserving_code_fences(text, config.max_chars)
+    # Prefer splitting at section headers (e.g. "**🤖 AI NEWS**") so a header
+    # is never orphaned from its items (old bug: "📢 REDDIT ROUNDUP" landed at
+    # the end of one message with its content in the next).
+    chunks = split_at_section_headers(text, config.max_chars)
+    if chunks is None:
+        # No section structure — fall back to line-based splitting
+        chunks = split_preserving_code_fences(text, config.max_chars)
 
     # Merge tiny chunks if possible
     chunks = merge_small_chunks(chunks, config.min_chars, config.max_chars)
@@ -69,6 +74,46 @@ def chunk(
     # Add chunk numbers if 3+ chunks
     if config.add_chunk_numbers and len(chunks) >= 3:
         chunks = add_chunk_numbers(chunks)
+
+    return chunks
+
+
+# A section header is a line that is entirely bold, e.g. "**🇬🇧 UK NEWS**"
+SECTION_HEADER_RE = re.compile(r"^\*\*[^*\n]+\*\*[ \t]*$", re.MULTILINE)
+
+
+def split_at_section_headers(text: str, max_chars: int) -> Optional[list[str]]:
+    """Pack whole sections into chunks, splitting only at section headers.
+
+    Returns None when the text has no usable section structure (fewer than
+    two bold-line headers), so callers can fall back to line-based splitting.
+    Oversized single sections fall back internally.
+    """
+    headers = [m.start() for m in SECTION_HEADER_RE.finditer(text)]
+    if len(headers) < 2:
+        return None
+
+    bounds = ([0] if headers[0] != 0 else []) + headers + [len(text)]
+    blocks = [text[bounds[i]:bounds[i + 1]] for i in range(len(bounds) - 1)]
+    blocks = [b for b in blocks if b.strip()]
+
+    chunks: list[str] = []
+    current = ""
+    for block in blocks:
+        if len(block) > max_chars:
+            # Single section too big for one message — flush and split it
+            if current.strip():
+                chunks.append(current.strip())
+                current = ""
+            chunks.extend(split_preserving_code_fences(block, max_chars))
+            continue
+        if current and len(current) + len(block) > max_chars:
+            chunks.append(current.strip())
+            current = block
+        else:
+            current += block
+    if current.strip():
+        chunks.append(current.strip())
 
     return chunks
 

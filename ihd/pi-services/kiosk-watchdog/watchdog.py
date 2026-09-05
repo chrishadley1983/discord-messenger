@@ -40,10 +40,25 @@ ANY state, twice in a row, means the tab's JS is dead. Plain Ctrl+R does not
 clear a wedge (proven 2026-07-07), so wedge recovery goes straight to
 kill-renderer + reload, then full relaunch.
 
+Display-stall detection (2026-07-15..17)
+----------------------------------------
+Third variant: Chromium stops PRESENTING frames while the page's JS stays fully
+alive — heartbeat fresh, touches register wakes, daily reloads run, but the
+compositor keeps showing the last submitted frame (found frozen at "20:08 Wed
+15 July" ~35h later). Both existing probes are blind: the frame is large and
+the heartbeat never goes stale. But the clock face shows minutes in EVERY
+state (active dashboard and dim clock), so the framebuffer must change every
+minute. N consecutive identical grim hashes therefore mean the presentation
+path is frozen. Skipped while the media overlay is up (paused video is
+legitimately static). The renderer was only a day old when this first struck
+(the 21-day-old GPU process was the suspect), so stall recovery goes straight
+to a full Chromium relaunch (proven fix 2026-07-17).
+
 Recovery escalates: reload -> kill renderer + reload -> full Chromium relaunch.
 A once-daily proactive reload keeps the tab from rotting over multi-day uptimes.
 """
 
+import hashlib
 import os
 import subprocess
 import sys
@@ -56,6 +71,7 @@ POLL_SECONDS = 60
 CONTENT_MIN_BYTES = 40000      # healthy dashboard ~120KB; black ~2.4KB; aw-snap ~18KB
 FAULT_THRESHOLD = 2            # consecutive bad reads before recovery
 HEARTBEAT_STALE_SECONDS = 75   # page beats every ~20s; >75s = 3 missed beats
+STALL_THRESHOLD = 3            # identical frames ~60s apart; 3 spans >=2 clock minutes
 SCREEN_API = "http://localhost:5002/"
 DAILY_RELOAD_HOUR = 4          # proactive reload at 04:xx local time
 SHOT = "/tmp/kiosk_watchdog.png"
@@ -119,8 +135,8 @@ def wake():
         pass
 
 
-def screenshot_size():
-    """grim the output and return the PNG byte size, or -1 on failure."""
+def screenshot_frame():
+    """grim the output; return (png_size, md5_hex), or (-1, None) on failure."""
     try:
         if os.path.exists(SHOT):
             os.remove(SHOT)
@@ -129,8 +145,22 @@ def screenshot_size():
     rc, out = run(["grim", SHOT], timeout=15)
     if rc != 0 or not os.path.exists(SHOT):
         log(f"grim failed rc={rc} {out.strip()[:120]}")
-        return -1
-    return os.path.getsize(SHOT)
+        return -1, None
+    with open(SHOT, "rb") as f:
+        data = f.read()
+    return len(data), hashlib.md5(data).hexdigest()
+
+
+def screenshot_size():
+    """grim the output and return the PNG byte size, or -1 on failure."""
+    return screenshot_frame()[0]
+
+
+def media_overlay_active():
+    """True while a media session (Netflix/YouTube/NowTV) is on screen."""
+    # [.] stops pgrep -f matching the shell that carries this very pattern.
+    rc, _ = run("pgrep -f 'close-overlay[.]py'", timeout=5)
+    return rc == 0
 
 
 def content_healthy():
@@ -232,12 +262,32 @@ def recover_wedge():
     return False
 
 
+def recover_stall(stalled_md5):
+    """
+    Recovery for a frozen presentation path (frame stale, JS/heartbeat alive).
+    Reload and renderer-kill are unproven against this; the fix proven
+    2026-07-17 is a full relaunch, so go straight there. Verified by the
+    framebuffer actually changing, since every other signal looks healthy.
+    """
+    log("recovery: display stalled -> full chromium relaunch")
+    relaunch_chromium()
+    time.sleep(30)
+    _, md5 = screenshot_frame()
+    if md5 is not None and md5 != stalled_md5:
+        log("recovered stalled display via full relaunch")
+        return True
+    log("CRITICAL: display still stalled after full relaunch")
+    return False
+
+
 def main():
     log(f"kiosk-watchdog starting (poll={POLL_SECONDS}s, "
         f"content_min={CONTENT_MIN_BYTES}B, hb_stale={HEARTBEAT_STALE_SECONDS}s, "
-        f"wayland={WENV['WAYLAND_DISPLAY']})")
+        f"stall={STALL_THRESHOLD}x, wayland={WENV['WAYLAND_DISPLAY']})")
     faults = 0
     hb_faults = 0
+    stalls = 0
+    last_frame_md5 = None
     last_daily_reload_day = None
 
     while True:
@@ -276,18 +326,43 @@ def main():
                 log("kiosk heartbeat fresh again")
             hb_faults = 0
 
+            size, frame_md5 = screenshot_frame()
+            if frame_md5 is None:
+                # grim hiccup — inconclusive, don't count anything this cycle.
+                time.sleep(POLL_SECONDS)
+                continue
+
+            # --- Display-stall check: the clock changes every minute in every
+            # state, so identical consecutive frames mean chromium has stopped
+            # presenting even though its JS (and heartbeat) may still be alive.
+            if media_overlay_active():
+                # Paused video is legitimately static — don't judge.
+                stalls = 0
+                last_frame_md5 = None
+            elif frame_md5 == last_frame_md5:
+                stalls += 1
+                log(f"display frame unchanged ({stalls}/{STALL_THRESHOLD}, "
+                    f"state={screen.get('state')})")
+                if stalls >= STALL_THRESHOLD:
+                    recover_stall(frame_md5)
+                    stalls = 0
+                    faults = 0
+                    last_frame_md5 = None
+                    time.sleep(POLL_SECONDS)
+                    continue
+            else:
+                if stalls:
+                    log("display frame advancing again")
+                stalls = 0
+                last_frame_md5 = frame_md5
+
             if screen.get("state") != "active":
                 # dim/off -> a black frame is legitimate, don't judge content.
                 faults = 0
                 time.sleep(POLL_SECONDS)
                 continue
 
-            healthy = content_healthy()
-            if healthy is None:
-                # grim hiccup — inconclusive, don't count.
-                time.sleep(POLL_SECONDS)
-                continue
-
+            healthy = size >= CONTENT_MIN_BYTES
             if healthy:
                 if faults:
                     log("kiosk healthy again")

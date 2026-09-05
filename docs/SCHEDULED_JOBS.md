@@ -83,8 +83,7 @@ Times are UK local. Jobs marked with a day name only run on that day.
 | 06:45 | `morning-quality-report` | #peter-heartbeat | Parser quality metrics review |
 | 06:50 | `system-health` | #alerts | Cross-system health check (DM + HB) |
 | 06:55 | `daily-batch` | #peter-heartbeat!quiet | Generates the day's hydration/cooking messages (no further LLM calls) |
-| 07:01 | `morning-briefing` | #ai-briefings | AI/tech morning briefing |
-| 07:02 | `news` | #news | General news digest |
+| 07:01 | `newsletter` | #ai-news | Merged daily newsletter (AI, Claude Code, community, tech, UK, sport [cricket/football-led], YouTube incl. daily documentary pick) — replaced morning-briefing, news, youtube-digest and the RSS domain briefing on 2026-07-02 |
 | 07:02 | `hydration` | #food-log+WhatsApp:chris | 1st of 15 daily hydration checks |
 | 07:25 | `kids-daily` | #peterbot+WhatsApp:group | Kids daily briefing (school, weather) |
 | 07:30 | `cooking-reminder` | #food-log | Morning cooking reminder |
@@ -103,7 +102,7 @@ Times are UK local. Jobs marked with a day name only run on that day.
 | 09:00 | `ballot-reminders` | #peterbot+WhatsApp:chris | Ticket ballot deadline alerts |
 | 09:02 | `hydration` | #food-log+WhatsApp:chris | |
 | 09:02 | `subscription-monitor` | #alerts+WhatsApp:chris | **Sun only** |
-| 09:05 | `youtube-digest` | #youtube | YouTube subscription digest |
+| ~~09:05~~ | ~~`youtube-digest`~~ | — | Disabled 2026-07-02 — YouTube picks merged into the 07:01 `newsletter` |
 | 09:10 | `healthera-prescriptions` | #peterbot | Prescription status check |
 | 09:10 | `weekly-health` | #food-log | **Sun only** |
 | 09:15 | `monthly-health` | #food-log | **1st of month only** |
@@ -155,7 +154,6 @@ Times are UK local. Jobs marked with a day name only run on that day.
 | 20:30 | `meal-rating` | #food-log | Rate today's meals |
 | 20:45 | `cooking-reminder` | #food-log | Evening cooking reminder |
 | 21:00 | `nutrition-summary` | #food-log | End-of-day nutrition totals |
-| 21:00 | `practice-allocate` | #peterbot | **Tue only** — allocate 11+ practice |
 | 21:02 | `hydration` | #food-log+WhatsApp:chris | Final hydration check |
 | 21:45 | `daily-thoughts` | #peterbot!quiet | Daily reflection/journal prompt |
 | 22:00 | `security-monitor` | #alerts | 5th (final) security check |
@@ -245,7 +243,6 @@ Pre-fetch functions in `data_fetchers.py` run **before** skill execution to prov
 | `school-weekly-spellings` | `get_school_data()` | Supabase spellings + school events |
 | `tutor-email-parser` | `get_tutor_email_data()` | Gmail (tutor emails) |
 | `paper-builder` | `get_paper_builder_data()` | 11+ practice paper data |
-| `practice-allocate` | `get_practice_allocate_data()` | 11+ practice allocation |
 | `pocket-money-weekly` | `get_pocket_money_weekly_data()` | Chore completion data |
 
 #### Hadley Bricks (Business)
@@ -365,11 +362,9 @@ These skills have their output automatically saved to Second Brain after executi
 
 | Channel | Channel ID | Skills |
 |---------|-----------|--------|
-| **#peterbot** | (env var) | morning-laughs, kids-daily, morning-digest, cricket-scores, ballot-reminders, healthera-prescriptions, amazon-purchases, hb-full-sync-print, spurs-matchday, saturday-sport-preview, pl-results, claude-history, property-valuation, pocket-money-weekly, tutor-email-parser, paper-builder, practice-allocate, spelling-test-generator, daily-thoughts, schedule-week, github-weekly, kids-weekly, spurs-live |
+| **#peterbot** | (env var) | morning-laughs, kids-daily, morning-digest, cricket-scores, ballot-reminders, healthera-prescriptions, amazon-purchases, hb-full-sync-print, spurs-matchday, saturday-sport-preview, pl-results, claude-history, property-valuation, pocket-money-weekly, tutor-email-parser, paper-builder, spelling-test-generator, daily-thoughts, schedule-week, github-weekly, kids-weekly, spurs-live |
 | **#food-log** | 1465294449038069912 | hydration, health-digest, nutrition-summary, cooking-reminder, meal-rating, weekly-health, monthly-health, recipe-discovery, price-scanner |
-| **#ai-briefings** | 1465277483866788037 | morning-briefing |
-| **#news** | 1465277483866788037 | news |
-| **#youtube** | 1465277483866788037 | youtube-digest |
+| **#ai-news** | 1465277483866788037 | newsletter (merged 2026-07-02; morning-briefing/news/youtube-digest schedules disabled, skills remain conversational) |
 | **#alerts** | 1466019126194606286 | system-health, security-monitor, subscription-monitor, self-reflect |
 | **#api-costs** | 1465761699582972142 | balance-monitor |
 | **#peter-heartbeat** | 1467553740570755105 | heartbeat, morning-quality-report, parser-improve, daily-batch |

@@ -1,6 +1,6 @@
 """Grocery shopping automation via Chrome CDP.
 
-Connects to Chrome on port 9222 to automate Sainsbury's (and later Ocado).
+Connects to Chrome on port 9225 to automate Sainsbury's (and later Ocado).
 Uses internal REST APIs via page.evaluate() for speed and reliability,
 falling back to UI automation where needed.
 """
@@ -12,7 +12,7 @@ from datetime import datetime
 
 from logger import logger
 
-CDP_ENDPOINT = "http://localhost:9222"
+CDP_ENDPOINT = "http://localhost:9225"
 
 STORES = {
     "sainsburys": {

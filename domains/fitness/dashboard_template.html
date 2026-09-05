@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
 <title>Reset Cut — Journal</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📉</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
@@ -249,7 +250,7 @@ canvas{width:100%!important;height:170px!important}
     <div class="mh-l">
       <div class="kicker">The Reset Cut Journal</div>
       <h1 class="serif">Where you stand</h1>
-      <div class="goal">Bound for 75&nbsp;kg &amp; 15% body fat by 23 October</div>
+      <div class="goal" id="goalline">Bound for 75&nbsp;kg &amp; 15% body fat</div>
     </div>
     <div class="mh-r">
       <button id="refresh" class="refreshbtn" title="Refresh from Garmin / Withings / Peter">&#8635;</button>
@@ -335,6 +336,11 @@ function render(){
   const wk=DATA.hero||{};
   const _sl=num(wk.slope), _ar=_sl==null?"":_sl<-0.05?" ▼":_sl>0.05?" ▲":" –";
   $("#dateline").innerHTML='<span class="livetok">'+esc(fix(num(wk.current_weight)))+' kg'+_ar+'</span>Updated<b>'+esc(DATA.generated_at)+'</b>';
+  // Goal strapline from live programme data — never hardcode the deadline.
+  if(wk.end_date&&num(wk.target_weight)!=null){
+    const ed=new Date(wk.end_date);
+    $("#goalline").innerHTML="Bound for "+esc(fix(num(wk.target_weight)))+"&nbsp;kg &amp; 15% body fat by "+esc(ed.toLocaleDateString("en-GB",{day:"numeric",month:"long"}));
+  }
   $("#issue").innerHTML="<span>Week "+esc(wk.week_no)+" of "+esc(wk.duration_weeks)+"</span>"+
     "<span>"+esc(wk.days_remaining)+" days to deadline</span>"+
     "<span>"+(stamp?esc(fmtDate(stamp)):esc(DATA.generated_at))+"</span>";
@@ -349,6 +355,7 @@ function render(){
     document.querySelectorAll(".panel").forEach(x=>x.classList.remove("active"));
     t.classList.add("active"); $("#p-"+t.dataset.t).classList.add("active");
     if(t.dataset.t==="trends") drawCharts();
+    if(t.dataset.t==="training") drawTrainingCharts();
     if(t.dataset.t==="progress") requestAnimationFrame(animateJourney);
   });
   renderToday(); renderProgress(); renderTraining(); renderTargets();
@@ -504,7 +511,7 @@ function renderProgress(){
     p.appendChild(sechead("·","Your weight line"));
     const cc=ce("div","chartcard wchart");
     cc.innerHTML='<div class="ch-h"><h4>Weight — raw vs 7-read trend</h4></div>'+
-      '<div class="legend"><span><i style="border-color:#d98b6a"></i>Scale reads</span><span><i style="border-color:var(--ink)"></i>Trend line</span></div>';
+      '<div class="legend"><span><i style="border-color:#d98b6a"></i>Scale reads</span><span><i style="border-color:var(--ink)"></i>Trend line</span><span><i style="border-color:#8a7d63;border-top-style:dashed"></i>Plan</span><span><i style="border-color:#8c2f2a;border-top-style:dotted"></i>At current pace</span></div>';
     const cv=ce("canvas"); cc.appendChild(cv); p.appendChild(cc);
     requestAnimationFrame(()=>drawWeightChart(cv,series.weight));
   }
@@ -532,11 +539,38 @@ function axisOpts(o){o=o||{};return {responsive:true,maintainAspectRatio:false,
              callback:o.unit?function(v){return v+o.unit;}:undefined}}}};}
 function drawWeightChart(cv,pts){
   if(!pts||!pts.length) return;
+  const h=DATA.hero||{};
   const labels=pts.map(x=>x.date.slice(5)), raw=pts.map(x=>x.value), tr=movingAvg(raw,7);
-  charts.push(new Chart(cv,{type:"line",data:{labels,datasets:[
-    {data:raw,borderColor:"#d98b6a",backgroundColor:"transparent",borderWidth:1.3,pointRadius:2.2,pointBackgroundColor:"#d98b6a",tension:.25,order:2},
-    {data:tr,borderColor:"#221d17",backgroundColor:"rgba(34,29,23,.05)",borderWidth:2.8,pointRadius:0,fill:true,tension:.35,order:1}
-  ]},options:axisOpts({grid:"#d8cdb4",tick:"#4d453a",maxTicks:5,tsize:11,unit:" kg"})}));
+  // Plan line + current-pace projection: extend the axis to the programme end
+  // date (weekly steps) so divergence from the plan is visible, not deniable.
+  const planD=[], projD=[];
+  const sw=num(h.start_weight), tw=num(h.target_weight), slope=num(h.slope);
+  const sd=h.start_date?new Date(h.start_date):null, ed=h.end_date?new Date(h.end_date):null;
+  if(sw!=null&&tw!=null&&sd&&ed&&ed>sd){
+    const total=(ed-sd)/864e5;
+    const planAt=d=>{const t=(d-sd)/864e5; return t<0?null:sw-(sw-tw)*Math.min(t/total,1);};
+    const lastD=new Date(pts[pts.length-1].date);
+    const fut=[];
+    for(let d=new Date(lastD.getTime()+7*864e5); d<ed; d=new Date(d.getTime()+7*864e5)) fut.push(d);
+    if(ed>lastD) fut.push(ed);
+    fut.forEach(d=>{labels.push(d.toISOString().slice(5,10)); raw.push(null); tr.push(null);});
+    pts.forEach(x=>planD.push(planAt(new Date(x.date))));
+    fut.forEach(d=>planD.push(planAt(d)));
+    const lastTrVals=tr.filter(v=>v!=null), lastVal=lastTrVals.length?lastTrVals[lastTrVals.length-1]:null;
+    if(slope!=null&&lastVal!=null&&fut.length){
+      for(let i=0;i<pts.length-1;i++) projD.push(null);
+      projD.push(lastVal);
+      fut.forEach(d=>projD.push(lastVal+slope*((d-lastD)/(7*864e5))));
+    }
+  }
+  const datasets=[
+    {data:raw,borderColor:"#d98b6a",backgroundColor:"transparent",borderWidth:1.3,pointRadius:2.2,pointBackgroundColor:"#d98b6a",tension:.25,order:2,spanGaps:false},
+    {data:tr,borderColor:"#221d17",backgroundColor:"rgba(34,29,23,.05)",borderWidth:2.8,pointRadius:0,fill:true,tension:.35,order:1,spanGaps:false}
+  ];
+  if(planD.some(v=>v!=null)) datasets.push({data:planD,borderColor:"#8a7d63",backgroundColor:"transparent",borderWidth:1.6,borderDash:[6,4],pointRadius:0,tension:0,order:3,spanGaps:true});
+  if(projD.some(v=>v!=null)) datasets.push({data:projD,borderColor:"#8c2f2a",backgroundColor:"transparent",borderWidth:1.6,borderDash:[2,4],pointRadius:0,tension:0,order:4,spanGaps:true});
+  charts.push(new Chart(cv,{type:"line",data:{labels,datasets},
+    options:axisOpts({grid:"#d8cdb4",tick:"#4d453a",maxTicks:5,tsize:11,unit:" kg"})}));
 }
 function drawCharts(){
   charts.forEach(c=>c.destroy()); charts=[]; drawnTrends=true;
@@ -545,7 +579,7 @@ function drawCharts(){
   // weight first, full width with raw vs trend
   if((series.weight||[]).length){
     const cc=ce("div","chartcard wchart");
-    cc.innerHTML='<div class="ch-h"><h4>Weight</h4></div><div class="legend"><span><i style="border-color:#d98b6a"></i>Scale reads</span><span><i style="border-color:var(--ink)"></i>7-read trend</span></div>';
+    cc.innerHTML='<div class="ch-h"><h4>Weight</h4></div><div class="legend"><span><i style="border-color:#d98b6a"></i>Scale reads</span><span><i style="border-color:var(--ink)"></i>7-read trend</span><span><i style="border-color:#8a7d63;border-top-style:dashed"></i>Plan</span><span><i style="border-color:#8c2f2a;border-top-style:dotted"></i>At current pace</span></div>';
     const cv=ce("canvas"); cc.appendChild(cv); p.appendChild(cc); drawWeightChart(cv,series.weight);
   }
   const grid=ce("div","grid g2"); grid.style.marginTop="14px"; p.appendChild(grid);
@@ -587,8 +621,99 @@ function exRow(ex){
   }
   return row;
 }
+let tcharts=[];
+function actionWord(a){return a==="increase"?"one plate up":a==="hold"?"hold":a==="deload"?"deload":"find a load";}
+function actionCls(a){return a==="increase"?"good":a==="deload"?"bad":a==="hold"?"warn":"neutral";}
+function renderTrainingLog(p){
+  const t=DATA.training; if(!t) return;
+  const w=t.week||{}, st=w.strength||{}, cd=w.cardio||{};
+  // This week strip
+  const strip=ce("div","mod");
+  strip.innerHTML='<div class="modhead"><h3>This week</h3><span class="meta">plan v'+esc(t.plan_version||"—")+' · '+esc(t.plan_name||"")+'</span></div>'+
+    '<div class="tgt"><span>Strength sessions</span><b>'+esc(st.done||0)+' / '+esc(st.target||3)+'</b></div>'+
+    '<div class="tgt"><span>Easy cardio</span><b>'+esc(cd.easy_done||0)+' / '+esc(cd.easy_target||5)+'</b></div>'+
+    '<div class="tgt"><span>Hard cardio</span><b>'+esc(cd.hard_done||0)+' / '+esc(cd.hard_target||1)+'</b></div>'+
+    ((w.progressions_this_week||[]).length?'<div class="tgt"><span>Load went up</span><b>'+esc(w.progressions_this_week.map(x=>x.slug.replace(/-/g," ")+" "+x.from_kg+"→"+x.to_kg+" kg").join(", "))+'</b></div>':'')+
+    ((w.stalled||[]).length?'<div class="tgt"><span>Stalled</span><b>'+esc(w.stalled.map(x=>x.slug.replace(/-/g," ")+" @ "+x.weight_kg+" kg").join(", "))+'</b></div>':'');
+  p.appendChild(strip);
+  // Next session
+  const n=t.next;
+  if(n){
+    const card=ce("div","mod");
+    const gap=n.rest_gap_ok===false?'<div style="font-size:12.5px;color:var(--bad);margin-bottom:8px">Trained '+(n.days_since_last_strength===0?"today":"yesterday")+' — make today cardio, lift tomorrow.</div>':'';
+    card.innerHTML='<div class="modhead"><h3>Next · '+esc(n.label||n.session_type)+(n.order_variant?' (order '+esc(n.order_variant)+')':'')+'</h3><span class="meta">'+(n.status==="proposed"?"proposed — log what you do and it adapts":"targets from your log")+'</span></div>'+gap;
+    (n.exercises||[]).forEach(e=>{
+      const row=ce("div","ex");
+      const tgt=e.weight_kg!=null?fix(e.weight_kg,1)+" kg":(e.action==="increase"&&e.last_kg!=null?"one plate up from "+fix(e.last_kg,1)+" kg":e.last_kg!=null?fix(e.last_kg,1)+" kg":"—");
+      row.innerHTML='<div><div class="exn">'+esc(e.name)+'</div><div class="exd">'+esc(e.sets)+' × '+esc(e.target_reps)+' · '+esc(tgt)+'</div><div class="exc">'+esc(e.reason||"")+'</div></div>'+
+        '<span class="delta '+actionCls(e.action)+'" style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;font-weight:700">'+esc(actionWord(e.action))+'</span>';
+      card.appendChild(row);
+    });
+    p.appendChild(card);
+  }
+  // Next hard cardio
+  const h=t.next_hard;
+  if(h){
+    const c=ce("div","mod");
+    const blocks=(t.next_hard_blocks||[]).map(b=>{const m=Math.floor(b.seconds/60), s=b.seconds%60; return (b.phase==="peak"?"<b>":"")+esc(b.phase)+" "+m+":"+String(s).padStart(2,"0")+(b.level!=null?" L"+b.level:"")+(b.phase==="peak"?"</b>":"");}).join(" → ");
+    c.innerHTML='<div class="modhead"><h3>Next hard cardio · '+esc(h.modality||"stairmaster")+'</h3><span class="meta">'+esc(h.stage||"")+'</span></div>'+
+      '<div style="font-size:13.5px;color:var(--ink2);margin-bottom:8px">'+esc(h.reason||"")+'</div>'+
+      (blocks?'<div style="font-size:12px;color:var(--muted);line-height:1.7">'+blocks+'</div>':'')+
+      (h.note?'<div class="exc" style="margin-top:6px">'+esc(h.note)+'</div>':'');
+    p.appendChild(c);
+  }
+  // Load progress charts (drawn lazily when the tab opens)
+  const ls=(t.load_series||[]).filter(x=>x.points&&x.points.length);
+  if(ls.length){
+    p.appendChild(sechead("·","Load progress"));
+    const grid=ce("div","grid g2"); grid.id="loadgrid"; p.appendChild(grid);
+    ls.forEach((s,i)=>{
+      const last=s.points[s.points.length-1], first=s.points[0];
+      const d=last.kg-first.kg, dtxt=s.points.length>1?((d>0?"▲ +":d<0?"▼ ":"→ ")+fix(Math.abs(d),1)+" kg"):"";
+      const cc=ce("div","chartcard");
+      cc.innerHTML='<div class="ch-h"><h4>'+esc(s.name)+'</h4><span class="delta '+(d>0?"down":d<0?"up":"")+'">'+esc(dtxt)+'</span></div><div class="legend"><span>'+esc(fix(last.kg,1))+' kg · '+esc(s.points.length)+' session'+(s.points.length===1?"":"s")+'</span></div>';
+      const cv=ce("canvas"); cv.dataset.idx=i; cc.appendChild(cv); grid.appendChild(cc);
+    });
+    if(ls.length%2===1) grid.lastChild.style.gridColumn="1 / -1";
+  }
+  // Recent sessions
+  const ss=t.sessions||[];
+  if(ss.length){
+    p.appendChild(sechead("·","Recent sessions"));
+    ss.slice(0,8).forEach(s=>{
+      const c=ce("div","mod");
+      c.innerHTML='<div class="modhead"><h3>'+esc(s.date)+' · '+esc(s.label)+'</h3><span class="meta">'+(s.rpe?"RPE "+esc(s.rpe)+" · ":"")+(s.duration_min?esc(s.duration_min)+" min · ":"")+esc(s.source)+(s.garmin?" · ⌚":"")+'</span></div>'+
+        (s.exercises||[]).map(e=>'<div class="tgt"><span>'+esc(e.name)+'</span><b style="font-size:14px">'+esc(e.detail)+'</b></div>').join("");
+      p.appendChild(c);
+    });
+  }
+  // Cardio log
+  const cl=t.cardio||[];
+  if(cl.length){
+    p.appendChild(sechead("·","Cardio log"));
+    const c=ce("div","mod");
+    c.innerHTML='<div class="modhead"><h3>Last '+esc(cl.length)+' session'+(cl.length===1?"":"s")+'</h3><span class="meta">⌚ = matched to Garmin</span></div>'+
+      cl.slice(0,12).map(x=>'<div class="rotrow"><span>'+esc(x.date)+' · '+esc(x.modality)+(x.intensity==="hard"?' <span class="badge">hard</span>':'')+(x.pain?' <span class="badge" style="color:var(--bad)">hip</span>':'')+'</span><span style="color:var(--muted);font-size:12.5px">'+
+        (x.minutes?esc(x.minutes)+" min":"")+(x.peak_seconds?" · peak "+esc(x.peak_seconds)+"s":"")+(x.level?" · L"+esc(x.level):"")+(x.avg_hr?" · "+esc(x.avg_hr)+" bpm":"")+(x.garmin?" ⌚":"")+'</span></div>').join("");
+    p.appendChild(c);
+  }
+}
+function drawTrainingCharts(){
+  const t=DATA.training; if(!t) return;
+  tcharts.forEach(c=>c.destroy()); tcharts=[];
+  const ls=(t.load_series||[]).filter(x=>x.points&&x.points.length);
+  document.querySelectorAll("#loadgrid canvas").forEach(cv=>{
+    const s=ls[+cv.dataset.idx]; if(!s) return;
+    const labels=s.points.map(x=>x.date.slice(5));
+    tcharts.push(new Chart(cv,{type:"line",data:{labels,datasets:[{data:s.points.map(x=>x.kg),borderColor:"#221d17",backgroundColor:"rgba(34,29,23,.06)",fill:true,stepped:true,pointRadius:3.5,
+      pointBackgroundColor:s.points.map(x=>x.failed?"#8c2f2a":"#4f7a3f"),borderWidth:2}]},
+      options:axisOpts({unit:" kg",maxTicks:4})}));
+  });
+}
 function renderTraining(){
   const p=$("#p-training"); p.innerHTML=""; const pl=DATA.plan;
+  renderTrainingLog(p);
+  if(DATA.training) p.appendChild(sechead("·","The plan this week"));
   if(pl&&pl.days){
     const week=ce("div","week");
     pl.days.forEach((d,i)=>week.appendChild(ce("div","day"+(i===pl.today_index?" today":"")+(d.is_rest?" rest":""),
@@ -601,8 +726,8 @@ function renderTraining(){
     (today.exercises||[]).forEach(ex=>card.appendChild(exRow(ex)));
     if(!today.exercises||!today.exercises.length) card.innerHTML+='<div style="color:var(--ink2);font-size:13.5px;line-height:1.5">'+(today.is_rest?'Rest day — 10-min mobility only if tight. The daily walk still stands.':'Walk + 10-min hip mobility.')+'</div>';
     p.appendChild(card);
-    // rest of week
-    p.appendChild(sechead("·","The rest of the week"));
+    // rest of week (only when another day actually has a session)
+    if(pl.days.some((d,i)=>i!==pl.today_index&&d.exercises&&d.exercises.length)) p.appendChild(sechead("·","The rest of the week"));
     pl.days.forEach((d,i)=>{
       if(i===pl.today_index||!d.exercises||!d.exercises.length) return;
       const c=ce("div","mod");
@@ -664,27 +789,55 @@ function renderTargets(){
   if(r.disclaimer) p.appendChild(ce("div","disc",esc(r.disclaimer)));
 }
 
-// ---- Refresh: rebuild from Garmin/Withings/Peter. Targets the host that
-// served this page when on the LAN (http); on surge (https) it degrades to a hint. ----
+// ---- Refresh: rebuild from Garmin/Withings/Peter. On the LAN (http) page it
+// hits Hadley API directly; on surge (https) it queues a request via the
+// dashboard-refresh Edge Function (sha256 of the passcode as auth — verified by
+// the home machine before rebuilding), then watches this URL for the new build. ----
 const LOCAL_API=(location.protocol==="http:"&&location.hostname)?location.origin:"http://172.19.64.1:8100";
+const RELAY="https://modjoikyuhqzouxvieua.supabase.co/functions/v1/dashboard-refresh";
 function toast(msg,ms){let t=$("#toast");if(!t){t=ce("div");t.id="toast";document.body.appendChild(t);}t.textContent=msg;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),ms||6000);}
+async function sha256Hex(s){const d=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));return [...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,"0")).join("");}
+async function lanRefresh(){
+  toast("Refreshing from Garmin, Withings & Peter… (~1 min)",60000);
+  const r=await fetch(LOCAL_API+"/fitness/dashboard/refresh",{method:"POST"});
+  if(!r.ok) throw new Error("bad");
+  const start=GENERATED_AT;
+  for(let i=0;i<40;i++){
+    await new Promise(s=>setTimeout(s,3000));
+    try{
+      const st=await (await fetch(LOCAL_API+"/fitness/dashboard/refresh/status")).json();
+      if(st&&st.generated_at&&st.generated_at!==start&&!st.building){toast("Updated — reloading…",4000);setTimeout(()=>location.reload(),700);return;}
+    }catch(_){/* keep polling */}
+  }
+  toast("Still building — reload in a moment.",8000);
+}
+async function remoteRefresh(){
+  const pc=sessionStorage.getItem("rc_pc");
+  if(!pc){toast("Unlock the page first, then refresh.",6000);return;}
+  toast("Asking home base to refresh from Garmin, Withings & Peter… (~2 min)",120000);
+  const r=await fetch(RELAY,{method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({pass_sha256:await sha256Hex(pc)})});
+  if(!r.ok) throw new Error("relay");
+  // The home machine polls the queue (~20 s), rebuilds (~1 min) and redeploys
+  // this page — so watch our own URL for a new GENERATED_AT.
+  for(let i=0;i<60;i++){
+    await new Promise(s=>setTimeout(s,5000));
+    try{
+      const html=await (await fetch(location.pathname,{cache:"no-store"})).text();
+      const m=html.match(/const GENERATED_AT = "([^"]+)"/);
+      if(m&&m[1]&&m[1]!==GENERATED_AT){toast("Updated — reloading…",4000);setTimeout(()=>location.replace(location.pathname+"?v="+Date.now()),700);return;}
+    }catch(_){/* keep polling */}
+  }
+  toast("Still building — reload in a couple of minutes.",8000);
+}
 async function doRefresh(){
   const b=$("#refresh"); if(b.classList.contains("spin"))return; b.classList.add("spin");
-  toast("Refreshing from Garmin, Withings & Peter… (~1 min)",60000);
   try{
-    const r=await fetch(LOCAL_API+"/fitness/dashboard/refresh",{method:"POST"});
-    if(!r.ok) throw new Error("bad");
-    const start=GENERATED_AT;
-    for(let i=0;i<40;i++){
-      await new Promise(s=>setTimeout(s,3000));
-      try{
-        const st=await (await fetch(LOCAL_API+"/fitness/dashboard/refresh/status")).json();
-        if(st&&st.generated_at&&st.generated_at!==start&&!st.building){toast("Updated — reloading…",4000);setTimeout(()=>location.reload(),700);return;}
-      }catch(_){/* keep polling */}
-    }
-    toast("Still building — reload in a moment.",8000);
+    if(location.protocol==="https:") await remoteRefresh(); else await lanRefresh();
   }catch(_){
-    toast("Live refresh runs on your home network — open the LAN page (auto-updates daily at 08:20).",10000);
+    toast(location.protocol==="https:"
+      ?"Couldn't reach the refresh relay — try again in a minute."
+      :"Live refresh runs on your home network — open the LAN page (auto-updates daily at 08:20).",10000);
   }finally{ b.classList.remove("spin"); }
 }
 document.getElementById("refresh").addEventListener("click",doRefresh);

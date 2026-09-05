@@ -117,8 +117,18 @@ Want me to save any to your recipes? Just say "save 1 and 3" or "save all".
 - Add a one-line note explaining WHY this recipe was chosen (connects to Chris's preferences)
 - Keep compact — all 3 should fit in one Discord message
 
+## Error Handling & Empty-Response Guard
+
+**This skill must NEVER return an empty response** — a blank reply is recorded by the scheduler as a job failure (`empty response`). Always emit *something*:
+
+- If web searches return nothing usable, or every candidate is filtered out by the exclusion/macro rules, do **not** stay silent. Post a short honest note instead, e.g.:
+  `🍽️ No fresh recipe picks this week — everything matching your macros and cuisines is already in Family Fuel or was made recently. I'll widen the net next run.`
+- If the pre-fetched `data` is missing or empty (no `top_recipes`/`preferences`), fall back to a general high-protein family search across the preferred UK sites rather than aborting.
+- Only ever reply `NO_REPLY` as a deliberate, explicit choice — never as the result of producing no text. If you have nothing to recommend, say so in one line (above), which is NOT the same as an empty response.
+
 ## Rules
 
+- **Always produce output** — never end the turn with an empty reply (see Empty-Response Guard above)
 - **Never recommend recipes already in Family Fuel** — check against `data.existing_recipes`
 - **Never recommend recently made meals** — check against `data.recent_recipes`
 - **Always verify macros** from the actual recipe page — never estimate

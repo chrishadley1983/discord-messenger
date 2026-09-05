@@ -12,7 +12,14 @@ SOURCES = {
     ],
     "f1": [
         ("Autosport F1", "https://www.autosport.com/rss/f1/news/"),
-    ]
+    ],
+    # Used by the daily newsletter's SPORT section (cricket & football led)
+    "football": [
+        ("BBC Football", "https://feeds.bbci.co.uk/sport/football/rss.xml"),
+    ],
+    "cricket": [
+        ("BBC Cricket", "https://feeds.bbci.co.uk/sport/cricket/rss.xml"),
+    ],
 }
 
 SYSTEM_PROMPT = """You are Chris's news assistant. Concise, factual, no fluff.

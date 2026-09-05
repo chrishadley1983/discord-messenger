@@ -43,6 +43,10 @@ Deliver 3 dad jokes and an inspirational quote first thing in the morning to sta
 - Keep total message under 500 characters
 - If triggered conversationally, generate fresh jokes on the spot
 
+## Empty-Response Guard
+
+**This skill must NEVER return a blank reply** — the scheduler records an empty reply as a job failure (`empty response`), which is exactly the failure this job hit at 06:30. There is no valid silent outcome here: a joke post always has content to send. Even if the HISTORY.md read fails or the dashboard push errors, still output three fresh dad jokes and a quote — those side-effects are secondary to delivering the message. Never emit `NO_REPLY` and never end the turn with empty text.
+
 ## Repeat Prevention (CRITICAL)
 
 **History file:** `skills/morning-laughs/HISTORY.md`

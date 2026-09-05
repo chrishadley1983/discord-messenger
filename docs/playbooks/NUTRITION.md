@@ -7,6 +7,7 @@ READ THIS for any food logging, nutrition check-in, or dietary coaching interact
 - Current targets: `/nutrition/goals` (calories, protein, carbs, fat, water, steps)
 - Today's intake: `/nutrition/today`
 - Today's meals: `/nutrition/today/meals`
+- **Any previous day** (full history): `/nutrition/date?date=YYYY-MM-DD`, `/nutrition/date/meals?date=YYYY-MM-DD` — NEVER claim you can't see past days; the whole meal log is queryable by date
 - Water entries: `/nutrition/water/entries` (with IDs for deleting)
 - Steps: `/nutrition/steps`
 - Weight + history: `/nutrition/weight`, `/nutrition/weight/history`
@@ -40,6 +41,8 @@ This takes 1 second. Do it EVERY TIME before estimating macros.
 - For multiples (e.g., "x 2"), multiply the favourite macros
 
 **Only estimate macros if no favourite matches.** UK portion sizes, be conservative.
+
+**Need context from a previous day?** (e.g. which flavour/brand something was, whether it was already logged, what a portion was last time): fetch `/nutrition/date/meals?date=YYYY-MM-DD` for that day — descriptions there usually carry the detail (flavour, brand, weight). Get today's date from `/time` first if unsure, then subtract for "yesterday".
 
 Then:
 1. Call /nutrition/log-meal with meal_type, description, calories, protein, carbs, fat

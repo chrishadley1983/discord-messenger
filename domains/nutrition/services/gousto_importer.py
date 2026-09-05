@@ -13,7 +13,7 @@ from logger import logger
 
 # CDP script path (Windows — called via node.exe from WSL)
 CDP_SCRIPT = "C:/Users/Chris Hadley/claude-projects/chrome-cdp-skill/skills/chrome-cdp/scripts/cdp.mjs"
-CDP_PORT = 9222
+CDP_PORT = 9225
 
 
 async def _cdp_cmd(*args: str) -> str:

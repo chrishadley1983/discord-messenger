@@ -1,13 +1,14 @@
 # kiosk-watchdog
 
 Auto-recovers the IHD dashboard Chromium kiosk when its renderer freezes or crashes —
-either a black/blank screen that ignores touch, or a "data-wedge" where the frame
-looks fine but the page's JS is dead (the Next.js server on :3000 stays healthy
-throughout, so an HTTP health check can't see either fault).
+a black/blank screen that ignores touch, a "data-wedge" where the frame looks fine
+but the page's JS is dead, or a "presentation stall" where the JS is alive and
+beating but the compositor has stopped painting new frames (the Next.js server on
+:3000 stays healthy throughout, so an HTTP health check can't see any of them).
 
 ## How it works
 
-Two independent checks, polled from the screen-controller (`:5002`) every 60s:
+Three independent checks, polled from the screen-controller (`:5002`) every 60s:
 
 **Black/crash check** (active state only — in `dim`/`off` a black frame is legitimate):
 - Takes a `grim` screenshot and checks its byte size: healthy dashboard ~120 KB,
@@ -27,6 +28,16 @@ froze the widgets and the rest-state clock respectively, with a healthy-looking 
   resuming), then full relaunch.
 - Caveat: any browser with the dashboard open (e.g. a laptop viewing :3000)
   also beats, which would mask a wedged kiosk while that tab stays open.
+
+**Presentation-stall check** (any state — the 2026-07-17 stall held one frame for
+35 hours while the heartbeat kept arriving, so both checks above passed):
+- Each poll md5s the `grim` screenshot. The on-screen clock advances every minute
+  in every state, so a healthy frame is *never* byte-identical to the last one.
+- 3 identical consecutive frames (spanning ≥2 clock minutes) = stalled. Recovery
+  goes straight to a full Chromium relaunch — a reload or renderer kill leaves the
+  stalled compositor in place.
+- Suppressed while the media overlay is up (`close-overlay.py` running), where a
+  paused video is legitimately static.
 
 Also runs a once-daily proactive reload at 04:xx to prevent multi-day tab rot
 (the original 2026-07-05 freeze was a ~9-day-old tab).

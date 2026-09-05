@@ -6,7 +6,7 @@ Activity factor is derived from recent average step count so it self-tunes:
     5-8k   light           1.375
     8-12k  moderate        1.5
     12-16k active          1.6
-    16k+   very active     1.75
+    16k+   very active     1.65
 
 These multipliers were recalibrated from the original Mifflin-St Jeor labels
 because the textbook 1.725/1.9 buckets assume manual-labour jobs or 6-7 days
@@ -65,7 +65,10 @@ def activity_factor_from_steps(avg_steps: float) -> float:
     Recalibrated (vs textbook Mifflin labels) so that walking-heavy lifestyles
     aren't over-estimated. The 12-16k bucket is 1.6 (not 1.725) because the
     bottom-up MET calculation for 15k steps adds ~630 kcal above BMR, not the
-    1,310 kcal that 1.725 implies.
+    1,310 kcal that 1.725 implies. The 16k+ bucket is 1.65 (not the textbook
+    1.9 or even 1.75) for the same reason: extra steps beyond 15k add walking
+    METs roughly linearly (~45 kcal per 1k steps), which the 1.75 multiplier
+    over-credits when the activity is walking rather than hard training.
     """
     if avg_steps < 5000:
         return 1.2
@@ -75,7 +78,7 @@ def activity_factor_from_steps(avg_steps: float) -> float:
         return 1.5
     if avg_steps < 16000:
         return 1.6
-    return 1.75
+    return 1.65
 
 
 def compute_tdee(

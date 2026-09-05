@@ -1,6 +1,6 @@
 """Evolution API WhatsApp watchdog — auto-restart on hangs, alert on device-removed.
 
-Catches two distinct failure modes that both surface as "WhatsApp Send Failed":
+Catches three distinct failure modes that surface as "WhatsApp Send Failed":
 
 1. **Hung process** — the Evolution Node.js process freezes (event loop stalled,
    container still 'Up' but API hangs or returns empty replies). Docker can't
@@ -10,6 +10,14 @@ Catches two distinct failure modes that both surface as "WhatsApp Send Failed":
 2. **device_removed (401)** — the linked device was revoked from the phone.
    A restart will NOT fix this; only a fresh QR scan will. We detect the
    `disconnectionReasonCode == 401` and alert Discord instead of restart-looping.
+
+3. **Docker Desktop itself is down** — the whole engine has exited (not just the
+   container), so `docker restart` always fails with a connect error (see
+   2026-07-21 incident: watchdog spammed "docker restart failed... unreachable"
+   for 90+ min because there was no daemon to restart into). We detect this via
+   `docker info` and relaunch Docker Desktop.exe; containers have
+   `restart: unless-stopped` so Docker's own backoff brings them back once the
+   engine is up — no manual `docker start` needed.
 """
 
 from __future__ import annotations
@@ -28,6 +36,9 @@ EVOLUTION_URL = os.environ.get("EVOLUTION_API_URL", "http://localhost:8085")
 EVOLUTION_API_KEY = os.environ.get("EVOLUTION_API_KEY", "peter-whatsapp-2026-hadley")
 EVOLUTION_INSTANCE = os.environ.get("EVOLUTION_INSTANCE", "peter-whatsapp")
 CONTAINER_NAME = os.environ.get("EVOLUTION_CONTAINER", "evolution_api")
+DOCKER_DESKTOP_EXE = os.environ.get(
+    "DOCKER_DESKTOP_EXE", r"C:\Program Files\Docker\Docker\Docker Desktop.exe"
+)
 _WEBHOOK = os.environ.get("DISCORD_WEBHOOK_ALERTS", "")
 
 PROBE_TIMEOUT_S = 5
@@ -35,8 +46,16 @@ POST_RESTART_WAIT_S = 25
 MAX_RESTARTS_PER_WINDOW = 2
 RESTART_WINDOW_S = 30 * 60
 ALERT_THROTTLE_S = 30 * 60
+# `docker info` talks to the engine; when Docker Desktop is down it fails fast,
+# but a *starting* engine can hang, so give it room without stalling the timer.
+DOCKER_INFO_TIMEOUT_S = 20
+# Docker Desktop takes ~1-2 min to bring the engine up. Don't relaunch it more
+# than once per window or a slow start looks like a failure and we spawn a pile
+# of Docker Desktop processes.
+ENGINE_START_WINDOW_S = 15 * 60
 
 _recent_restarts: list[float] = []
+_last_engine_start_ts: float = 0.0
 _last_alert_ts: float = 0.0
 _lock = threading.Lock()
 
@@ -121,6 +140,64 @@ def _restart_container() -> bool:
         return False
 
 
+def _docker_engine_up() -> bool | None:
+    """True if the Docker engine answers, False if it's down, None if unknown.
+
+    `docker info` is the cheapest round-trip that actually reaches the daemon
+    (`docker ps` on a dead engine returns the same connect error, but info is
+    guaranteed side-effect free). None means we couldn't tell — the CLI is
+    missing or the call timed out mid-start — and callers must not treat that
+    as "engine down", or a slow Docker start would trigger a relaunch storm.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "info", "--format", "{{.ServerVersion}}"],
+            capture_output=True, text=True, timeout=DOCKER_INFO_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("WhatsApp watchdog: `docker info` timed out — engine state unknown")
+        return None
+    except FileNotFoundError:
+        logger.error("WhatsApp watchdog: docker CLI not found on PATH")
+        return None
+    if result.returncode == 0 and result.stdout.strip():
+        return True
+    logger.warning(
+        f"WhatsApp watchdog: docker engine unreachable (rc={result.returncode}): "
+        f"{result.stderr.strip()[:200]}"
+    )
+    return False
+
+
+def _start_docker_desktop() -> bool:
+    """Relaunch Docker Desktop. Containers carry `restart: unless-stopped`, so
+    Docker's own backoff restores them once the engine is up — we deliberately
+    do NOT `docker start` anything here."""
+    global _last_engine_start_ts
+    now = time.time()
+    with _lock:
+        if (now - _last_engine_start_ts) < ENGINE_START_WINDOW_S:
+            logger.info("WhatsApp watchdog: Docker Desktop start already attempted recently")
+            return False
+        _last_engine_start_ts = now
+    if not os.path.exists(DOCKER_DESKTOP_EXE):
+        logger.error(f"WhatsApp watchdog: Docker Desktop not found at {DOCKER_DESKTOP_EXE}")
+        return False
+    try:
+        # Detached: Docker Desktop runs for the life of the session, so we must
+        # not hold a pipe open on it or wait for it to exit.
+        subprocess.Popen(
+            [DOCKER_DESKTOP_EXE],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+        logger.warning("WhatsApp watchdog: relaunched Docker Desktop (engine was down)")
+        return True
+    except OSError as e:
+        logger.error(f"WhatsApp watchdog: failed to launch Docker Desktop: {e}")
+        return False
+
+
 def _restart_count_in_window() -> int:
     now = time.time()
     with _lock:
@@ -137,6 +214,26 @@ def check_and_recover() -> None:
     """Run one probe-restart-verify cycle. Safe to call on a timer."""
     state, err = _probe_state()
     if state == "open":
+        return
+
+    # An unreachable API means either the container hung or the whole Docker
+    # engine exited. `docker restart` cannot fix the latter — on 2026-07-21 it
+    # logged "restart failed ... unreachable" for 90+ min because there was no
+    # daemon to restart into. Any other state (closed/connecting) came from a
+    # live HTTP answer, which already proves the engine is up, so we only pay
+    # for the `docker info` probe in the case that can actually be engine-down.
+    if state == "unreachable" and _docker_engine_up() is False:
+        launched = _start_docker_desktop()
+        _alert(
+            ":rotating_light: **Docker engine is down** — WhatsApp is offline.\n"
+            + (
+                "Relaunched Docker Desktop; containers have `restart: unless-stopped` "
+                "so Evolution should return within a couple of minutes."
+                if launched
+                else f"Could not relaunch Docker Desktop (see logs). Start it manually: "
+                     f"`{DOCKER_DESKTOP_EXE}`"
+            )
+        )
         return
 
     reason_code = _fetch_disconnection_reason()

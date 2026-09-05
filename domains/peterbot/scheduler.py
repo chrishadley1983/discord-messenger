@@ -853,6 +853,16 @@ class PeterbotScheduler:
                             asyncio.create_task(asyncio.to_thread(force_restart_channel, used_channel))
                         except Exception as heal_err:
                             logger.warning(f"reactive channel heal failed to start: {heal_err}")
+
+                # Strip leaked tool-call XML (e.g. "</text></invoke>") before
+                # any further processing — it must never reach Discord or the
+                # news history file.
+                if response:
+                    from domains.peterbot.response.sanitiser import strip_tool_xml
+                    cleaned = strip_tool_xml(response)
+                    if cleaned != response:
+                        logger.warning(f"Job {job.name}: stripped leaked tool XML from response")
+                        response = cleaned
             except asyncio.TimeoutError:
                 duration = time.time() - start_time
                 logger.error(f"Job {job.name} timed out after {duration:.1f}s")
@@ -913,8 +923,10 @@ class PeterbotScheduler:
                 asyncio.create_task(self._capture_to_memory(job, response))
                 asyncio.create_task(self._capture_to_second_brain(job, response))
 
-                # 8b. Save news history for deduplication
-                if job.skill == "news":
+                # 8b. Save news history for deduplication (shared by the
+                # conversational news skill and the merged daily newsletter —
+                # same file so the newsletter dedups against legacy posts too)
+                if job.skill in ("news", "newsletter"):
                     self._save_news_history(response)
 
                 # 8c. Write active skill context for conversational jobs
@@ -1108,9 +1120,16 @@ class PeterbotScheduler:
                 "```",
             ])
 
-        # Inject news history for deduplication
+        # Inject news history for deduplication. The newsletter gets a shorter
+        # window: its fetcher already hard-filters previously posted URLs, so
+        # the injected text only guards against same-story-different-URL
+        # repeats and keeps the prompt lean.
         if job.skill == "news":
             news_history = self._load_news_history()
+            if news_history:
+                parts.extend(["", news_history])
+        elif job.skill == "newsletter":
+            news_history = self._load_news_history(days=3)
             if news_history:
                 parts.extend(["", news_history])
 

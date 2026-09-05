@@ -53,12 +53,9 @@ async def morning_briefing(bot, domain):
         logger.error(f"Failed to post morning briefing: {e}")
 
 
-SCHEDULES = [
-    ScheduledTask(
-        name="morning_briefing",
-        handler=morning_briefing,
-        hour=7,
-        minute=0,
-        timezone="Europe/London"
-    )
-]
+# 2026-07-02: RSS morning briefing disabled — merged into the `newsletter`
+# skill (07:01 UK, #ai-news), which pulls the same tech/uk/f1 feeds via
+# domains.news.services.fetch_feed with URL-level dedup. The conversational
+# get_headlines/read_article tools remain active. To roll back, restore the
+# morning_briefing ScheduledTask here.
+SCHEDULES = []

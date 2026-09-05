@@ -632,7 +632,7 @@
     ],
     "conversational": true,
     "scheduled": false,
-    "description": "Amazon and eBay picking lists for order fulfillment",
+    "description": "Amazon, eBay and Shopify picking lists for order fulfillment",
     "channel": null
   },
   "hb-platform-performance": {
@@ -1000,21 +1000,25 @@
   },
   "log-workout": {
     "triggers": [
-      "done push workout",
-      "done legs workout",
+      "gym done",
+      "finished upper",
+      "finished lower",
+      "finished full body",
+      "done upper body",
+      "done lower body",
+      "session 2",
+      "training log",
+      "lat pulldown",
+      "chest press",
+      "seated row",
+      "leg press",
       "finished workout",
       "logged workout",
-      "just did my push session",
-      "completed push",
-      "completed legs",
-      "finished legs a",
-      "finished legs b",
-      "finished pull",
-      "finished full body"
+      "just did my session"
     ],
     "conversational": true,
     "scheduled": false,
-    "description": "Log a completed bodyweight workout session from natural language",
+    "description": "Log a gym strength session (machines, loads, reps, reps-in-reserve, failures) from natural language and coach the next one",
     "channel": null
   },
   "meal-plan": {
@@ -1114,7 +1118,7 @@
       "morning briefing"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "AI and Claude news morning briefing",
     "channel": "#ai-briefings"
   },
@@ -1155,9 +1159,22 @@
       "what's going on"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Fetch and summarize news based on user request and preferences from memory",
     "channel": "#news"
+  },
+  "newsletter": {
+    "triggers": [
+      "newsletter",
+      "daily newsletter",
+      "morning newsletter",
+      "ai news",
+      "briefing"
+    ],
+    "conversational": true,
+    "scheduled": true,
+    "description": "Merged daily morning newsletter — AI news, Claude Code, community, tech, UK, F1, YouTube",
+    "channel": "#ai-news"
   },
   "notion-ideas": {
     "triggers": [
@@ -1276,17 +1293,6 @@
     "conversational": true,
     "scheduled": true,
     "description": "Sunday pocket money calculation — present grid to Chris for approval, then credit balances",
-    "channel": "#peterbot"
-  },
-  "practice-allocate": {
-    "triggers": [
-      "allocate practice",
-      "generate practice week",
-      "11+ mate allocate"
-    ],
-    "conversational": true,
-    "scheduled": true,
-    "description": "Weekly 11+ Mate practice paper allocation for Emmie and Max",
     "channel": "#peterbot"
   },
   "price-scanner": {
@@ -1652,8 +1658,72 @@
       "anything good on youtube"
     ],
     "conversational": true,
-    "scheduled": true,
+    "scheduled": false,
     "description": "Daily YouTube video recommendations in key interest areas",
     "channel": "#youtube"
+  },
+  "mark-paper": {
+    "triggers": [
+      "got X/20",
+      "scored",
+      "mark paper",
+      "wrong on"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Record 11+ practice paper marks Chris sends conversationally",
+    "channel": "#peterbot"
+  },
+  "log-cardio": {
+    "triggers": [
+      "stairmaster",
+      "cardio done",
+      "easy cardio",
+      "did the bike",
+      "bike done",
+      "treadmill",
+      "rower",
+      "elliptical",
+      "intervals done",
+      "pyramid done",
+      "went for a walk",
+      "walk done"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Log a cardio session (stairmaster intervals, bike, treadmill, walk) from natural language and prescribe the next hard session",
+    "channel": null
+  },
+  "training-plan": {
+    "triggers": [
+      "what's my next session",
+      "next session",
+      "what am i doing at the gym",
+      "training plan",
+      "my plan",
+      "change my plan",
+      "swap",
+      "add to my upper",
+      "drop from my",
+      "plan history",
+      "gym plan"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Show, discuss and edit the Reset Cut gym training plan (sessions, exercises, cardio protocol, targets) and brief the next session",
+    "channel": null
+  },
+  "fitbod-import": {
+    "triggers": [
+      "fitbod",
+      "import my workouts",
+      "import fitbod",
+      "fitbod export",
+      "fitbod csv"
+    ],
+    "conversational": true,
+    "scheduled": false,
+    "description": "Import a Fitbod workout export (CSV) into the Reset Cut training log — from a Discord attachment or a file path",
+    "channel": null
   }
 }

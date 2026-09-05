@@ -34,6 +34,23 @@ CLAUDE_CLI = os.path.expanduser("~/.local/bin/claude")
 EXTRACT_CHANNEL_URL = os.environ.get("EXTRACT_CHANNEL_URL", "http://127.0.0.1:8106")
 EXTRACT_CHANNEL_TIMEOUT = float(os.environ.get("EXTRACT_CHANNEL_TIMEOUT", "90"))
 
+# Static, non-rotating OAuth token (claude setup-token) — same single source of
+# truth the channel launchers read via scripts/claude-oauth-env.sh. Read at CALL
+# time, not import time: this long-running service must pick up a re-minted
+# token without a restart, and the process env it inherited from NSSM/dashboard
+# predates any re-mint (2026-09-01: fallback failed auth for hours because the
+# process env had no token and the on-disk .credentials.json refresh was dead).
+STATIC_TOKEN_FILE = r"C:\Users\Chris Hadley\.claude-code-oauth-token"
+
+
+def _read_static_token() -> Optional[str]:
+    try:
+        with open(STATIC_TOKEN_FILE, encoding="utf-8") as f:
+            token = f.read().strip()
+        return token or None
+    except OSError:
+        return None
+
 
 class ExtractRequest(BaseModel):
     prompt: str = Field(..., description="The prompt to send to Claude")
@@ -156,6 +173,13 @@ def _run_claude_cli_sync(
     env = os.environ.copy()
     env.pop("ANTHROPIC_API_KEY", None)
     env.pop("CLAUDECODE", None)
+
+    # Fresh CLI processes can't ride the shared rotating .credentials.json
+    # (its refresh token dies on every interactive re-login elsewhere) — give
+    # them the static token file if it exists, read at call time.
+    static_token = _read_static_token()
+    if static_token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = static_token
 
     # Ensure claude CLI is on PATH
     local_bin = os.path.expanduser("~/.local/bin")

@@ -340,6 +340,14 @@ async def _sync_garmin_to_supabase(
 
         logger.info(f"Garmin sync: upserted {ok}/{len(records)} day rows (days={days})")
 
+        # Phase 2: per-activity sync + cardio/strength linking (best-effort).
+        try:
+            from domains.fitness.garmin_activities import sync_and_link
+            res = await sync_and_link(days=max(days, 3))
+            logger.info(f"Garmin activities: {res}")
+        except Exception as e:
+            logger.warning(f"Garmin activities sync failed: {e}")
+
     except Exception as e:
         logger.error(f"Garmin sync failed: {e}")
 
@@ -415,6 +423,16 @@ async def get_weekly_health_data() -> dict[str, Any]:
             logger.warning(f"Failed to get goals: {goals}")
             goals = {}
 
+        # Plan-driven training week (strength vs target, cardio easy/hard, PRs, stalls)
+        training = None
+        try:
+            from domains.fitness import service as fit
+            prog = await fit.get_active_programme()
+            if prog and prog.get("split") == "plan":
+                training = await fit.training_week_summary()
+        except Exception as e:
+            logger.warning(f"Weekly training summary failed: {e}")
+
         return {
             "weight": weight,
             "nutrition": nutrition,
@@ -423,6 +441,7 @@ async def get_weekly_health_data() -> dict[str, Any]:
             "heart_rate": hr,
             "goals": goals,
             "targets": targets,
+            "training": training,
             "week_ending": datetime.now(UK_TZ).strftime("%Y-%m-%d")
         }
 
@@ -508,26 +527,50 @@ async def get_monthly_health_data() -> dict[str, Any]:
 async def get_balance_data() -> dict[str, Any]:
     """Fetch API balance data for balance-monitor skill.
 
-    Returns:
-        Dict with Claude, Moonshot, and Grok balances
+    Grok was dropped from the check on 2026-07-02 (account defunded; the
+    newsletter pipeline no longer depends on it). Kimi/Moonshot balance is
+    flagged with `changed` vs the previous check so the skill only shows it
+    when it has moved.
     """
-    from jobs.balance_monitor import _get_claude_data, _get_moonshot_data, _get_grok_data, _get_max_usage
+    from jobs.balance_monitor import _get_claude_data, _get_moonshot_data, _get_max_usage
     from domains.api_usage.services.gcp_monitoring import get_gcp_cost_summary
 
     try:
-        claude_data, moonshot_data, grok_data, max_data, gcp_data = await asyncio.gather(
+        claude_data, moonshot_data, max_data, gcp_data = await asyncio.gather(
             _get_claude_data(),
             _get_moonshot_data(),
-            _get_grok_data(),
             _get_max_usage(),
             get_gcp_cost_summary(),
             return_exceptions=True
         )
 
+        moonshot = moonshot_data if not isinstance(moonshot_data, Exception) else {"error": str(moonshot_data)}
+
+        # Kimi change detection vs last check (state survives restarts)
+        state_path = Path(__file__).parent.parent.parent / "data" / "balance_state.json"
+        try:
+            prev = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+        except Exception:
+            prev = {}
+        current_kimi = moonshot.get("balance") if isinstance(moonshot, dict) else None
+        prev_kimi = prev.get("kimi_balance")
+        if isinstance(moonshot, dict) and "error" not in moonshot:
+            moonshot["previous_balance"] = prev_kimi
+            moonshot["changed"] = (
+                prev_kimi is None
+                or current_kimi is None
+                or round(float(current_kimi), 2) != round(float(prev_kimi), 2)
+            )
+            try:
+                state_path.write_text(
+                    json.dumps({**prev, "kimi_balance": current_kimi}), encoding="utf-8"
+                )
+            except Exception as e:
+                logger.debug(f"Balance state write failed: {e}")
+
         return {
             "claude": claude_data if not isinstance(claude_data, Exception) else {"error": str(claude_data)},
-            "moonshot": moonshot_data if not isinstance(moonshot_data, Exception) else {"error": str(moonshot_data)},
-            "grok": grok_data if not isinstance(grok_data, Exception) else {"error": str(grok_data)},
+            "moonshot": moonshot,
             "max": max_data if not isinstance(max_data, Exception) else {"error": str(max_data)},
             "gcp": gcp_data if not isinstance(gcp_data, Exception) else {"error": str(gcp_data)},
             "threshold": 5.00,
@@ -2487,26 +2530,42 @@ async def get_hb_dashboard_data() -> dict[str, Any]:
 
 
 async def get_hb_pick_list_data() -> dict[str, Any]:
-    """Fetch Amazon and eBay picking lists."""
+    """Fetch Amazon, eBay and Shopify picking lists."""
     try:
         results = await asyncio.gather(
             _hb_request("/api/picking-list/amazon", params={"format": "json"}),
             _hb_request("/api/picking-list/ebay", params={"format": "json"}),
+            _hb_request("/api/picking-list/shopify", params={"format": "json"}),
             return_exceptions=True
         )
 
-        amazon, ebay = results
+        amazon, ebay, shopify = results
+
+        # The picking-list routes wrap their payload in {"data": {...}} — unwrap so
+        # consumers see the documented structure (items, unmatchedItems, totalItems).
+        def _unwrap(result):
+            if isinstance(result, Exception):
+                return {"error": str(result)}
+            if isinstance(result, dict) and isinstance(result.get("data"), dict):
+                return result["data"]
+            return result
+
+        amazon = _unwrap(amazon)
+        ebay = _unwrap(ebay)
+        shopify = _unwrap(shopify)
 
         data = {
-            "amazon": amazon if not isinstance(amazon, Exception) else {"error": str(amazon)},
-            "ebay": ebay if not isinstance(ebay, Exception) else {"error": str(ebay)},
+            "amazon": amazon,
+            "ebay": ebay,
+            "shopify": shopify,
             "fetch_time": datetime.now(UK_TZ).strftime("%Y-%m-%d %H:%M")
         }
 
         # Count items
-        amazon_count = len(amazon.get("items", [])) if isinstance(amazon, dict) and "items" in amazon else 0
-        ebay_count = len(ebay.get("items", [])) if isinstance(ebay, dict) and "items" in ebay else 0
-        logger.info(f"HB pick list fetch: {amazon_count} Amazon, {ebay_count} eBay items")
+        amazon_count = len(amazon.get("items", [])) if isinstance(amazon, dict) else 0
+        ebay_count = len(ebay.get("items", [])) if isinstance(ebay, dict) else 0
+        shopify_count = len(shopify.get("items", [])) if isinstance(shopify, dict) else 0
+        logger.info(f"HB pick list fetch: {amazon_count} Amazon, {ebay_count} eBay, {shopify_count} Shopify items")
 
         return data
 
@@ -2693,9 +2752,10 @@ async def get_hb_full_sync_and_print_data() -> dict[str, Any]:
         "sync": {"status": "pending", "data": {}},
         "pick_lists": {
             "amazon": {"status": "pending", "items": 0, "orders": 0, "pdf_path": None},
-            "ebay": {"status": "pending", "items": 0, "orders": 0, "pdf_path": None}
+            "ebay": {"status": "pending", "items": 0, "orders": 0, "pdf_path": None},
+            "shopify": {"status": "pending", "items": 0, "orders": 0, "pdf_path": None}
         },
-        "print_status": {"amazon": None, "ebay": None},
+        "print_status": {"amazon": None, "ebay": None, "shopify": None},
         "files_to_attach": [],  # List of (filepath, filename) tuples for Discord
         "errors": [],
         "fetch_time": datetime.now(UK_TZ).strftime("%Y-%m-%d %H:%M")
@@ -2721,9 +2781,10 @@ async def get_hb_full_sync_and_print_data() -> dict[str, Any]:
 
     # Step 2: Get pick list data (JSON for counts)
     logger.info("HB Full Sync: Fetching pick list data...")
-    amazon_data, ebay_data = await asyncio.gather(
+    amazon_data, ebay_data, shopify_data = await asyncio.gather(
         _hb_request("/api/picking-list/amazon", params={"format": "json"}),
         _hb_request("/api/picking-list/ebay", params={"format": "json"}),
+        _hb_request("/api/picking-list/shopify", params={"format": "json"}),
         return_exceptions=True
     )
 
@@ -2755,6 +2816,20 @@ async def get_hb_full_sync_and_print_data() -> dict[str, Any]:
         result["pick_lists"]["ebay"]["orders"] = len(set(i.get("order_id") for i in items if i.get("order_id")))
         result["pick_lists"]["ebay"]["data"] = ebay_data.get("data", {})
 
+    # Process Shopify pick list
+    if isinstance(shopify_data, Exception):
+        result["pick_lists"]["shopify"]["status"] = "error"
+        result["errors"].append(f"Shopify pick list error: {shopify_data}")
+    elif "error" in shopify_data:
+        result["pick_lists"]["shopify"]["status"] = "error"
+        result["errors"].append(f"Shopify API error: {shopify_data.get('error')}")
+    else:
+        items = shopify_data.get("data", {}).get("items", [])
+        result["pick_lists"]["shopify"]["status"] = "success"
+        result["pick_lists"]["shopify"]["items"] = len(items)
+        result["pick_lists"]["shopify"]["orders"] = len(set(i.get("orderId") for i in items if i.get("orderId")))
+        result["pick_lists"]["shopify"]["data"] = shopify_data.get("data", {})
+
     # Step 3: Download PDFs if items exist
     temp_dir = Path(tempfile.gettempdir()) / "peterbot_picklists"
     temp_dir.mkdir(exist_ok=True)
@@ -2775,18 +2850,29 @@ async def get_hb_full_sync_and_print_data() -> dict[str, Any]:
             result["files_to_attach"].append((str(ebay_pdf), f"ebay_picklist_{datetime.now(UK_TZ).strftime('%Y%m%d')}.pdf"))
             logger.info(f"HB Full Sync: eBay PDF downloaded to {ebay_pdf}")
 
+    # Download Shopify PDF
+    if result["pick_lists"]["shopify"]["items"] > 0:
+        shopify_pdf = await _download_pick_list_pdf("shopify", temp_dir)
+        if shopify_pdf:
+            result["pick_lists"]["shopify"]["pdf_path"] = str(shopify_pdf)
+            result["files_to_attach"].append((str(shopify_pdf), f"shopify_picklist_{datetime.now(UK_TZ).strftime('%Y%m%d')}.pdf"))
+            logger.info(f"HB Full Sync: Shopify PDF downloaded to {shopify_pdf}")
+
     # Step 4: Add interactive pick list URLs (printing disabled)
     app_url = os.getenv("HADLEY_BRICKS_URL", "https://hadley-bricks-inventory-management.vercel.app")
     if result["pick_lists"]["amazon"]["items"] > 0:
         result["pick_lists"]["amazon"]["pick_url"] = f"{app_url}/pick/amazon"
     if result["pick_lists"]["ebay"]["items"] > 0:
         result["pick_lists"]["ebay"]["pick_url"] = f"{app_url}/pick/ebay"
+    if result["pick_lists"]["shopify"]["items"] > 0:
+        result["pick_lists"]["shopify"]["pick_url"] = f"{app_url}/pick/shopify"
     result["print_status"]["skipped"] = "Printing disabled — use interactive pick lists"
 
     # Step 5: Send pick list summary to Chris via WhatsApp
     amazon_items = result["pick_lists"]["amazon"]["items"]
     ebay_items = result["pick_lists"]["ebay"]["items"]
-    if amazon_items > 0 or ebay_items > 0:
+    shopify_items = result["pick_lists"]["shopify"]["items"]
+    if amazon_items > 0 or ebay_items > 0 or shopify_items > 0:
         try:
             from integrations.whatsapp import send_to_chris
             lines = ["*Pick List*"]
@@ -2814,11 +2900,23 @@ async def get_hb_full_sync_and_print_data() -> dict[str, Any]:
                 if ebay_items > 15:
                     lines.append(f"  ... +{ebay_items - 15} more")
                 lines.append(f"  {app_url}/pick/ebay")
+            if shopify_items > 0:
+                shopify_orders = result["pick_lists"]["shopify"].get("orders", 0)
+                lines.append(f"Shopify: {shopify_items} items ({shopify_orders} orders)")
+                shopify_pick_data = result["pick_lists"]["shopify"].get("data", {})
+                for item in shopify_pick_data.get("items", [])[:15]:
+                    loc = item.get("location") or "?"
+                    set_no = item.get("setNo") or item.get("sku") or "-"
+                    qty = item.get("quantity", 1)
+                    lines.append(f"  {set_no} x{qty} → {loc}")
+                if shopify_items > 15:
+                    lines.append(f"  ... +{shopify_items - 15} more")
+                lines.append(f"  {app_url}/pick/shopify")
             await send_to_chris("\n".join(lines))
         except Exception as e:
             logger.warning(f"WhatsApp pick list send failed: {e}")
 
-    logger.info(f"HB Full Sync complete: {amazon_items} Amazon, {ebay_items} eBay items")
+    logger.info(f"HB Full Sync complete: {amazon_items} Amazon, {ebay_items} eBay, {shopify_items} Shopify items")
     return result
 
 
@@ -3914,68 +4012,6 @@ async def get_paper_builder_data() -> dict[str, Any]:
         return {"error": str(e)}
 
 
-async def get_practice_allocate_data() -> dict[str, Any]:
-    """Allocate 11+ Mate practice papers for the week for both students.
-
-    Calls the allocate-practice Edge Function for each student for each day
-    of the coming week (Wed-Tue cycle, starting tomorrow).
-    """
-    import httpx
-
-    base_url = "https://modjoikyuhqzouxvieua.supabase.co/functions/v1/allocate-practice"
-    service_key = "psk_11plusmate_tutor_2026"
-    family_code = "HADLEY"
-    anon_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1vZGpvaWt5dWhxem91eHZpZXVhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYxNDE3MjksImV4cCI6MjA4MTcxNzcyOX0.EWGr0LOwFKFw3krrzZQZP_Gcew13s1Z9H3LxB0-JmPA"
-
-    students = [
-        {"id": "a5677d2f-9614-4504-94a2-4dae933af2c1", "name": "Emmie"},
-        {"id": "2d204872-bfaa-4577-bd16-c07863b52cd1", "name": "Max"},
-    ]
-
-    now = datetime.now(UK_TZ)
-    results = {}
-
-    try:
-        async with httpx.AsyncClient() as client:
-            for student in students:
-                student_results = []
-                # Allocate for the next 7 days (tomorrow through 7 days out)
-                for day_offset in range(1, 8):
-                    target_date = (now + timedelta(days=day_offset)).strftime("%Y-%m-%d")
-                    params = {
-                        "service_key": service_key,
-                        "family_code": family_code,
-                        "student_id": student["id"],
-                        "date_override": target_date,
-                    }
-                    resp = await client.get(
-                        base_url,
-                        params=params,
-                        headers={"Authorization": f"Bearer {anon_key}"},
-                        timeout=15,
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        student_results.append({
-                            "date": target_date,
-                            "day_name": data.get("day_name", ""),
-                            "allocations": data.get("allocations", []),
-                        })
-                    else:
-                        student_results.append({
-                            "date": target_date,
-                            "error": f"HTTP {resp.status_code}: {resp.text[:100]}",
-                        })
-
-                results[student["name"]] = student_results
-
-        logger.info(f"Practice allocation: allocated for {len(students)} students, 7 days each")
-        return {"students": results, "week_start": (now + timedelta(days=1)).strftime("%Y-%m-%d")}
-
-    except Exception as e:
-        logger.error(f"Practice allocation fetch error: {e}")
-        return {"error": str(e), "students": {}}
-
 
 async def get_system_health_data() -> dict[str, Any]:
     """Fetch unified job health data from Hadley API.
@@ -4605,7 +4641,14 @@ async def get_cost_digest_data() -> dict[str, Any]:
 
 # Map skill names to their data fetchers
 # Skills not in this dict use web search (news, etc.)
+def get_newsletter_data_fetcher():
+    """Lazy import to keep newsletter sources isolated from this module."""
+    from domains.peterbot.newsletter_sources import get_newsletter_data
+    return get_newsletter_data()
+
+
 SKILL_DATA_FETCHERS = {
+    "newsletter": get_newsletter_data_fetcher,
     "nutrition-summary": get_nutrition_data,
     "hydration": get_hydration_data,
     "health-digest": get_health_digest_data,
@@ -4686,7 +4729,6 @@ SKILL_DATA_FETCHERS = {
     # 11+ Mate
     "tutor-email-parser": get_tutor_email_data,
     "paper-builder": get_paper_builder_data,
-    "practice-allocate": get_practice_allocate_data,
     # System health monitoring
     "system-health": get_system_health_data,
     # Pocket money weekly

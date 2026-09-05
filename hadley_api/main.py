@@ -95,17 +95,60 @@ async def restart_service(service_name: str):
     to have admin privileges (NSSM services run as SYSTEM).
     """
     import subprocess as _sp
+    import shutil as _shutil
 
-    _ALLOWED_SERVICES = {"DiscordBot", "HadleyAPI", "PeterDashboard"}
+    _ALLOWED_SERVICES = {"DiscordBot", "HadleyAPI", "PeterDashboard", "HadleyBricks"}
     if service_name not in _ALLOWED_SERVICES:
         return JSONResponse(
             status_code=403,
             content={"error": f"Service '{service_name}' not in allowed list: {_ALLOWED_SERVICES}"},
         )
 
+    # LocalSystem's PATH has no nssm — resolve it explicitly so failures are
+    # diagnosable. WinGet installed nssm per-user under %LOCALAPPDATA%, so
+    # which() succeeds in an interactive shell but returns None under the
+    # service; the WinGet path below is the one that actually resolves there.
+    # Set NSSM_PATH to override without a code change (e.g. after a WinGet
+    # upgrade bumps the version folder in that path).
+    _nssm = (
+        os.environ.get("NSSM_PATH")
+        or _shutil.which("nssm")
+        or r"C:\Users\Chris Hadley\AppData\Local\Microsoft\WinGet\Packages\NSSM.NSSM_Microsoft.Winget.Source_8wekyb3d8bbwe\nssm-2.24-101-g897c7ad\win64\nssm.exe"
+    )
+    if not os.path.exists(_nssm):
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"nssm not found at '{_nssm}' — set NSSM_PATH to its location"},
+        )
+
     try:
+        if service_name == "HadleyAPI":
+            # Self-restart: stopping this service kills our process tree, which would
+            # kill a synchronous nssm child mid-restart and leave the service stopped.
+            # Delegate to a one-shot SYSTEM scheduled task that runs outside our tree.
+            _task = "HadleyAPI-SelfRestart"
+            _sp.run(
+                ["schtasks", "/create", "/f", "/tn", _task, "/tr", f'"{_nssm}" restart HadleyAPI',
+                 "/sc", "once", "/st", "00:00", "/ru", "SYSTEM"],
+                capture_output=True, text=True, timeout=15,
+            )
+            result = _sp.run(
+                ["schtasks", "/run", "/tn", _task],
+                capture_output=True, text=True, timeout=15,
+            )
+            _logging.getLogger("hadley_api.services").info(
+                f"Self-restart scheduled via task '{_task}': exit={result.returncode}"
+            )
+            return {
+                "service": service_name,
+                "status": "restart_scheduled" if result.returncode == 0 else "failed",
+                "exit_code": result.returncode,
+                "stdout": result.stdout.strip(),
+                "stderr": result.stderr.strip(),
+            }
+
         result = _sp.run(
-            ["nssm", "restart", service_name],
+            [_nssm, "restart", service_name],
             capture_output=True, text=True, timeout=30,
         )
         _logging.getLogger("hadley_api.services").info(
@@ -9306,6 +9349,23 @@ async def hb_proxy(request: Request, path: str):
     managing auth himself. Supports all HTTP methods.
     """
     import httpx
+
+    # Alias common endpoint guesses to the real picking-list route.
+    # Peter has guessed /hb/pick-list/amazon etc. and fallen back to /hb/orders
+    # (which has no storage locations) — 2026-07-10 pick-list incident.
+    _pick_aliases = {"pick-list", "pick-lists", "picklist", "picklists", "pick"}
+    segments = path.split("/", 1)
+    if segments[0] in _pick_aliases:
+        path = "picking-list" + (f"/{segments[1]}" if len(segments) > 1 else "")
+        segments = path.split("/", 1)
+
+    # A bare /hb/picking-list has no platform — return a hint instead of Next's 404
+    if segments[0] == "picking-list" and (len(segments) == 1 or segments[1].strip("/") == ""):
+        return Response(
+            content='{"error": "Specify a platform: use /hb/picking-list/amazon or /hb/picking-list/ebay (add ?format=json)"}',
+            status_code=404,
+            media_type="application/json",
+        )
 
     # Platform sync: the real route (/api/cron/full-sync) needs CRON_SECRET and
     # runs 100-285s, past this proxy's 30s timeout — so /hb/workflow/sync-all

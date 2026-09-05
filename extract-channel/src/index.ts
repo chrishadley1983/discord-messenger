@@ -183,10 +183,21 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
       });
     });
 
+    // The reply contract rides IN the message, not only in the MCP server
+    // `instructions` field — newer Claude Code builds don't reliably surface
+    // server instructions, and a session that answers in plain text instead of
+    // calling reply leaves the request pending until timeout (observed
+    // 2026-09-01: every extract fell to the metered CLI fallback).
+    const framedPrompt =
+      `${prompt}\n\n` +
+      `[extract-channel: return your result by calling the reply tool with ` +
+      `request_id="${requestId}" and the result as text. Do not answer in ` +
+      `plain text — only the reply tool reaches the caller.]`;
+
     await mcp.notification({
       method: "notifications/claude/channel",
       params: {
-        content: prompt,
+        content: framedPrompt,
         meta: {
           request_id: requestId,
         },

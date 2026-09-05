@@ -18,8 +18,9 @@ Run `!reload-schedule` after editing to apply changes.
 | Life Admin Email Scan | life-admin-email-scan | 03:30 UK | #peter-heartbeat!quiet | yes |
 | Life Admin Dashboard | life-admin-dashboard | Sunday 09:15 UK | #peterbot | yes |
 | Morning Digest | morning-digest | 07:00 UK | #peterbot | yes |
-| Morning Briefing | morning-briefing | 07:01 UK | #ai-briefings | yes |
-| Morning News | news | 07:02 UK | #news | yes |
+| Daily Newsletter | newsletter | 07:01 UK | #ai-news | yes |
+| Morning Briefing | morning-briefing | 07:01 UK | #ai-briefings | no |
+| Morning News | news | 07:02 UK | #news | no |
 | Kids Daily Briefing | kids-daily | 07:25 UK | #peterbot+WhatsApp:group | yes |
 | Morning Cooking Reminder | cooking-reminder | 07:30 UK | #food-log | yes |
 | Price Scanner | price-scanner | Mon 06:00 UK | #food-log | yes |
@@ -29,7 +30,7 @@ Run `!reload-schedule` after editing to apply changes.
 | School Run (Thu) | school-run | Thu 07:45 UK | #traffic-reports+WhatsApp:group | yes |
 | GitHub Activity (Weekly) | github-weekly | Sunday 18:05 UK | #peterbot | yes |
 | Kids Weekly (Next Week) | kids-weekly | Sunday 18:10 UK | #peterbot+WhatsApp:group | yes |
-| YouTube Digest | youtube-digest | 09:05 UK | #youtube | yes |
+| YouTube Digest | youtube-digest | 09:05 UK | #youtube | no |
 | Hydration Check-in | hydration | 07:02,08:02,09:02,10:02,11:02,12:02,13:02,14:02,15:02,16:02,17:02,18:02,19:02,20:02,21:02 UK | #food-log+WhatsApp:chris | yes |
 | School Pickup (Mon,Tue,Thu,Fri) | school-pickup | Mon,Tue,Thu,Fri 14:55 UK | #traffic-reports+WhatsApp:group | yes |
 | School Pickup (Wed) | school-pickup | Wed 16:50 UK | #traffic-reports+WhatsApp:group | yes |
@@ -61,7 +62,6 @@ Run `!reload-schedule` after editing to apply changes.
 | Security Monitor | security-monitor | 06:00,22:00 UK | #alerts | yes |
 | Tutor Email Parser | tutor-email-parser | Tue 19:00 UK | #peterbot | yes |
 | Paper Builder | paper-builder | Tue 19:30 UK | #peterbot | yes |
-| Practice Allocate | practice-allocate | Tue 21:00 UK | #peterbot | yes |
 | Spelling Test Reminder | spelling-test-generator | Fri 19:00 UK | #peterbot+WhatsApp:chris | yes |
 | Commitment Nudge | commitment-nudge | 19:00 UK | WhatsApp:chris | yes |
 | Pocket Money Weekly | pocket-money-weekly | Sunday 09:32 UK | #peterbot | yes |

@@ -85,7 +85,9 @@ Trajectory: −0.65 kg/wk ✅ (target −0.77)
 Calories: 6/7 days ✅ (avg 1,920 / 1,950)
 Protein: 5/7 days (avg 162 / 170g)
 Steps: 5/7 days (avg 12,800 / 12,000) ✅
-Strength: 5/5 sessions ✅✅✅✅✅
+Strength: 3/3 sessions ✅✅✅ (next: lower)
+Cardio: 5/5 easy · 1/1 hard (avg 128 bpm)
+Load up: lat pulldown 33→35.5 kg | Stalled: —
 Mobility: 6/7 days
 
 ---
@@ -111,6 +113,7 @@ Grade scale: A+ (≥95), A (≥85), A− (≥80), B+ (≥75), B (≥70), C (≥6
 
 ## Rules
 
+- **Training block**: `training` (null for legacy splits) carries `strength.next`, `cardio.{easy_done,easy_target,hard_done,hard_target,avg_hr,garmin_matched}`, `progressions_this_week`, `stalled`. Grade strength on `strength.sessions_done / strength.target`; mention cardio adherence and any stall in the summary. Never invent loads.
 - **Reference the programme targets** from the payload, not static numbers.
 - **Frame protein by the goal phase**: read the `goal` block — in a fat-loss
   phase protein is a *floor* (weight loss leads); in a muscle-build phase it's

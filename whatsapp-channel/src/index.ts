@@ -43,6 +43,30 @@ const HADLEY_AUTH_KEY = process.env.HADLEY_AUTH_KEY || "";
 const lastUserMessage = new Map<string, string>();
 const messageStartTime = new Map<string, number>();
 
+// sender_number (digits only) -> reply_to jid of their most recent inbound.
+// Used to redirect replies back to the group when the model passes the
+// sender's personal number for a message that arrived via a group chat.
+const lastInboundJid = new Map<string, string>();
+
+function digitsOnly(s: string): string {
+  return (s || "").replace(/@.*$/, "").replace(/\D/g, "");
+}
+
+// Resolve the model-supplied phone to the correct delivery target.
+// An explicit "@s.whatsapp.net" suffix means the model deliberately wants a DM
+// and is never redirected. A bare number whose sender last messaged from a
+// group gets redirected to that group jid.
+function resolveReplyTarget(phone: string): { target: string; redirected: boolean } {
+  if (!phone || phone.includes("@g.us") || phone.includes("@s.whatsapp.net")) {
+    return { target: phone, redirected: false };
+  }
+  const lastJid = lastInboundJid.get(digitsOnly(phone));
+  if (lastJid && lastJid.endsWith("@g.us")) {
+    return { target: lastJid, redirected: true };
+  }
+  return { target: phone, redirected: false };
+}
+
 // LRU cap so per-sender state maps don't grow unbounded across long sessions
 const STATE_MAP_MAX = 1000;
 function trimState<K, V>(m: Map<K, V>) {
@@ -83,6 +107,11 @@ what you need, your FINAL action is always a \`reply\` call, never a plain-text 
 Before ending your turn, check: "Did I deliver my answer via \`reply\`?" If it's sitting in
 plain text instead, you have NOT answered — call \`reply\` now.
 For voice messages (is_voice="true"), ALSO call voice_reply to send an audio response after the text reply.
+
+REPLY TARGET — pass the \`phone\` attribute from the channel tag EXACTLY as given.
+For group messages (is_group="true") the phone attribute is the group jid ending in
+"@g.us" — reply to THAT, never to sender_number, or your answer lands in the sender's
+private chat instead of the group everyone is watching.
 
 You are Peter, the Hadley family assistant. WhatsApp formatting rules:
 - Keep replies short (1-3 sentences for casual, longer for detailed requests)
@@ -133,7 +162,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           phone: {
             type: "string",
-            description: "Phone number or contact name (from the phone attribute in the channel tag)",
+            description: "The phone attribute from the channel tag, passed EXACTLY as given. For group messages this is the group jid ending in @g.us — use that, not sender_number. Only pass number@s.whatsapp.net to deliberately DM someone instead of replying in their group.",
           },
           text: {
             type: "string",
@@ -152,7 +181,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           phone: {
             type: "string",
-            description: "Phone number or contact name",
+            description: "The phone attribute from the channel tag, passed EXACTLY as given (group jid ending in @g.us for group messages).",
           },
           text: {
             type: "string",
@@ -185,6 +214,12 @@ async function handleReply(phone: string, text: string) {
   if (!text || !text.trim()) {
     return { content: [{ type: "text" as const, text: "empty message, skipped" }] };
   }
+
+  const { target, redirected } = resolveReplyTarget(phone);
+  if (redirected) {
+    log(`Reply target redirected: ${phone} -> ${target} (sender's last inbound was from this group)`);
+  }
+  phone = target;
 
   try {
     const url = `${HADLEY_API}/whatsapp/send?to=${encodeURIComponent(phone)}&message=${encodeURIComponent(text.trim())}`;
@@ -242,7 +277,14 @@ async function handleReply(phone: string, text: string) {
     signal: AbortSignal.timeout(5000),
   }).catch((e) => log(`Cost log failed (non-blocking): ${e}`));
 
-  return { content: [{ type: "text" as const, text: `Sent text to ${phone}` }] };
+  return {
+    content: [{
+      type: "text" as const,
+      text: redirected
+        ? `Sent text to ${phone} (redirected to the group the sender last messaged from; pass number@s.whatsapp.net to deliberately DM instead)`
+        : `Sent text to ${phone}`,
+    }],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +295,12 @@ async function handleVoiceReply(phone: string, text: string) {
   if (!text || !text.trim()) {
     return { content: [{ type: "text" as const, text: "empty voice, skipped" }] };
   }
+
+  const { target: voiceTarget, redirected: voiceRedirected } = resolveReplyTarget(phone);
+  if (voiceRedirected) {
+    log(`Voice reply target redirected: ${phone} -> ${voiceTarget}`);
+  }
+  phone = voiceTarget;
 
   try {
     const url = `${HADLEY_API}/whatsapp/send-voice?to=${encodeURIComponent(phone)}&message=${encodeURIComponent(text.trim())}`;
@@ -332,8 +380,10 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
     // Track last user message for Second Brain capture
     lastUserMessage.set(reply_to, text);
     messageStartTime.set(reply_to, Date.now());
+    lastInboundJid.set(digitsOnly(sender_number), reply_to);
     trimState(lastUserMessage);
     trimState(messageStartTime);
+    trimState(lastInboundJid);
 
     // Pre-build full context via Hadley API for parity with router_v2:
     // Japan trip context, pending-actions block, Second Brain surfacing,

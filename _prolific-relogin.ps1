@@ -1,4 +1,18 @@
 $ErrorActionPreference = 'Stop'
+
+# Stopping/starting the DiscordBot service needs Administrator. If we're not
+# elevated, relaunch this script elevated (UAC prompt) and hand off to it.
+$isAdmin = ([Security.Principal.WindowsPrincipal] `
+    [Security.Principal.WindowsIdentity]::GetCurrent() `
+    ).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "Not elevated - relaunching as Administrator (approve the UAC prompt)..." -ForegroundColor Yellow
+    Start-Process powershell.exe -Verb RunAs -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`""
+    )
+    exit
+}
+
 Write-Host "=== Prolific re-login helper ===" -ForegroundColor Cyan
 Write-Host ""
 

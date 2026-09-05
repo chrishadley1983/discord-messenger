@@ -22,10 +22,10 @@ from discord.ext import commands
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from claude_client import ClaudeClient
+from cli_chat import chat_with_history_via_cli
 from registry import registry
 from logger import logger
-from config import DISCORD_TOKEN, ANTHROPIC_API_KEY, CLAUDE_MODEL
+from config import DISCORD_TOKEN
 
 # Import domains
 # NutritionDomain disabled - #food-log now routes through Peterbot with Hadley API
@@ -77,11 +77,8 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-# Initialize Claude client - using config vars
-claude = ClaudeClient(
-    api_key=ANTHROPIC_API_KEY,
-    model=CLAUDE_MODEL
-)
+# Domain chat goes through the Hadley API /claude/extract CLI path (OAuth) —
+# the direct-API ClaudeClient died with the revoked DISCORD_BOT_CLAUDE_KEY.
 
 # Initialize scheduler
 scheduler = AsyncIOScheduler(job_defaults={"misfire_grace_time": 60})
@@ -693,6 +690,46 @@ async def on_ready():
         replace_existing=True,
     )
     logger.info("Channel cost tail registered (every 5 min)")
+
+    # Fitness programme auto-recalibrate — Monday 08:05 UK, before the 08:15
+    # cut-kickoff post and the 08:20 dashboard rebuild, so both report freshly
+    # persisted targets. Recomputes TDEE/calories/protein from the current
+    # trend weight AND syncs the accountability goal rows (they used to drift
+    # for months). Quiet infra job, no Discord output.
+    from domains.fitness import service as _fit_service
+    from domains.fitness.trend import compute_trend as _compute_trend
+
+    async def _fitness_recalibrate_job():
+        from datetime import date as _date
+        programme = await _fit_service.get_active_programme()
+        if not programme:
+            return
+        hist = await _fit_service.fetch_weight_history(30)
+        trend = _compute_trend(hist, programme_start=_date.fromisoformat(programme["start_date"]))
+        current = trend.trend_7d or trend.latest_raw
+        if not current:
+            logger.info("Fitness recalibrate skipped: no weight readings yet")
+            return
+        steps = await _fit_service.fetch_steps_history(7)
+        avg = (sum(p["value"] for p in steps) / len(steps)) if steps else programme["daily_steps_target"]
+        res = await _fit_service.recalibrate_programme(
+            programme, current, max(avg, programme["daily_steps_target"])
+        )
+        logger.info(
+            f"Fitness recalibrated: {res['old']['daily_calorie_target']}→"
+            f"{res['new']['daily_calorie_target']} kcal, "
+            f"goals synced: {len(res.get('goals_synced') or [])}"
+        )
+
+    _fitness_recalibrate_job = _tracked_job("fitness_recalibrate", _fitness_recalibrate_job)
+    scheduler.add_job(
+        _fitness_recalibrate_job,
+        "cron", day_of_week="mon", hour=8, minute=5, timezone="Europe/London",
+        id="fitness_recalibrate",
+        max_instances=1,
+        replace_existing=True,
+    )
+    logger.info("Fitness auto-recalibrate registered (Mon 08:05 UK)")
 
     # Reset-cut dashboard — rebuild the surge static site daily at 08:20 UK
     # (after the 07:55 health digest + Mon 08:15 cut-kickoff) so the snapshot,
@@ -1417,12 +1454,14 @@ async def on_message(message):
     # Get response from Claude
     async with message.channel.typing():
         try:
-            response = await claude.chat_with_history(
+            response = await chat_with_history_via_cli(
                 conversation=conversation_history,
                 system=domain.system_prompt,
                 tools=domain.get_tool_definitions(),
                 tool_handlers=tool_handlers
             )
+            if response is None:
+                raise RuntimeError("cli chat path returned no response")
 
             # Split long messages (Discord has 2000 char limit)
             if len(response) > 2000:
