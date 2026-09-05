@@ -251,3 +251,17 @@ class TestWeekView:
         strength_days = [s.day_of_week for s in week if s.session_type in plan["rotation"]]
         assert strength_days == [0, 2, 4]
         assert [week[d].session_type for d in strength_days] == ["upper", "lower", "full_body"]
+
+    def test_fresh_week_continues_rotation_and_rest_gap_from_last_week(self):
+        plan = tp.default_plan()
+        ws = date(2026, 9, 7)  # Mon after a Saturday upper session
+        recent = [{"session_type": "upper", "session_date": "2026-09-05"}]
+        week = tp.build_week_sessions(plan, ws, [], today=ws, recent_sessions=recent)
+        strength = [(s.day_of_week, s.session_type) for s in week if s.session_type in plan["rotation"]]
+        assert strength == [(0, "lower"), (2, "full_body"), (4, "upper")]
+        # Sunday-trained case: Monday must be a rest/cardio day
+        recent = [{"session_type": "upper", "session_date": "2026-09-06"}]
+        week = tp.build_week_sessions(plan, ws, [], today=ws, recent_sessions=recent)
+        strength = [(s.day_of_week, s.session_type) for s in week if s.session_type in plan["rotation"]]
+        assert strength == [(1, "lower"), (3, "full_body"), (5, "upper")]
+

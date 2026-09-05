@@ -1707,8 +1707,9 @@ async def week_sessions_for(programme: dict, week_no: int, today: date | None = 
     today = today or _today()
     plan, _ = await get_plan_or_default()
     ws = tp.week_start_of(today)
-    logged = await get_sessions_in_range(ws, ws + timedelta(days=6))
-    return tp.build_week_sessions(plan, ws, logged, today)
+    recent = await get_sessions_in_range(ws - timedelta(days=21), ws + timedelta(days=6))
+    logged = [s for s in recent if str(s["session_date"]) >= ws.isoformat()]
+    return tp.build_week_sessions(plan, ws, logged, today, recent_sessions=recent)
 
 
 async def next_session_bundle(session_type: str | None = None) -> dict:

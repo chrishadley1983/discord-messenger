@@ -617,6 +617,7 @@ def build_week_sessions(
     week_start: date,
     logged_this_week: list[dict],
     today: date,
+    recent_sessions: list[dict] | None = None,
 ) -> list[PrescribedSession]:
     """Project the plan onto Mon..Sun for the dashboard / /fitness/today.
 
@@ -639,10 +640,18 @@ def build_week_sessions(
             by_dow[dow] = _plan_session(plan, s["session_type"], dow, done=True)
 
     remaining = max(0, target_n - len(by_dow))
-    nxt = next_session_type(plan, list(reversed(logged)))
+    # Rotation continues from the most recent strength session, even if it was
+    # last week (a fresh Monday after a Saturday upper day starts at lower).
+    rotation_src = logged if logged else strength_sessions_only(recent_sessions or [])
+    nxt = next_session_type(plan, sorted(rotation_src, key=lambda s: str(s["session_date"]), reverse=True))
     start_dow = max(0, (today - week_start).days)
     dow = start_dow
     last_strength = max(by_dow) if by_dow else None
+    if last_strength is None and recent_sessions:
+        prev = strength_sessions_only(recent_sessions)
+        if prev:
+            last_date = max(date.fromisoformat(str(s["session_date"])) for s in prev)
+            last_strength = (last_date - week_start).days  # negative dow = last week
     while remaining > 0 and dow <= 6:
         gap_ok = last_strength is None or (dow - last_strength) > min_gap
         if dow not in by_dow and gap_ok:
