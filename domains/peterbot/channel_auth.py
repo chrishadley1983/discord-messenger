@@ -27,8 +27,17 @@ This watchdog closes that blind spot:
      the file is fine — the cure for that is a restart so it reloads the file).
   3. Heals by copying Chris's *Windows* token — a single always-logged-in
      instance that refreshes cleanly — into WSL, then restarting the locked-out
-     sessions so they reload it. If Windows is also logged out it alerts instead
-     of copying garbage, since only a manual ``/login`` can fix that.
+     sessions so they reload it. If the Windows access token has merely
+     *expired* (valid refresh token still present — the normal overnight state,
+     since nothing on Windows runs Claude while Chris sleeps), it first forces
+     a refresh by running a cheap headless ``claude -p`` on Windows, which
+     makes the CLI mint a fresh access token and rewrite the file. Only if
+     Windows is *unrefreshable* (unreadable / no refresh token / refresh call
+     fails) does it alert, since only a manual ``/login`` can fix that — and
+     even then, when no session is actually locked out and the static token
+     still authenticates, the alert is a low-key maintenance note rather than
+     a 🚨 (the 2026-08-09 overnight storm paged Chris seven times about
+     credential files nothing was reading).
 
 bot.py registers :func:`heal_channel_auth` on the 1-min channel-watchdog tick.
 Run standalone for a read-only status report:  ``python -m domains.peterbot.channel_auth``
@@ -92,6 +101,12 @@ ALERT_THROTTLE_SECONDS = 1800
 # morning via the refresh race (2026-07-23).
 STATIC_TOKEN_CHECK_SECONDS = 1800
 STATIC_TOKEN_ALERT_SECONDS = 6 * 3600
+# Active Windows-token refresh (a real Haiku call): don't hammer it if the
+# refresh keeps failing — one attempt per this window.
+WINDOWS_REFRESH_COOLDOWN_SECONDS = 600
+# The benign stale-creds condition (files expired, channels fine on the static
+# token) is a maintenance note, not an incident — alert at most every 6 h.
+STALE_CREDS_ALERT_SECONDS = 6 * 3600
 
 _WEBHOOK = os.environ.get("DISCORD_WEBHOOK_ALERTS", "")
 
@@ -99,6 +114,7 @@ _lock = threading.Lock()
 _last_restart_ts: dict[str, float] = {}
 _last_alert_ts: dict[str, float] = {}
 _last_static_probe_ts = 0.0
+_last_win_refresh_ts = 0.0
 # Cache of the last static-token live test (ts, result) — a stale 401 marker
 # can sit in a pane's tail for many ticks and each test is a real API call.
 _last_token_test: tuple[float, "bool | None"] = (0.0, None)
@@ -120,6 +136,15 @@ def _wsl(cmd: str, timeout: int = 20) -> subprocess.CompletedProcess:
         timeout=timeout,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
+
+
+def _wsl_reachable(timeout: int = 10) -> bool:
+    """True when a trivial command completes inside WSL within ``timeout``."""
+    try:
+        r = _wsl("echo ok", timeout=timeout)
+    except Exception:
+        return False
+    return r.returncode == 0 and "ok" in (r.stdout or "")
 
 
 @dataclass
@@ -252,6 +277,21 @@ def _static_token_auth_ok() -> bool | None:
     return None
 
 
+def _cached_static_token_ok() -> "bool | None":
+    """:func:`_static_token_auth_ok` behind the shared cache — each test is a
+    real API call, and a verdict from the last few minutes is plenty."""
+    global _last_token_test
+    now = time.time()
+    with _lock:
+        ts, ok = _last_token_test
+        if now - ts < TOKEN_TEST_CACHE_SECONDS:
+            return ok
+    ok = _static_token_auth_ok()
+    with _lock:
+        _last_token_test = (now, ok)
+    return ok
+
+
 def _quarantine_static_token() -> bool:
     """Rename the static-token file aside so launch.sh falls back to
     .credentials.json (which this watchdog keeps synced from Windows).
@@ -280,6 +320,83 @@ def _quarantine_static_token() -> bool:
     else:
         logger.error(
             f"channel_auth: static-token quarantine rc={r.returncode} err={r.stderr.strip()}"
+        )
+    return ok
+
+
+def _windows_claude_exe() -> str | None:
+    """Locate the Windows claude CLI. The NSSM service PATH often lacks
+    user-level bin dirs (same failure as the surge deploy incident), so fall
+    back to the native-install location."""
+    import shutil
+
+    exe = shutil.which("claude") or shutil.which("claude.exe")
+    if exe:
+        return exe
+    cand = os.path.join(os.path.expanduser("~"), ".local", "bin", "claude.exe")
+    return cand if os.path.exists(cand) else None
+
+
+def _refresh_windows_token() -> bool:
+    """Force the Windows OAuth access token to refresh. Returns success.
+
+    The Windows credentials file regularly holds an *expired* access token with
+    a perfectly valid refresh token: access tokens live 8 h, Chris stops using
+    Claude in the evening, and nothing on Windows runs it overnight — so an
+    evening-minted token dies in the small hours with no process around to
+    renew it. The CLI refreshes lazily on use, so a cheap headless Haiku call
+    makes it mint a fresh access token and rewrite ``.credentials.json``,
+    which the heal path can then sync into WSL. Without this the watchdog sat
+    blocked for 3.5 h on 2026-08-09 waiting for *something else* to refresh.
+
+    Runs on Windows (bot.py's host) with ``CLAUDE_CODE_OAUTH_TOKEN`` stripped
+    from the environment — with that var set the CLI would authenticate via
+    the static token and never touch the credentials file.
+    """
+    global _last_win_refresh_ts
+    now = time.time()
+    with _lock:
+        if now - _last_win_refresh_ts < WINDOWS_REFRESH_COOLDOWN_SECONDS:
+            return False
+        _last_win_refresh_ts = now
+
+    exe = _windows_claude_exe()
+    if not exe:
+        logger.warning("channel_auth: no Windows claude CLI found — cannot active-refresh token")
+        return False
+
+    # Strip every competing auth source so the CLI authenticates via the
+    # claude.ai login in .credentials.json — the file we're trying to refresh.
+    # With any of these set they take precedence and the file is never touched
+    # (the bot's env carries an ANTHROPIC_API_KEY that 401s the CLI outright).
+    _auth_vars = {"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
+    env = {k: v for k, v in os.environ.items() if k not in _auth_vars}
+    try:
+        import tempfile
+
+        # Neutral cwd: launched inside a project dir the CLI loads CLAUDE.md /
+        # memory / plugins and a "reply OK" turn can blow past 2 minutes.
+        r = subprocess.run(
+            [exe, "-p", "reply OK", "--model", "claude-haiku-4-5-20251001"],
+            capture_output=True,
+            text=True,
+            timeout=240,
+            env=env,
+            cwd=tempfile.gettempdir(),
+            stdin=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:
+        logger.warning(f"channel_auth: Windows token refresh call errored: {exc}")
+        return False
+
+    ok = r.returncode == 0 and bool(r.stdout.strip())
+    if ok:
+        logger.warning("channel_auth: actively refreshed the Windows OAuth token via headless claude")
+    else:
+        logger.warning(
+            f"channel_auth: Windows token refresh failed rc={r.returncode} "
+            f"out={(r.stdout + r.stderr).strip()[:200]!r}"
         )
     return ok
 
@@ -426,6 +543,22 @@ def heal_channel_auth(mark_relaunched=None) -> dict:
 
     Returns a small status dict (handy for the standalone CLI and tests).
     """
+    # If WSL itself is wedged every ``wsl`` call times out, every credential
+    # read comes back "unreadable" (= corrupt) and the tick misdiagnoses a
+    # healthy token chain as "WSL creds bad AND Windows creds bad — manual
+    # /login required" (2026-09-06 01:29–01:36, Wi-Fi roam → WSL2 hang).
+    # Recovering WSL is the WSL Watchdog scheduled task's job; skip the tick.
+    if not _wsl_reachable():
+        logger.warning(
+            "channel_auth: WSL unreachable (probe timed out) — skipping auth "
+            "tick; WSL Watchdog owns recovery"
+        )
+        return {
+            "action": "wsl-unreachable",
+            "wsl": CredsHealth(0, False, False, readable=False),
+            "locked": [],
+        }
+
     _warn_if_static_token_missing()
 
     wsl = _read_creds(WSL_CREDS)
@@ -437,7 +570,36 @@ def heal_channel_auth(mark_relaunched=None) -> dict:
 
     # Something is wrong. We can only fix it if the Windows token is itself good.
     win = _read_creds(WIN_CREDS)
+
+    # Expired-but-refreshable is the normal overnight state (8 h access token,
+    # nobody using Claude on Windows) — don't wait for something else to renew
+    # it, force the refresh ourselves and re-read.
+    if win.readable and win.has_refresh and win.expired:
+        if _refresh_windows_token():
+            win = _read_creds(WIN_CREDS)
+
     if win.corrupt:
+        # No session actually locked out + the static token (which is what the
+        # channels really authenticate with) still works → nothing is failing.
+        # Stale credential files are a maintenance note, not an incident.
+        if not locked and _static_token_present() and _cached_static_token_ok() is not False:
+            logger.warning(
+                "channel_auth: WSL+Windows credential files stale but no session "
+                "is locked out and the static token is healthy — benign, will "
+                "retry the active refresh"
+            )
+            _alert(
+                "stale-creds-benign",
+                ":warning: **Claude OAuth credential files are stale** (Windows "
+                "+ WSL access tokens expired and the automatic refresh hasn't "
+                "succeeded yet). **Channels are unaffected** — they run on the "
+                "static token and no session is locked out. I'll keep retrying; "
+                "if this persists all day, run any `claude` command on Windows "
+                "to renew.",
+                throttle=STALE_CREDS_ALERT_SECONDS,
+            )
+            return {"action": "stale-creds-benign", "wsl": wsl, "win": win, "locked": locked}
+
         _alert(
             "both-down",
             ":rotating_light: **WSL Claude auth is broken and the Windows token "
@@ -461,15 +623,7 @@ def heal_channel_auth(mark_relaunched=None) -> dict:
     # logged out, so on a confirmed-good token we skip quarantine AND restarts.
     quarantined = False
     if locked and _static_token_present():
-        global _last_token_test
-        now_test = time.time()
-        with _lock:
-            test_ts, token_ok = _last_token_test
-            cached = now_test - test_ts < TOKEN_TEST_CACHE_SECONDS
-        if not cached:
-            token_ok = _static_token_auth_ok()
-            with _lock:
-                _last_token_test = (now_test, token_ok)
+        token_ok = _cached_static_token_ok()
         if token_ok is True:
             logger.warning(
                 f"channel_auth: pane 401 markers in {locked} but the static "

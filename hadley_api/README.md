@@ -630,7 +630,7 @@ Proactive life admin obligation tracking and alerting.
 
 ### System Health (Job Monitoring)
 
-- `GET /jobs/health?hours=24` - Unified job health across DM + HB. Returns per-system stats: total, success, errors, success_rate, failures[], per_job[]. DM data from SQLite job_history.db, HB data from Supabase job_execution_history via HB API proxy.
+- `GET /jobs/health?hours=24` - Unified job health across DM + HB. Returns per-system stats: total, success, errors, success_rate, failures[], per_job[]. DM `total`/`success_rate`/`per_job` count completed runs only; in-flight runs are reported in `running` (not as failures). DM data from SQLite job_history.db, HB data from Supabase job_execution_history via HB API proxy.
 
 ### AI API-usage audit & reconciliation
 
