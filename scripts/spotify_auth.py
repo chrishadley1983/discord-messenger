@@ -9,6 +9,12 @@ Prerequisites:
   4. Run this script: python scripts/spotify_auth.py
 
 The script will open your browser for authorization, then print the refresh token.
+
+Re-auth (refresh token revoked — e.g. 29 Aug 2026 "invalid_grant: Refresh token
+revoked" killed the playback poller and nightly spotify-listening import):
+  python scripts/spotify_auth.py --write
+writes SPOTIFY_REFRESH_TOKEN straight into .env. Then restart discord_bot and
+hadley_api (POST :5000/api/restart/<service>) and re-run scripts/encrypt-env.sh.
 """
 
 import os
@@ -21,6 +27,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from spotipy.oauth2 import SpotifyOAuth
+from spotipy.cache_handler import MemoryCacheHandler
 
 SCOPES = " ".join([
     # Listening history
@@ -68,6 +75,9 @@ def main():
         redirect_uri=REDIRECT_URI,
         scope=SCOPES,
         open_browser=True,
+        # Never read a cached token: a revoked refresh token in ./.cache made
+        # spotipy try to refresh it and die before opening the browser (6 Sep 2026).
+        cache_handler=MemoryCacheHandler(),
     )
 
     print("Opening browser for Spotify authorization...")
@@ -87,11 +97,39 @@ def main():
         print(f"Token info: {token_info}")
         sys.exit(1)
 
+    if "--write" in sys.argv:
+        env_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"
+        )
+        _write_env(env_path, "SPOTIFY_REFRESH_TOKEN", refresh_token)
+        print(f"Success! SPOTIFY_REFRESH_TOKEN written to {env_path}")
+        print("Now restart discord_bot + hadley_api and re-run scripts/encrypt-env.sh.")
+        return
+
     print("Success! Add this to your .env file:")
     print()
     print(f"SPOTIFY_REFRESH_TOKEN={refresh_token}")
     print()
     print("The adapter will use this refresh token to get new access tokens automatically.")
+
+
+def _write_env(path: str, key: str, value: str) -> None:
+    """Replace (or append) ``KEY=value`` in a dotenv file, preserving the rest."""
+    lines = []
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    out, done = [], False
+    for line in lines:
+        if line.startswith(f"{key}="):
+            out.append(f"{key}={value}")
+            done = True
+        else:
+            out.append(line)
+    if not done:
+        out.append(f"{key}={value}")
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(out) + "\n")
 
 
 if __name__ == "__main__":

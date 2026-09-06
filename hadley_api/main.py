@@ -9602,6 +9602,12 @@ async def jobs_health(hours: int = 24):
                 "WHERE started_at >= ? GROUP BY status", (cutoff,)
             ).fetchall()
             status_counts = {r[0]: r[1] for r in rows}
+            # In-flight runs are not outcomes. Counting them made the
+            # system-health job see itself (status='running' while it built
+            # the report) as a phantom "failed run" — 2026-09-06 it reported
+            # "system-health — 1 failed run (empty-response)" for a run that
+            # then completed fine. Report them separately instead.
+            running = status_counts.pop("running", 0)
             total = sum(status_counts.values())
             success = status_counts.get("success", 0)
             errors = status_counts.get("error", 0)
@@ -9618,7 +9624,7 @@ async def jobs_health(hours: int = 24):
                 "SELECT job_id, "
                 "  COUNT(*) as total, "
                 "  SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) as ok "
-                "FROM job_executions WHERE started_at >= ? "
+                "FROM job_executions WHERE started_at >= ? AND status != 'running' "
                 "GROUP BY job_id ORDER BY job_id", (cutoff,)
             ).fetchall()
 
@@ -9626,6 +9632,7 @@ async def jobs_health(hours: int = 24):
             "total": total,
             "success": success,
             "errors": errors,
+            "running": running,
             "success_rate": round(success / total * 100, 1) if total > 0 else 100.0,
             "failures": [
                 {"job": f[0], "at": f[1], "error": (f[2] or "")[:200]}

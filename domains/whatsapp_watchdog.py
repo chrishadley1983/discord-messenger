@@ -46,6 +46,8 @@ POST_RESTART_WAIT_S = 25
 MAX_RESTARTS_PER_WINDOW = 2
 RESTART_WINDOW_S = 30 * 60
 ALERT_THROTTLE_S = 30 * 60
+# A disconnectionReasonCode older than this is history, not the current fault.
+RECENT_DISCONNECT_S = 15 * 60
 # `docker info` talks to the engine; when Docker Desktop is down it fails fast,
 # but a *starting* engine can hang, so give it room without stalling the timer.
 DOCKER_INFO_TIMEOUT_S = 20
@@ -106,7 +108,15 @@ def _probe_state() -> tuple[str, str | None]:
 
 
 def _fetch_disconnection_reason() -> int | None:
-    """Return disconnectionReasonCode from fetchInstances, or None on failure."""
+    """Return the *current* disconnectionReasonCode, or None.
+
+    Evolution never clears ``disconnectionReasonCode`` / ``disconnectionAt``
+    after a reconnect, so a 401 from a long-past device removal is still on
+    the record while the instance is happily ``open``. Trusting it blindly
+    during a transient drop (2026-09-06 01:27, Wi-Fi/DNS outage) raised a
+    false "device removed" alarm AND made the watchdog refuse to restart.
+    Only a reason stamped within RECENT_DISCONNECT_S counts as current.
+    """
     url = f"{EVOLUTION_URL}/instance/fetchInstances"
     headers = {"apikey": EVOLUTION_API_KEY}
     try:
@@ -114,11 +124,36 @@ def _fetch_disconnection_reason() -> int | None:
         if r.status_code != 200:
             return None
         for inst in r.json():
-            if inst.get("name") == EVOLUTION_INSTANCE:
-                return inst.get("disconnectionReasonCode")
+            if inst.get("name") != EVOLUTION_INSTANCE:
+                continue
+            code = inst.get("disconnectionReasonCode")
+            if code is None:
+                return None
+            at = _parse_iso(inst.get("disconnectionAt"))
+            if at is None or time.time() - at > RECENT_DISCONNECT_S:
+                logger.info(
+                    f"WhatsApp watchdog: ignoring stale disconnectionReasonCode "
+                    f"{code} from {inst.get('disconnectionAt')}"
+                )
+                return None
+            return code
     except (httpx.RequestError, ValueError):
         return None
     return None
+
+
+def _parse_iso(value) -> float | None:
+    """ISO-8601 (Evolution emits ``...Z``) → epoch seconds, or None."""
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except ValueError:
+        return None
 
 
 def _restart_container() -> bool:
