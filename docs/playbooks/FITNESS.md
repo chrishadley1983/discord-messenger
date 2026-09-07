@@ -199,6 +199,9 @@ dashboard-refresh/index.ts`), which queues a row in
 `dashboard_refresh_requests`; a poller in `hadley_api/fitness_routes.py`
 (every 20 s) verifies the hash against `DASHBOARD_PASSCODE` and runs the same
 rebuild+redeploy, and the page reloads when it sees a new build (~2 min total).
+Every `POST /fitness/workout`, `POST /fitness/cardio` and a real Fitbod import also
+kicks a debounced rebuild+redeploy automatically (~90 s after the last log), so
+the page catches up with the day's sessions without anyone asking.
 When Chris asks Peter directly to "refresh the dashboard", run:
 
 ```
@@ -220,6 +223,13 @@ When Chris asks "how much can I still eat?":
    prioritise protein in the remaining calories.
 
 ## Logging Workouts
+
+**One training day = one session, always.** Each gym day is logged as its own
+`fitness_workout_sessions` row with its own `session_type`; the plan carries one
+session entry per distinct day-type (`upper` machines, `upper_db` dumbbells, `lower`,
+`full_body`, ...). Never append a day's exercises onto another day's session type —
+Chris wants to be able to rebuild a daily picture of exactly what was done on each
+date (rule set 6 Sep 2026 after the dumbbell day was merged into machine upper).
 
 Skill `log-workout` -> `POST /fitness/workout` with per-set `weight_kg`, `reps`, `rir`,
 `failed`, `target_reps`. The response carries `plan_changes`, `next_time` (next-session

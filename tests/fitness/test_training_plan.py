@@ -66,6 +66,12 @@ class TestRecommendExercise:
         h = _hist(("2026-09-05", [(10, 30, None, False)] * 3))
         assert tp.recommend_exercise(PE, h, None)["action"] == "increase"
 
+    def test_fewer_sets_than_prescribed_holds(self):
+        # 2 clean sets of a 3-set prescription: volume incomplete, no load jump.
+        h = _hist(("2026-09-06", [(10, 10, None, False)] * 2))
+        rec = tp.recommend_exercise(PE, h, 2)
+        assert rec["action"] == "hold" and rec["weight_kg"] == 10 and "2 of 3 sets" in rec["reason"]
+
     def test_short_reps_without_fail_flag_holds(self):
         h = _hist(("2026-09-05", [(10, 30, 0, False), (9, 30, 0, False), (8, 30, 0, False)]))
         rec = tp.recommend_exercise(PE, h, 2.5)

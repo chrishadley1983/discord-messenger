@@ -271,6 +271,16 @@ def recommend_exercise(
                        else f"Failed a rep last time — same load, aim for a clean {sets}×{target}.")
         return out
 
+    # Fewer sets than prescribed is not a completed session, however clean the
+    # sets were (6 Sep 2026: 2×10 on the incline DB press was read as "3×10 with
+    # reps in reserve" and prescribed +2 kg). Finish the volume before loading.
+    done_sets = len(history[0].get("sets") or [])
+    if done_sets and done_sets < sets:
+        out.update(weight_kg=w, action="hold",
+                   reason=(f"Only {done_sets} of {sets} sets last time — hold {w:g} kg and complete all {sets}×{target} before adding load."
+                           if w else f"Only {done_sets} of {sets} sets last time — same load, complete all {sets}×{target} first."))
+        return out
+
     all_hit_target = last["min_reps"] is not None and last["min_reps"] >= target
     all_top_of_range = last["min_reps"] is not None and last["min_reps"] >= hi
     easy = last["min_rir"] is None or last["min_rir"] >= rir_up

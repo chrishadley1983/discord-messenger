@@ -466,6 +466,7 @@ async def log_workout(req: LogWorkoutRequest):
             out["week"] = await fit.training_week_summary()
         except Exception as e:
             logger.warning(f"post-log briefing failed: {e}")
+    _kick_dashboard_refresh()
     return out
 
 
@@ -498,6 +499,7 @@ async def log_cardio(req: LogCardioRequest):
     week = await fit.training_week_summary()
     wk = fit.week_number(programme) if programme else None
     last_hard = await fit.last_hard_cardio()
+    _kick_dashboard_refresh()
     return {
         "session": row, "status": "logged", "garmin_linked": bool(row.get("garmin_activity_id")),
         "week": week,
@@ -543,6 +545,8 @@ async def import_fitbod(req: FitbodImportRequest):
     sessions = parse_fitbod_csv(text, include_warmups=req.include_warmups)
     result = await import_sessions(sessions, dry_run=req.dry_run, skip_if_day_logged=req.skip_if_day_logged)
     result["parsed"] = len(sessions)
+    if not req.dry_run and result.get("imported"):
+        _kick_dashboard_refresh()
     return result
 
 
@@ -792,6 +796,35 @@ async def _do_dashboard_refresh():
         logger.error(f"Dashboard refresh failed: {e}")
     finally:
         _dash_state["building"] = False
+
+
+_dash_pending: dict = {"task": None}
+
+
+def _kick_dashboard_refresh(delay_s: float = 90.0) -> None:
+    """Debounced rebuild+redeploy after a log write.
+
+    The public Reset Cut page was only rebuilt by the 08:20 job, so a session
+    logged at lunchtime showed as missing until the next morning (6 Sep 2026:
+    Peter logged 2 cardio + 1 upper at 12:04, page still said strength 1/3 at
+    13:00). Peter usually logs a few rows within a minute of each other, so
+    each call restarts a short window and one rebuild runs after the last.
+    """
+    async def _later():
+        try:
+            await asyncio.sleep(delay_s)
+            while _dash_state.get("building"):
+                await asyncio.sleep(5)
+            await _do_dashboard_refresh()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:  # never let a rebuild failure surface to the logger
+            logger.warning(f"auto dashboard refresh failed: {e}")
+
+    prev = _dash_pending.get("task")
+    if prev is not None and not prev.done():
+        prev.cancel()
+    _dash_pending["task"] = asyncio.create_task(_later())
 
 
 @router.post("/dashboard/refresh")

@@ -36,9 +36,16 @@ Read `FITNESS.md` → "Gym training log + adaptive plan" for the rules.
 
 ## Workflow
 
-1. **Detect the session type**: `upper` / `lower` / `full_body`. "Upper body",
-   "push/pull day" → `upper`. "Legs" → `lower`. Anything else he names (e.g.
-   "arms") → use that word as `session_type` (snake_case); the plan will add it.
+1. **Detect the session type**: `upper` / `lower` / `full_body` / `upper_db`. "Upper body",
+   "push/pull day" on the machines → `upper`. Dumbbell upper (flat/incline DB press, flye,
+   incline curl) → `upper_db`. "Legs" → `lower`. Anything else he names (e.g. "arms") → use
+   that word as `session_type` (snake_case); the plan will add it.
+   **Different days are always different sessions (Chris, 6 Sep 2026).** Never fold a
+   day's exercises into an existing session type just because the body part matches — if
+   the exercise set differs from the plan's session of that name (other equipment, other
+   venue), give it its own `session_type` so the plan gets a separate session and the
+   log keeps a clean per-day picture. Peter merging the Sunday dumbbell day into the
+   Saturday machine `upper` produced an 8-exercise 40-min "upper" that had to be split.
    If genuinely unclear, ask ONE question before logging.
 
 2. **Parse each exercise line** into sets. Chris's shorthand:
