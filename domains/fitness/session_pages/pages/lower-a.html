@@ -259,14 +259,17 @@ function persistKg() { const o = {}; ex.forEach((e, i) => { if (state[i].kg !== 
 
 /* ---------- target helpers (API next-session, injected at build) ---------- */
 const tgt = e => T.exercises && T.exercises[slugOf(e)] || null;
-const fmtKg = v => (v == null ? "" : (Math.round(v * 10) / 10) + " kg");
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtKg = v => (v == null || isNaN(+v) ? "" : (Math.round(+v * 10) / 10) + " kg");
+const ACTIONS = { increase: "Up", hold: "Hold", deload: "Deload", start: "Start" };
 function suggestKg(e) { const t = tgt(e); return t && t.weight_kg != null ? fmtKg(t.weight_kg) : (e.kg ? e.kg + " kg" : ""); }
 function targetLine(e) {
   const t = tgt(e); if (!t) return "";
-  const word = { increase: "Up", hold: "Hold", deload: "Deload", start: "Start" }[t.action] || t.action || "";
+  const action = ACTIONS[t.action] ? t.action : "";           // class + label only from the known set
+  const word = ACTIONS[t.action] || esc(t.action || "");
   const kg = t.weight_kg != null ? fmtKg(t.weight_kg) : (t.action === "increase" && t.last_kg != null ? "one plate up from " + fmtKg(t.last_kg) : "");
-  const parts = [kg, t.reason].filter(Boolean).join(" · ");
-  return `<div class="tgt ${t.action || ""}"><b>${word}</b>${parts ? " " + parts : ""}</div>`;
+  const parts = [kg, esc(t.reason)].filter(Boolean).join(" · ");   // API strings are escaped before innerHTML
+  return `<div class="tgt ${action}"><b>${word}</b>${parts ? " " + parts : ""}</div>`;
 }
 const play = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
 const $ = id => document.getElementById(id);

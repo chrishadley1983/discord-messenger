@@ -430,3 +430,86 @@ class TestWeekView:
         week = tp.build_week_sessions(plan, ws, [], today=ws, recent_sessions=recent)
         strength = [(s.day_of_week, s.session_type) for s in week if s.session_type in plan["rotation"]]
         assert strength == [(1, "lower"), (3, "full_body"), (5, "upper")]
+
+
+class TestReviewFixes:
+    """7 Sep 2026 pre-merge review: M1 schedule-aware next, M2 Fitbod mapping, m1-m4/m8 guards."""
+
+    def test_next_session_follows_the_schedule_not_the_rotation(self):
+        plan = tp.default_plan()
+        mon = [{"session_type": "upper_a", "session_date": "2026-09-07"}]
+        # Thursday after Tuesday was skipped -> Upper B (Lower A is "missed", not carried forward)
+        assert tp.next_session_type(plan, mon, date(2026, 9, 10)) == "upper_b"
+        # Tuesday morning, Monday logged -> Lower A
+        assert tp.next_session_type(plan, mon, date(2026, 9, 8)) == "lower_a"
+        # Monday not yet logged -> Upper A; Monday already logged -> Lower A (tomorrow)
+        assert tp.next_session_type(plan, [], date(2026, 9, 7)) == "upper_a"
+        assert tp.next_session_type(plan, mon, date(2026, 9, 7)) == "lower_a"
+        # Saturday evening after full body logged -> wraps to Monday's Upper A
+        sat = [{"session_type": "full_body", "session_date": "2026-09-12"}]
+        assert tp.next_session_type(plan, sat, date(2026, 9, 12)) == "upper_a"
+        # Sunday / Wednesday (non-lift days) -> the next scheduled lift
+        assert tp.next_session_type(plan, [], date(2026, 9, 13)) == "upper_a"
+        assert tp.next_session_type(plan, [], date(2026, 9, 9)) == "upper_b"
+        # without today the legacy rotation still applies
+        assert tp.next_session_type(plan, mon) == "lower_a"
+
+    def test_resolve_session_type_maps_fitbod_regions_to_active_types(self):
+        plan = tp.default_plan()
+        assert tp.resolve_session_type(plan, "lower", date(2026, 9, 8)) == "lower_a"      # Tue leg day
+        assert tp.resolve_session_type(plan, "upper", date(2026, 9, 10)) == "upper_b"     # Thu pull day
+        assert tp.resolve_session_type(plan, "upper", date(2026, 9, 9)) == "upper_a"      # off-schedule -> first upper
+        assert tp.resolve_session_type(plan, "lower", date(2026, 9, 12)) == "lower_a"     # Sat is full body, region differs
+        assert tp.resolve_session_type(plan, "full_body", date(2026, 9, 8)) == "full_body"
+        assert tp.resolve_session_type(plan, "upper_a", None) == "upper_a"
+        assert tp.resolve_session_type(_legacy_plan(), "upper", date(2026, 9, 8)) == "upper"
+        assert tp.resolve_session_type(plan, "arms", None) == "arms"                       # unknown region -> as is
+        # and reconcile never sees a retired / unknown type from an import
+        new, changes = tp.reconcile_plan(plan, tp.resolve_session_type(plan, "lower", date(2026, 9, 8)),
+                                         [{"exercise_slug": "leg-press", "reps": 10}])
+        assert new["rotation"] == plan["rotation"] and changes == []
+
+    def test_bad_schedule_from_is_ignored_not_raised(self):
+        plan = tp.default_plan()
+        plan["schedule_from"] = "7 Sep 2026"
+        assert tp.plan_week(plan, date(2026, 9, 7)) is None
+        nxt = tp.next_cardio_hard(plan, None, week_no=4, today=date(2026, 9, 7))
+        assert nxt["stage"] == "start"
+
+    def test_malformed_schedule_falls_back_to_rotation(self):
+        plan = tp.default_plan()
+        for bad in (["upper_a", None, "cardio_hard", "upper_b", "cardio_easy", "full_body", "rest"],
+                    ["upper_a", "lower", "cardio_hard", "upper_b", "cardio_easy", "full_body", "rest"],
+                    ["upper", "lower_a", "cardio_hard", "upper_b", "cardio_easy", "full_body", "rest"],   # retired
+                    ["upper_a", "lower_a", "cardio_hard"], "upper_a", None):
+            plan["schedule"] = bad
+            assert tp.schedule_for(plan) is None, bad
+            week = tp.build_week_sessions(plan, date(2026, 9, 7), [], today=date(2026, 9, 7))
+            assert len(week) == 7 and not any("missed" in s.label for s in week)
+
+    def test_hard_modality_outside_the_list_reverts_to_the_example(self):
+        proto = tp.build_protocol(tp._STAIRMASTER_PYRAMID, peak_seconds=90)
+        last = {"protocol": proto, "modality": "walk", "intensity": "hard"}
+        nxt = tp.next_cardio_hard(tp.default_plan(), last, today=date(2026, 9, 7))
+        assert nxt["modality"] == "stairmaster" and nxt["stage"] == "extend_peak"
+        last["modality"] = "rower"
+        assert tp.next_cardio_hard(tp.default_plan(), last, today=date(2026, 9, 7))["modality"] == "rower"
+
+    def test_patching_a_retired_session_does_not_resurrect_it(self):
+        plan = tp.default_plan()
+        new, changes = tp.apply_plan_patch(plan, {"session_type": "upper", "add": [{"slug": "pec-fly", "sets": 3}]})
+        assert new["rotation"] == plan["rotation"] and "upper" not in new["rotation"]
+        assert any("pec-fly" in c for c in changes)
+        assert tp.active_session_types(new) == ["upper_a", "lower_a", "upper_b", "full_body"]
+
+    def test_short_duration_range_does_not_crash_week_view(self):
+        plan = tp.default_plan()
+        plan["cardio"]["easy"]["duration_range_min"] = [30]
+        plan["cardio"]["easy"]["rpe"] = None
+        week = tp.build_week_sessions(plan, date(2026, 9, 7), [], today=date(2026, 9, 7))
+        assert week[4].label.startswith("Easy cardio 30–30 min · RPE 3–4")
+
+    def test_next_cardio_hard_without_today_uses_programme_week(self):
+        proto = tp.build_protocol(tp._STAIRMASTER_PYRAMID, peak_seconds=90)
+        nxt = tp.next_cardio_hard(tp.default_plan(), {"protocol": proto, "modality": "stairmaster"}, week_no=4)
+        assert "25-30 min" in nxt.get("note", "")

@@ -9,7 +9,8 @@ trigger:
   - "my plan"
   - "change my plan"
   - "swap"
-  - "add to my upper"
+  - "add to my upper a"
+  - "add to my upper b"
   - "drop from my"
   - "plan history"
   - "gym plan"
@@ -31,7 +32,7 @@ rationale on every change. It never guesses a prescription.
 
 | Ask | Call |
 |---|---|
-| "What's next?" / "what am I doing at the gym" | `GET http://172.19.64.1:8100/fitness/next-session` (add `?type=upper` if he names it) |
+| "What's next?" / "what am I doing at the gym" | `GET http://172.19.64.1:8100/fitness/next-session` (add `?type=upper_a` / `lower_a` / `upper_b` / `full_body` if he names it — never `upper`/`upper_db`, those are retired) |
 | "Show my plan" | `GET /fitness/plan` |
 | "How's training going this week?" | `GET /fitness/training-summary` |
 | "What have I logged?" | `GET /fitness/workouts?days=28` · `GET /fitness/cardio?days=28` |

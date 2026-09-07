@@ -370,9 +370,9 @@ async def _training_payload(programme: dict | None, library: dict) -> dict | Non
         nxt = await fit.next_session_bundle()
         wk = fit.week_number(programme)
         last_hard = await fit.last_hard_cardio()
-        next_hard = tp.next_cardio_hard(plan, last_hard, wk)
-        workouts = await fit.get_workouts_with_sets(56)
         today = fit._today()
+        next_hard = tp.next_cardio_hard(plan, last_hard, wk, today=today)
+        workouts = await fit.get_workouts_with_sets(56)
         cardio = await fit.get_cardio_in_range(today - timedelta(days=56), today)
         history_by_slug = await fit.get_sets_history(days=84)
     except Exception as e:

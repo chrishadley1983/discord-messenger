@@ -1717,7 +1717,7 @@ async def next_session_bundle(session_type: str | None = None) -> dict:
     plan, row = await get_plan_or_default()
     today = _today()
     recent = await get_sessions_in_range(today - timedelta(days=28), today)
-    st = session_type or tp.next_session_type(plan, recent)
+    st = session_type or tp.next_session_type(plan, recent, today)
     prior_count = len([s for s in recent if s.get("session_type") == st])
     spec = (plan.get("sessions") or {}).get(st) or {}
     slugs = [e["slug"] for e in spec.get("exercises", [])]
@@ -1747,7 +1747,7 @@ async def training_week_summary(today: date | None = None) -> dict:
             "done": len(strength),
             "target": int((plan.get("weekly") or {}).get("strength_sessions", 3)),
             "sessions": [{"date": s["session_date"], "type": s["session_type"], "rpe": s.get("rpe")} for s in strength],
-            "next": tp.next_session_type(plan, strength),
+            "next": tp.next_session_type(plan, strength, today),
         },
         "cardio": tp.cardio_week_summary(plan, cardio),
         "progressions_this_week": tp.progressions_since(history, ws),

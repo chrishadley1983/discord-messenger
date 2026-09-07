@@ -46,9 +46,11 @@ dedupes on a content hash + any Peter-logged strength session that day.
 ```
 📥 **Fitbod import** — 3 sessions found
 
-• Sat 5 Sep · upper · Lat Pulldown, Machine Chest Press, Seated Cable Row, Machine Shoulder Press (12 sets)
-• Tue 8 Sep · lower · Leg Press, Seated Leg Curl, Leg Extension (9 sets)
-• Thu 10 Sep · full_body · … (10 sets)
+• Mon 7 Sep · upper_a · Flat DB Bench Press, Incline DB Press, Machine Shoulder Press, DB Flye (11 sets)
+• Tue 8 Sep · lower_a · Leg Press, Seated Leg Curl, Leg Extension (9 sets)
+• Sat 12 Sep · full_body · … (10 sets)
+(Fitbod only knows upper / lower / full body — the API maps each day onto the standing week's
+session types: the day's scheduled lift if it is the same region, else `upper_a` / `lower_a`.)
 Skipped: Sat 5 Sep — a strength session is already logged that day (Peter)
 
 Import the 2 new ones? (reply "go")

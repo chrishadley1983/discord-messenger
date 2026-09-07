@@ -63,7 +63,6 @@ def _ex(slug: str, sets: int, lo: int, hi: int, target: int | None = None, **ext
 # Standing week from w/c 7 Sep 2026 (Mon..Sun). Strength entries name a session
 # in ``sessions``; the others are ``cardio_hard`` / ``cardio_easy`` / ``rest``.
 SCHEDULE_CARDIO_HARD, SCHEDULE_CARDIO_EASY, SCHEDULE_REST = "cardio_hard", "cardio_easy", "rest"
-_DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 DEFAULT_PLAN: dict[str, Any] = {
     "split": "4x_fixed_days",
@@ -219,19 +218,40 @@ def default_plan() -> dict:
 
 
 def plan_week(plan: dict, today: date) -> int | None:
-    """1-based week of the standing schedule (``schedule_from`` = week 1), or None if unset."""
+    """1-based week of the standing schedule (``schedule_from`` = week 1).
+    None when unset or not an ISO date (the plan is free-form JSON from the DB)."""
     start = plan.get("schedule_from")
     if not start:
         return None
-    ws = week_start_of(date.fromisoformat(str(start)))
+    try:
+        ws = week_start_of(date.fromisoformat(str(start)))
+    except ValueError:
+        return None
     return max(1, (week_start_of(today) - ws).days // 7 + 1)
 
 
+_SCHEDULE_SENTINELS = (SCHEDULE_CARDIO_HARD, SCHEDULE_CARDIO_EASY, SCHEDULE_REST)
+
+
 def schedule_for(plan: dict) -> list[str] | None:
+    """The 7-entry Mon..Sun schedule, or None (-> rotation fallback) when absent
+    or malformed: wrong length, an entry that is neither a sentinel nor an
+    active (non-retired) session type."""
     sched = plan.get("schedule")
-    if isinstance(sched, list) and len(sched) == 7:
-        return [str(s) for s in sched]
-    return None
+    if not isinstance(sched, list) or len(sched) != 7:
+        return None
+    sessions = plan.get("sessions") or {}
+    out: list[str] = []
+    for s in sched:
+        if not isinstance(s, str):
+            return None
+        if s in _SCHEDULE_SENTINELS:
+            out.append(s)
+        elif s in sessions and (sessions.get(s) or {}).get("status") != "retired":
+            out.append(s)
+        else:
+            return None
+    return out
 
 
 def active_session_types(plan: dict) -> list[str]:
@@ -247,22 +267,60 @@ def strength_sessions_only(sessions: list[dict]) -> list[dict]:
     return [s for s in sessions if (s.get("session_type") or "") not in STRENGTH_EXCLUDED]
 
 
-def next_session_type(plan: dict, recent_sessions: list[dict]) -> str:
-    """Session type that comes next in the rotation after the most recent logged one.
+def next_session_type(plan: dict, recent_sessions: list[dict], today: date | None = None) -> str:
+    """The strength session that comes next.
 
-    ``recent_sessions`` newest-first (any types; non-strength ignored). A last
-    type outside the rotation restarts at the top.
+    Standing week (``schedule`` + ``today``): today's scheduled lift if it has
+    not been logged today, otherwise the next scheduled lift after today
+    (wrapping into next week). A skipped day is not carried forward — that
+    matches the week view, which marks it "missed".
+
+    Legacy rotation (no schedule): the type after the most recent logged one
+    (``recent_sessions`` newest-first, non-strength ignored); a last type
+    outside the rotation restarts at the top.
     """
     rotation: list[str] = plan.get("rotation") or list((plan.get("sessions") or {}).keys())
     if not rotation:
         return "full_body"
     strength = strength_sessions_only(recent_sessions)
+    schedule = schedule_for(plan)
+    if schedule and today is not None:
+        active = set(active_session_types(plan))
+        logged_today = {s.get("session_type") for s in strength if str(s.get("session_date")) == today.isoformat()}
+        for offset in range(7):
+            entry = schedule[(today.weekday() + offset) % 7]
+            if entry in active and not (offset == 0 and entry in logged_today):
+                return entry
+        return rotation[0]
     if not strength:
         return rotation[0]
     last = strength[0].get("session_type")
     if last not in rotation:
         return rotation[0]
     return rotation[(rotation.index(last) + 1) % len(rotation)]
+
+
+def resolve_session_type(plan: dict, inferred: str, session_date: date | None = None) -> str:
+    """Map an inferred body-region type (Fitbod: ``upper`` / ``lower`` / ``full_body``)
+    onto one of the plan's ACTIVE session types, never a retired one.
+
+    Prefers the lift scheduled for that date when it is the same region
+    (Tue leg day -> ``lower_a``), else the first active type of that region
+    (``upper`` -> ``upper_a``), else the inferred name (legacy plans / new types).
+    """
+    active = active_session_types(plan)
+    if inferred in active:
+        return inferred
+    region = inferred.split("_")[0]
+    schedule = schedule_for(plan)
+    if schedule and session_date is not None:
+        entry = schedule[session_date.weekday()]
+        if entry in active and entry.split("_")[0] == region:
+            return entry
+    for t in active:
+        if t.split("_")[0] == region:
+            return t
+    return inferred
 
 
 def order_variant(plan: dict, session_type: str, prior_count: int) -> str | None:
@@ -515,8 +573,9 @@ def next_cardio_hard(plan: dict, last: dict | None, week_no: int | None = None,
     """Next hard-cardio prescription following the plan's progression order.
 
     ``week_no`` is the programme week; when the plan carries ``schedule_from``
-    the plan week (week 1 = that Monday) takes precedence for the week-gated
-    steps (extend the session, allow a second hard session).
+    and ``today`` is given (callers pass the service's UK-time today), the plan
+    week (week 1 = that Monday) takes precedence for the week-gated steps
+    (extend the session, allow a second hard session).
     The modality is the plan's worked example (stairmaster) unless the last hard
     session used another one — the machine is interchangeable, ``intensity``
     is what makes it the hard session.
@@ -526,8 +585,10 @@ def next_cardio_hard(plan: dict, last: dict | None, week_no: int | None = None,
     targets = hard.get("targets") or {"peak_seconds": 120, "hard_seconds": 90, "level": 9}
     example = hard.get("modality", "stairmaster")
     interchangeable = bool(hard.get("modality_is_example", False))
-    modality = (last.get("modality") if last and interchangeable and last.get("modality") else None) or example
-    pw = plan_week(plan, today or date.today())
+    allowed = set(hard.get("modalities") or []) | {example}
+    last_mod = last.get("modality") if last else None
+    modality = last_mod if (interchangeable and last_mod in allowed) else example
+    pw = plan_week(plan, today) if today is not None else None
     if pw is not None:
         week_no = pw
     extra = {"modality_is_example": interchangeable}
@@ -690,7 +751,9 @@ def apply_plan_patch(plan: dict, patch: dict) -> tuple[dict, list[str]]:
     st = patch.get("session_type")
     if st:
         spec = new.setdefault("sessions", {}).setdefault(st, {"label": st.replace("_", " ").title(), "exercises": []})
-        if st not in new.setdefault("rotation", []):
+        # A retired session (upper / upper_db after 7 Sep) can still be edited for
+        # the record, but never comes back into the rotation.
+        if st not in new.setdefault("rotation", []) and spec.get("status") != "retired":
             new["rotation"].append(st)
         for slug in patch.get("remove") or []:
             before = len(spec["exercises"])
@@ -841,8 +904,11 @@ def _build_scheduled_week(plan: dict, schedule: list[str], by_dow: dict[int, Pre
                 duration_min=int(hard.get("duration_min", 20)), is_rest=False,
                 notes=(hard.get("note") or "") or None))
         elif entry == SCHEDULE_CARDIO_EASY:
-            lo, hi = (easy.get("duration_range_min") or [easy.get("duration_min", 30)] * 2)[:2]
-            rpe = easy.get("rpe") or [3, 4]
+            rng = easy.get("duration_range_min")
+            if not (isinstance(rng, list) and len(rng) >= 2):
+                rng = [easy.get("duration_min", 30)] * 2
+            lo, hi = rng[0], rng[1]
+            rpe = easy.get("rpe") if isinstance(easy.get("rpe"), list) and easy.get("rpe") else [3, 4]
             out.append(PrescribedSession(
                 day_of_week=d, session_type="cardio", label=f"Easy cardio {lo}–{hi} min · RPE {rpe[0]}–{rpe[-1]}",
                 duration_min=int(easy.get("duration_min", 30)), is_rest=False,

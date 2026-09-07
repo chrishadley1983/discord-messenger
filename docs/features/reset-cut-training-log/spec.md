@@ -151,6 +151,23 @@ Not done in Phase 3: the page does not POST the finished session to `/fitness/wo
 still goes through Peter (`log-workout`). Targets refresh only when the dashboard rebuilds (daily
 08:20, after every Peter log, or on Refresh).
 
+**Decision (7 Sep, taken by Claude, for Chris to confirm):** the session pages are deployed
+**without** the dashboard's passcode gate. They expose exercise names, sets/reps, kg targets,
+the API's reason strings, the plan version, a build timestamp and the fixed gym days — no name,
+weight, calories or anything from the encrypted dashboard payload. If parity is wanted, encrypt
+only the `TARGETS` block with the existing PBKDF2/AES-GCM helper and cache the derived key in
+localStorage (one prompt per phone); ticks/kg logic is unaffected.
+
+**Pre-merge review (7 Sep, `review-2026-09-07.md`):** M1 next-session now follows the schedule
+(a skipped day is not carried forward — matches the week view); M2 Fitbod imports map onto
+active session types (`resolve_session_type`); M3 `/fitness/<name>.html` alias so the LAN
+dashboard links work; m1 bad `schedule_from` ignored; m2 malformed `schedule` → rotation
+fallback; m3 hard modality must be in `modalities`; m4 patching a retired session never
+re-enters the rotation; m5 callers pass UK-time `today`; m8 short `duration_range_min` guarded;
+n1 API strings escaped before innerHTML. Open follow-ups: m7 (dashboard build makes four extra
+`next_session_bundle` calls), n6 (ticks keyed on calendar day, a session across midnight loses
+them), n7 ("never two uppers back to back" is text only), n8 (Garmin hard-cardio inference).
+
 ## Documentation updates (required by project plan rules)
 
 - **API docs**: `hadley_api/README.md` Fitness section — new endpoints + tables.

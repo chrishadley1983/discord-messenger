@@ -507,7 +507,7 @@ async def log_cardio(req: LogCardioRequest):
     return {
         "session": row, "status": "logged", "garmin_linked": bool(row.get("garmin_activity_id")),
         "week": week,
-        "next_hard": fit.tp.next_cardio_hard(plan, last_hard, wk),
+        "next_hard": fit.tp.next_cardio_hard(plan, last_hard, wk, today=fit._today()),
     }
 
 
@@ -773,18 +773,16 @@ async def dashboard_page():
     return HTMLResponse(_DASH_HTML.read_text(encoding="utf-8"))
 
 
-_PAGES_DIR = _DASH_HTML.parent / "session-pages"   # matches dashboard_site.LOCAL_PAGES_DIR
-
-
 @router.get("/session-pages/{name}", response_class=HTMLResponse)
 async def session_page(name: str):
     """Serve a built session page (upper-a | lower-a | upper-b | full-body) over the LAN.
     Same file the surge deploy ships; targets are those baked in at the last build."""
     from domains.fitness import session_pages as sp
-    name = name.removesuffix(".html")
-    if name not in sp.PAGE_SESSIONS:
+    from domains.fitness.dashboard_site import LOCAL_PAGES_DIR
+    name = name[:-5] if name.endswith(".html") else name
+    if name not in sp.PAGE_SESSIONS:   # also rejects any path-ish input — only the four stems are served
         return HTMLResponse(f"<h1>Unknown session page</h1><p>Known: {', '.join(sorted(sp.PAGE_SESSIONS))}</p>", status_code=404)
-    built = _PAGES_DIR / f"{name}.html"
+    built = LOCAL_PAGES_DIR / f"{name}.html"
     if built.exists():
         return HTMLResponse(built.read_text(encoding="utf-8"))
     # Not built yet — render live with fresh targets (no deploy).
@@ -793,6 +791,13 @@ async def session_page(name: str):
         return HTMLResponse(sp.render_page(name, sp.page_targets(bundle, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))))
     except Exception as e:
         return HTMLResponse(f"<h1>Session page not built yet</h1><p>{e}</p>", status_code=503)
+
+
+@router.get("/{name}.html", response_class=HTMLResponse)
+async def session_page_alias(name: str):
+    """`/fitness/upper-a.html` — so the relative links on the LAN copy of the
+    dashboard (`/fitness/dashboard`) resolve exactly like they do on surge."""
+    return await session_page(name)
 
 
 @router.get("/dashboard/refresh/status")

@@ -655,9 +655,10 @@ function renderTrainingLog(p){
   // Session pages (standing week) — one link per lifting day
   if((t.pages||[]).length){
     const pc=ce("div","mod");
-    const days={upper_a:"Mon",lower_a:"Tue",upper_b:"Thu",full_body:"Sat"};
+    const DOW=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], sched=t.schedule||[];
+    const dayOf=st=>{const i=sched.indexOf(st); return i>=0?DOW[i]:"";};
     pc.innerHTML='<div class="modhead"><h3>Session pages</h3><span class="meta">targets baked in at each rebuild · ticks and weights stay on your phone</span></div>'+
-      t.pages.map(pg=>'<div class="rotrow"><span><span class="badge">'+esc(days[pg.session_type]||"")+'</span> &nbsp;'+esc(pg.label)+(pg.duration_min?' <span style="color:var(--muted);font-size:12px">· '+esc(pg.duration_min)+' min</span>':'')+'</span><a class="watch" href="'+esc(pg.page)+'" style="text-decoration:none">Open ›</a></div>').join("");
+      t.pages.map(pg=>'<div class="rotrow"><span><span class="badge">'+esc(dayOf(pg.session_type))+'</span> &nbsp;'+esc(pg.label)+(pg.duration_min?' <span style="color:var(--muted);font-size:12px">· '+esc(pg.duration_min)+' min</span>':'')+'</span><a class="watch" href="'+esc(pg.page)+'" style="text-decoration:none">Open ›</a></div>').join("");
     p.appendChild(pc);
   }
   // Next hard cardio
