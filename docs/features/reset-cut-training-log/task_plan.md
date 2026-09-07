@@ -24,6 +24,7 @@ Status legend: [ ] todo · [~] in progress · [x] done + verified
 - [x] R4 docs: FITNESS.md, README, spec (schedule + Phase 3 session-page requirements), skills
 - [x] R5 live (7 Sep 20:xx): hadley_api restarted, plan v6 saved, programme row 3→4 strength/wk, goals "4 strength sessions" + "2 cardio sessions (1 hard + 1 easy)", Second Brain note 0c7291bb, next-session = upper_a (flat DB 12→14, incline hold 10, shoulder hold 25, flye 6→8, curl hold 8), dashboard refresh kicked
 - [x] Phase 3 (S1–S4, S6 in spec.md): `domains/fitness/session_pages/` (4 pages + runtime.js + build), targets baked at dashboard build, surge + LAN route, Training-tab links, `test_session_pages` (13) + Playwright behaviour check (20/20) — S5 (stairmaster page) not in repo
+- [x] Deploy 7 Sep 20:35: PR #44 merged to main (9f5646a), live branch fast-forwarded, hadley_api + discord_bot restarted, dashboard rebuilt -> surge index + 4 session pages live (targets baked 20:35), LAN route + /fitness/<name>.html alias verified, surge pages render 5/6/6/5 exercises with target lines
 - [ ] Follow-up: save `stairmaster-pyramid.html` into `session_pages/pages/` (timer-only reset, leave as is); page → `POST /fitness/workout` on Done
 
 ## Errors / lessons
