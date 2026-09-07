@@ -348,6 +348,30 @@ def _record_idle_clear(name: str, reason: str, messages_in: int):
         logger.debug(f"Failed to record idle-clear event for {name}: {e}")
 
 
+def _channel_mcp_watchdog():
+    """Restart a channel session whose MCP servers never started (transcript
+    shows "MCP server X connection timed out"), once per session, only between
+    turns. Health ports stay green in that state, so nothing else sees it
+    (incident 2026-09-06/07: two blank Vercel reports). See
+    domains/peterbot/channel_mcp_watchdog.py.
+    """
+    import time as _time
+
+    try:
+        from domains.peterbot.channel_mcp_watchdog import check_and_restart
+    except Exception as e:
+        logger.warning(f"channel_mcp_watchdog import failed: {e}")
+        return
+    try:
+        check_and_restart(
+            mark_relaunched=lambda name: _channel_last_relaunch.__setitem__(
+                name, _time.monotonic()
+            )
+        )
+    except Exception as e:
+        logger.warning(f"channel_mcp_watchdog tick failed: {e}")
+
+
 def _channel_idle_clear_watchdog():
     """Recycle a conversation channel once its Claude context has bloated, so it
     stops silently dropping the reply tool (incident 2026-07-05).
@@ -641,6 +665,19 @@ async def on_ready():
         replace_existing=True,
     )
     logger.info("Channel idle-clear watchdog registered (every 5 min)")
+
+    # Channel MCP-init watchdog — a session whose MCP servers timed out at
+    # launch keeps a green health port but has no MCP tools for its whole
+    # life. Scan transcripts and restart such a session once, between turns.
+    scheduler.add_job(
+        _channel_mcp_watchdog,
+        "interval",
+        minutes=2,
+        id="channel_mcp_watchdog",
+        max_instances=1,
+        replace_existing=True,
+    )
+    logger.info("Channel MCP-init watchdog registered (every 2 min)")
 
     # WhatsApp watchdog — restart Evolution API container if it hangs (event
     # loop stalls but container stays 'Up'; no Docker healthcheck exists).

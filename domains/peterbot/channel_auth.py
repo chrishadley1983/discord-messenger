@@ -438,7 +438,7 @@ def _restart_session(name: str) -> bool:
         return False
 
 
-def force_restart_channel(name: str, mark_relaunched=None) -> bool:
+def force_restart_channel(name: str, mark_relaunched=None, reason: str | None = None) -> bool:
     """Reactively restart one wedged channel session (cooldown-guarded).
 
     The pane-401 / corrupt-file detection in :func:`heal_channel_auth` cannot
@@ -448,6 +448,9 @@ def force_restart_channel(name: str, mark_relaunched=None) -> bool:
     burned the full 20-min ``JOB_TIMEOUT_SECONDS`` before failing). The
     scheduler calls this the moment a channel job comes back empty twice, so the
     *next* scheduled job runs on a fresh session instead of every job hanging.
+
+    ``reason`` overrides the #alerts text (the MCP-init watchdog passes its own;
+    the default describes the wedged-turn case).
 
     Best-effort: returns False (never raises) on unknown name or cooldown so it
     is safe to fire-and-forget from the hot job path. Shares ``_last_restart_ts``
@@ -471,11 +474,13 @@ def force_restart_channel(name: str, mark_relaunched=None) -> bool:
                 pass
         _alert(
             f"wedge-{name}",
-            f":wrench: **Restarted wedged `{name}`.** It returned an empty "
-            "response with no 401 marker (stuck/locked Claude turn). The next "
-            "scheduled job should recover.",
+            reason or (
+                f":wrench: **Restarted wedged `{name}`.** It returned an empty "
+                "response with no 401 marker (stuck/locked Claude turn). The next "
+                "scheduled job should recover."
+            ),
         )
-        logger.warning(f"channel_auth: reactively restarted wedged '{name}'")
+        logger.warning(f"channel_auth: reactively restarted '{name}'" + (f" — {reason[:80]}" if reason else " (wedged)"))
     return ok
 
 

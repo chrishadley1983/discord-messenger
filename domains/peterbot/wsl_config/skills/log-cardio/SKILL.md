@@ -41,7 +41,8 @@ raise the level; week 4+ extend to 25-30 min).
    - `hard_seconds` — only if he changed ALL the ordinary hard blocks to one length
    - If he gives a full block list, pass `protocol: [{phase, seconds, level}]` instead.
 4. **Other fields**: `duration_min`, `rpe`, `limiter` ("quad endurance" → `legs`; breathing → `breathing`;
-   hip → `hip`), `avg_hr` / `max_hr` / `calories` if he quotes the watch, `notes` in his words.
+   hip → `hip`), `avg_hr` / `max_hr` / `calories` / `distance_m` (km × 1000) if he quotes the watch or machine
+   screenshot — put them in the fields, not just the notes — `notes` in his words.
 5. **`pain_flag: true`** if he reports sharp or pinching hip pain (NOT muscle burn). This flips the
    next prescription to the bike and raises an advisor warning.
 6. **POST**:

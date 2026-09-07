@@ -630,6 +630,7 @@ Proactive life admin obligation tracking and alerting.
 
 ### System Health (Job Monitoring)
 
+- `GET /vercel/usage-history?days=14` - Vercel usage snapshot + trend from `vercel_usage_history` (written by the local 06:30 scraper task). Returns `latest_date`, `scraped_at`, `stale`, `snapshot[]` with `limit`/`pct_of_limit`, `trend{}` for fluid CPU + memory. Primary source for the `vercel-usage` job (replaces the supabase MCP dependency). No auth.
 - `GET /jobs/health?hours=24` - Unified job health across DM + HB. Returns per-system stats: total, success, errors, success_rate, failures[], per_job[]. DM `total`/`success_rate`/`per_job` count completed runs only; in-flight runs are reported in `running` (not as failures). DM data from SQLite job_history.db, HB data from Supabase job_execution_history via HB API proxy.
 
 ### AI API-usage audit & reconciliation
