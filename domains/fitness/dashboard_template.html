@@ -641,7 +641,8 @@ function renderTrainingLog(p){
   if(n){
     const card=ce("div","mod");
     const gap=n.rest_gap_ok===false?'<div style="font-size:12.5px;color:var(--bad);margin-bottom:8px">Trained '+(n.days_since_last_strength===0?"today":"yesterday")+' — make today cardio, lift tomorrow.</div>':'';
-    card.innerHTML='<div class="modhead"><h3>Next · '+esc(n.label||n.session_type)+(n.order_variant?' (order '+esc(n.order_variant)+')':'')+'</h3><span class="meta">'+(n.status==="proposed"?"proposed — log what you do and it adapts":"targets from your log")+'</span></div>'+gap;
+    const pageLink=n.page?'<a class="watch" href="'+esc(n.page)+'" style="text-decoration:none">Open page ›</a>':'';
+    card.innerHTML='<div class="modhead"><h3>Next · '+esc(n.label||n.session_type)+(n.order_variant?' (order '+esc(n.order_variant)+')':'')+(n.duration_min?' <span class="meta">'+esc(n.duration_min)+' min</span>':'')+'</h3><span class="meta">'+(n.status==="proposed"?"proposed — log what you do and it adapts":"targets from your log")+' '+pageLink+'</span></div>'+gap;
     (n.exercises||[]).forEach(e=>{
       const row=ce("div","ex");
       const tgt=e.weight_kg!=null?fix(e.weight_kg,1)+" kg":(e.action==="increase"&&e.last_kg!=null?"one plate up from "+fix(e.last_kg,1)+" kg":e.last_kg!=null?fix(e.last_kg,1)+" kg":"—");
@@ -650,6 +651,14 @@ function renderTrainingLog(p){
       card.appendChild(row);
     });
     p.appendChild(card);
+  }
+  // Session pages (standing week) — one link per lifting day
+  if((t.pages||[]).length){
+    const pc=ce("div","mod");
+    const days={upper_a:"Mon",lower_a:"Tue",upper_b:"Thu",full_body:"Sat"};
+    pc.innerHTML='<div class="modhead"><h3>Session pages</h3><span class="meta">targets baked in at each rebuild · ticks and weights stay on your phone</span></div>'+
+      t.pages.map(pg=>'<div class="rotrow"><span><span class="badge">'+esc(days[pg.session_type]||"")+'</span> &nbsp;'+esc(pg.label)+(pg.duration_min?' <span style="color:var(--muted);font-size:12px">· '+esc(pg.duration_min)+' min</span>':'')+'</span><a class="watch" href="'+esc(pg.page)+'" style="text-decoration:none">Open ›</a></div>').join("");
+    p.appendChild(pc);
   }
   // Next hard cardio
   const h=t.next_hard;

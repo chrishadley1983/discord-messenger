@@ -106,8 +106,8 @@ Best: 8.2h | Worst: 5.8h
 Avg: 59bpm | Range: 54-65bpm
 
 **Training** 🏋️
-Strength: 2/3 sessions (next: lower)
-Cardio: 4/5 easy · 1/1 hard
+Strength: 3/4 sessions (next: full_body)
+Cardio: 1/1 hard · 1/1 easy
 Load up: lat pulldown 33→35.5 kg | Stalled: —
 
 ---

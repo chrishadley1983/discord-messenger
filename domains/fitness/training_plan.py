@@ -8,12 +8,15 @@ service layer (``service.py``) does the I/O and hands in logged history.
 Three jobs:
 
 1. **Best practice** — ``DEFAULT_PLAN`` encodes double progression for
-   pin-loaded machines (hit the top of the rep range with >= ``rir_up`` reps in
-   reserve -> one plate up; failed set -> hold; failed twice running -> drop
-   ~10% and rebuild), a 3-day upper/lower/full rotation with >= 1 rest day
-   between strength sessions, and a stairmaster pyramid with Chris's stated
-   progression order (peak to a full 2 min -> +30 s on the other hard blocks
-   -> raise the level).
+   pin-loaded machines / dumbbells (hit the top of the rep range with >= ``rir_up``
+   reps in reserve -> one plate up; failed set -> hold; failed twice running ->
+   drop ~10% and rebuild), a fixed-day standing week from w/c 7 Sep 2026
+   (Mon Upper A push, Tue Lower A, Wed hard cardio, Thu Upper B pull, Fri easy
+   cardio, Sat full body light, Sun rest/walk) and a hard-cardio pyramid
+   with Chris's stated progression order (peak to a full 2 min -> +30 s on the
+   other hard blocks -> raise the level). The stairmaster is only the EXAMPLE
+   hard-cardio modality — bike / rower / treadmill intervals are interchangeable;
+   ``intensity == "hard"`` is what makes a session the week's hard one.
 2. **Learn from progress** — ``compute_next_session`` derives every exercise's
    next target from what was actually lifted, never from the calendar.
    ``next_cardio_hard`` does the same for the interval session.
@@ -51,69 +54,126 @@ _STAIRMASTER_PYRAMID = [
 ]
 
 
-def _ex(slug: str, sets: int, lo: int, hi: int, target: int | None = None) -> dict:
-    return {"slug": slug, "sets": sets, "rep_range": [lo, hi], "target_reps": target or lo + (hi - lo) // 2}
+def _ex(slug: str, sets: int, lo: int, hi: int, target: int | None = None, **extra: Any) -> dict:
+    out = {"slug": slug, "sets": sets, "rep_range": [lo, hi], "target_reps": target or lo + (hi - lo) // 2}
+    out.update(extra)
+    return out
 
+
+# Standing week from w/c 7 Sep 2026 (Mon..Sun). Strength entries name a session
+# in ``sessions``; the others are ``cardio_hard`` / ``cardio_easy`` / ``rest``.
+SCHEDULE_CARDIO_HARD, SCHEDULE_CARDIO_EASY, SCHEDULE_REST = "cardio_hard", "cardio_easy", "rest"
+_DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 DEFAULT_PLAN: dict[str, Any] = {
-    "split": "3x_upper_lower_full",
-    "name": "Reset Cut gym plan — 3-day upper / lower / full body",
+    "split": "4x_fixed_days",
+    "name": "Reset Cut gym plan — standing week (4 lifts + 1 hard cardio), w/c 7 Sep 2026",
     "goal": "Hold (ideally build) strength through the Reset Cut deficit; 75 kg by 20 Dec 2026.",
-    "venue": "TSC Tonbridge — pin-loaded Life Fitness machines",
+    "venue": "TSC Tonbridge — pin-loaded Life Fitness machines + dumbbells",
     "session_length_min": 40,
+    # Plan-week numbering (cardio extension, second hard session) counts from here: week 1 = w/c 7 Sep.
+    "schedule_from": "2026-09-07",
+    "schedule": ["upper_a", "lower_a", SCHEDULE_CARDIO_HARD, "upper_b", SCHEDULE_CARDIO_EASY, "full_body", SCHEDULE_REST],
     "weekly": {
-        "strength_sessions": 3,
-        "cardio_easy": 5,
+        "strength_sessions": 4,
+        "cardio_easy": 1,                    # the Friday session is the only mandated easy one — see cardio.easy.note
         "cardio_hard": 1,
-        "min_rest_days_between_strength": 1,
+        "min_rest_days_between_strength": 0, # upper/lower sit on consecutive days by design (Mon/Tue); never two uppers back to back
     },
-    "rotation": ["upper", "lower", "full_body"],
+    "rotation": ["upper_a", "lower_a", "upper_b", "full_body"],
     "sessions": {
+        "upper_a": {
+            "label": "Upper A — push",
+            "duration_min": 40,
+            "page": "upper-a.html",
+            "exercises": [
+                _ex("db-flat-bench-press", 3, 8, 12, 10),
+                _ex("db-incline-press", 3, 6, 10, 8, note="3 × 8 clean is the target — don't chase 10 yet"),
+                _ex("shoulder-press", 3, 8, 12, 10, note="machine; after two dumbbell presses, expect it pre-fatigued"),
+                _ex("db-flye", 2, 10, 14, 12, note="light and slow"),
+                _ex("db-incline-curl", 4, 8, 12, 10, unilateral=True, note="set 4 = left arm only; left leads, right matches"),
+            ],
+        },
+        "lower_a": {
+            "label": "Lower A",
+            "duration_min": 45,
+            "page": "lower-a.html",
+            "exercises": [
+                _ex("leg-press", 3, 8, 12, 10, note="add plates between sets until set 3 ends at RPE 8"),
+                _ex("db-romanian-deadlift", 3, 8, 12, 10),
+                _ex("seated-leg-curl", 3, 10, 15, 12),
+                _ex("db-split-squat", 2, 8, 12, 10, unilateral=True, note="per leg; weaker leg first, match reps"),
+                _ex("hip-abduction", 2, 12, 20, 15),
+                _ex("leg-press-calf-raise", 3, 12, 20, 15),
+            ],
+        },
+        "upper_b": {
+            "label": "Upper B — pull",
+            "duration_min": 45,
+            "page": "upper-b.html",
+            "exercises": [
+                _ex("lat-pulldown", 3, 8, 12, 10),
+                _ex("seated-row", 3, 8, 12, 10),
+                _ex("chest-press", 2, 8, 12, 10, light=True, note="light second chest exposure — stop at RPE 7, not to failure"),
+                _ex("cable-face-pull", 2, 12, 20, 15),
+                _ex("lateral-raise", 2, 12, 15, 12),
+                _ex("triceps-pushdown", 2, 10, 15, 12),
+            ],
+        },
+        "full_body": {
+            "label": "Full body — light",
+            "duration_min": 40,
+            "page": "full-body.html",
+            "status": "proposed",   # not yet trained — log what you do and it adapts
+            "exercises": [
+                _ex("goblet-squat", 3, 8, 12, 10),
+                _ex("cable-pull-through", 3, 10, 15, 12),
+                _ex("single-arm-db-row", 3, 8, 12, 10, unilateral=True, note="per side; left leads, right matches"),
+                _ex("chest-press", 2, 8, 12, 10, light=True, note="light — stop at RPE 7"),
+                _ex("kneeling-cable-crunch", 3, 10, 15, 12),
+            ],
+        },
+        # Retired 7 Sep 2026 — kept so logged history (5–6 Sep) still resolves to a label.
         "upper": {
-            "label": "Upper body",
+            "label": "Upper body — machines (retired 7 Sep, folded into Upper B)",
+            "status": "retired",
             "exercises": [
                 _ex("lat-pulldown", 3, 8, 12, 10),
                 _ex("chest-press", 3, 8, 12, 10),
                 _ex("seated-row", 3, 8, 12, 10),
                 _ex("shoulder-press", 3, 8, 12, 10),
             ],
-            # Alternate the order each time so the last movement isn't always pre-fatigued.
-            "order_variants": {
-                "A": ["lat-pulldown", "chest-press", "seated-row", "shoulder-press"],
-                "B": ["shoulder-press", "seated-row", "chest-press", "lat-pulldown"],
-            },
         },
-        "lower": {
-            "label": "Lower body",
-            "status": "proposed",   # not yet trained — confirm or just log what you do and it adapts
+        "upper_db": {
+            "label": "Upper body — dumbbells (retired 7 Sep, now Upper A)",
+            "status": "retired",
             "exercises": [
-                _ex("leg-press", 3, 8, 12, 10),
-                _ex("seated-leg-curl", 3, 10, 15, 12),
-                _ex("leg-extension", 3, 10, 15, 12),
-                _ex("hip-abduction", 3, 12, 20, 15),
-                _ex("seated-calf-raise", 3, 12, 20, 15),
-            ],
-        },
-        "full_body": {
-            "label": "Full body",
-            "status": "proposed",
-            "exercises": [
-                _ex("leg-press", 3, 8, 12, 10),
-                _ex("lat-pulldown", 3, 8, 12, 10),
-                _ex("chest-press", 3, 8, 12, 10),
-                _ex("seated-leg-curl", 3, 10, 15, 12),
-                _ex("cable-pallof-press", 3, 10, 12, 10),
+                _ex("db-flat-bench-press", 3, 8, 12, 10),
+                _ex("db-flye", 3, 10, 14, 12),
+                _ex("db-incline-press", 3, 8, 12, 10),
+                _ex("db-incline-curl", 3, 8, 12, 10),
             ],
         },
     },
     "cardio": {
         "easy": {
-            "modalities": ["walk", "bike", "treadmill", "elliptical"],
+            "modalities": ["bike", "walk", "treadmill", "elliptical"],
             "duration_min": 30,
-            "note": "Zone 2 — conversational pace. Brisk walks count.",
+            "duration_range_min": [30, 40],
+            "rpe": [3, 4],
+            "optional_after_lifts_min": [10, 20],
+            "steps_count_as_easy": [8000, 10000],
+            "note": "Fri: 30–40 min at RPE 3–4. Optional 10–20 min bike/walk after the Mon/Tue/Thu/Sat lifts. "
+                    "A day of 8–10k steps counts as easy cardio.",
         },
         "hard": {
+            # The stairmaster is the EXAMPLE only — any hard-cardio modality is interchangeable.
+            # A session is the week's hard one because intensity == "hard", not because of the machine.
             "modality": "stairmaster",
+            "modality_is_example": True,
+            "modalities": ["stairmaster", "bike", "rower", "treadmill", "elliptical"],
+            "note": "Stairmaster pyramid is the worked example; bike / rower / treadmill intervals on the same "
+                    "block structure are interchangeable. Levels then mean that machine's resistance level.",
             "duration_min": 20,
             "protocol": _STAIRMASTER_PYRAMID,
             "targets": {"peak_seconds": 120, "hard_seconds": 90, "level": 9},
@@ -121,8 +181,10 @@ DEFAULT_PLAN: dict[str, Any] = {
                 "Peak block to a full 120 s at the current level",
                 "+30 s on the other hard blocks",
                 "Raise the level by 1",
-                "Extend to 25-30 min from week 4",
+                "Extend to 25-30 min from plan week 4 (w/c 28 Sep)",
             ],
+            "extend_from_week": 4,
+            "second_session_from_week": 6,   # no second hard session before plan week 6 (w/c 12 Oct)
             "swap_on_pain": "bike",
         },
     },
@@ -134,13 +196,19 @@ DEFAULT_PLAN: dict[str, Any] = {
             "deload_after_fails": 2, # failed in 2 consecutive sessions -> drop ~deload_pct
             "deload_pct": 10,
             "stall_sessions": 3,     # same load, no increase, 3 sessions running -> flag
+            "unilateral": "Weaker (left) side leads; the stronger side matches its reps.",
+            "log_rir": "Log reps-in-reserve on the last set of each exercise.",
         },
     },
     "constraints": [
         "Hip: stop and switch to the bike on sharp or pinching pain (muscle fatigue is fine).",
         "In a deficit: expect slower progression. Hold rather than force a plate.",
-        "At least one rest day between strength sessions.",
-        "Shoulder press goes last on Upper A — expect it to be pre-fatigued; order alternates A/B.",
+        "Fixed days: Mon Upper A · Tue Lower A · Wed hard cardio · Thu Upper B · Fri easy cardio · Sat full body · Sun rest/walk. "
+        "Upper and lower may sit on consecutive days; never two upper sessions back to back.",
+        "Weaker (left) side leads on unilateral work; the stronger side matches its reps.",
+        "Log reps-in-reserve on the last set of each exercise.",
+        "No second hard cardio session before plan week 6 (w/c 12 Oct 2026).",
+        "Machine shoulder press sits after two dumbbell presses on Upper A — expect it to be pre-fatigued.",
     ],
     "started": "2026-09-05",
 }
@@ -148,6 +216,29 @@ DEFAULT_PLAN: dict[str, Any] = {
 
 def default_plan() -> dict:
     return copy.deepcopy(DEFAULT_PLAN)
+
+
+def plan_week(plan: dict, today: date) -> int | None:
+    """1-based week of the standing schedule (``schedule_from`` = week 1), or None if unset."""
+    start = plan.get("schedule_from")
+    if not start:
+        return None
+    ws = week_start_of(date.fromisoformat(str(start)))
+    return max(1, (week_start_of(today) - ws).days // 7 + 1)
+
+
+def schedule_for(plan: dict) -> list[str] | None:
+    sched = plan.get("schedule")
+    if isinstance(sched, list) and len(sched) == 7:
+        return [str(s) for s in sched]
+    return None
+
+
+def active_session_types(plan: dict) -> list[str]:
+    """Session types that are part of the current schedule / rotation (retired ones excluded)."""
+    sessions = plan.get("sessions") or {}
+    return [k for k in (plan.get("rotation") or list(sessions.keys()))
+            if (sessions.get(k) or {}).get("status") != "retired"]
 
 
 # ── Rotation / ordering ──────────────────────────────────────────────
@@ -245,6 +336,9 @@ def recommend_exercise(
         "reason": "No history yet — pick a load you can do for the target reps with ~2 in reserve.",
         "last": None,
     }
+    for k in ("note", "unilateral", "light"):
+        if plan_ex.get(k) is not None:
+            out[k] = plan_ex[k]
     if not history:
         return out
 
@@ -342,7 +436,8 @@ def compute_next_session(
         "label": spec.get("label", session_type),
         "status": spec.get("status", "active"),
         "order_variant": variant,
-        "duration_min": plan.get("session_length_min", 40),
+        "duration_min": int(spec.get("duration_min") or plan.get("session_length_min", 40)),
+        "page": spec.get("page"),
         "exercises": exercises,
         "constraints": plan.get("constraints", []),
     }
@@ -415,30 +510,47 @@ def _protocol_summary(protocol: list[dict] | None) -> dict:
     }
 
 
-def next_cardio_hard(plan: dict, last: dict | None, week_no: int | None = None) -> dict:
-    """Next hard-cardio prescription following the plan's progression order."""
+def next_cardio_hard(plan: dict, last: dict | None, week_no: int | None = None,
+                     today: date | None = None) -> dict:
+    """Next hard-cardio prescription following the plan's progression order.
+
+    ``week_no`` is the programme week; when the plan carries ``schedule_from``
+    the plan week (week 1 = that Monday) takes precedence for the week-gated
+    steps (extend the session, allow a second hard session).
+    The modality is the plan's worked example (stairmaster) unless the last hard
+    session used another one — the machine is interchangeable, ``intensity``
+    is what makes it the hard session.
+    """
     hard = (plan.get("cardio") or {}).get("hard") or {}
     template = hard.get("protocol") or _STAIRMASTER_PYRAMID
     targets = hard.get("targets") or {"peak_seconds": 120, "hard_seconds": 90, "level": 9}
-    modality = hard.get("modality", "stairmaster")
+    example = hard.get("modality", "stairmaster")
+    interchangeable = bool(hard.get("modality_is_example", False))
+    modality = (last.get("modality") if last and interchangeable and last.get("modality") else None) or example
+    pw = plan_week(plan, today or date.today())
+    if pw is not None:
+        week_no = pw
+    extra = {"modality_is_example": interchangeable}
+    if interchangeable:
+        extra["modality_note"] = hard.get("note") or "Any hard-cardio modality is interchangeable."
 
     if last and last.get("pain_flag"):
         swap = hard.get("swap_on_pain", "bike")
         return {"modality": swap, "protocol": None, "duration_min": hard.get("duration_min", 20),
                 "reason": f"Hip pain flagged last time — do the hard session on the {swap} this week and see how it feels.",
-                "stage": "pain_swap"}
+                "stage": "pain_swap", **extra}
 
     if not last:
         return {"modality": modality, "protocol": build_protocol(template), "duration_min": hard.get("duration_min", 20),
                 "reason": "First interval session — run the pyramid as written; drop the peak to 90 s if the legs go.",
-                "stage": "start", **_protocol_summary(build_protocol(template))}
+                "stage": "start", **_protocol_summary(build_protocol(template)), **extra}
 
     cur = _protocol_summary(last.get("protocol"))
     if cur["peak_seconds"] is None:      # unstructured last session — restart from the template
         proto = build_protocol(template)
         return {"modality": modality, "protocol": proto, "duration_min": hard.get("duration_min", 20),
                 "reason": "Last session had no block detail — run the pyramid as written.", "stage": "start",
-                **_protocol_summary(proto)}
+                **_protocol_summary(proto), **extra}
 
     level = cur["hard_level"] or targets["level"]
     peak_level = cur["peak_level"] or level
@@ -464,9 +576,11 @@ def next_cardio_hard(plan: dict, last: dict | None, week_no: int | None = None) 
         stage, reason = "raise_level", f"Durations are maxed at L{level:g} — take every hard block up to L{new_level:g}."
 
     out = {"modality": modality, "protocol": proto, "duration_min": hard.get("duration_min", 20),
-           "reason": reason, "stage": stage, **_protocol_summary(proto)}
-    if week_no and week_no >= 4 and out["total_seconds"] < 25 * 60:
-        out["note"] = "Week 4+: extend the session toward 25-30 min (add an easy/hard pair before the cool-down)."
+           "reason": reason, "stage": stage, **_protocol_summary(proto), **extra}
+    extend_from = int(hard.get("extend_from_week", 4))
+    if week_no and week_no >= extend_from and out["total_seconds"] < 25 * 60:
+        out["note"] = (f"Week {extend_from}+: extend the session toward 25-30 min "
+                       "(add an easy/hard pair before the cool-down).")
     return out
 
 
@@ -631,9 +745,12 @@ def build_week_sessions(
 ) -> list[PrescribedSession]:
     """Project the plan onto Mon..Sun for the dashboard / /fitness/today.
 
-    Logged strength sessions sit on their real days; the remaining rotation
-    sessions are placed on the next free days from today, keeping >= 1 rest
-    day between strength sessions. Other days show easy cardio / walk.
+    Logged strength sessions sit on their real days. With a fixed ``schedule``
+    (standing week) the remaining strength sessions go on their scheduled days
+    from today onward (a missed earlier day stays as a missed marker, it is not
+    pushed later); other days show what the schedule says (hard cardio, easy
+    cardio, rest). Without a schedule the rotation is placed on the next free
+    days from today keeping >= ``min_rest_days_between_strength`` between lifts.
     """
     rotation = plan.get("rotation") or ["upper", "lower", "full_body"]
     sessions_spec = plan.get("sessions") or {}
@@ -648,6 +765,10 @@ def build_week_sessions(
         dow = (d - week_start).days
         if 0 <= dow <= 6:
             by_dow[dow] = _plan_session(plan, s["session_type"], dow, done=True)
+
+    schedule = schedule_for(plan)
+    if schedule:
+        return _build_scheduled_week(plan, schedule, by_dow, week_start, today)
 
     remaining = max(0, target_n - len(by_dow))
     # Rotation continues from the most recent strength session, even if it was
@@ -681,8 +802,55 @@ def build_week_sessions(
                 day_of_week=d, session_type="cardio", label="Easy cardio / walk", duration_min=30,
                 is_rest=False,
                 notes=f"Zone-2: {', '.join((plan.get('cardio') or {}).get('easy', {}).get('modalities', ['walk']))}. "
-                      f"One session this week is the hard {hard.get('modality', 'stairmaster')} pyramid.",
+                      f"One session this week is the hard pyramid ({hard.get('modality', 'stairmaster')} or equivalent).",
             ))
+    return out
+
+
+def _hard_cardio_label(plan: dict) -> str:
+    hard = (plan.get("cardio") or {}).get("hard") or {}
+    example = hard.get("modality", "stairmaster")
+    if hard.get("modality_is_example"):
+        return f"Hard cardio — {example} pyramid or equivalent"
+    return f"Hard cardio — {example} pyramid"
+
+
+def _build_scheduled_week(plan: dict, schedule: list[str], by_dow: dict[int, PrescribedSession],
+                          week_start: date, today: date) -> list[PrescribedSession]:
+    sessions_spec = plan.get("sessions") or {}
+    cardio = plan.get("cardio") or {}
+    easy, hard = cardio.get("easy") or {}, cardio.get("hard") or {}
+    today_dow = (today - week_start).days
+    out: list[PrescribedSession] = []
+    for d in range(7):
+        if d in by_dow:
+            out.append(by_dow[d])
+            continue
+        entry = schedule[d]
+        if entry in sessions_spec and entry not in (SCHEDULE_CARDIO_HARD, SCHEDULE_CARDIO_EASY, SCHEDULE_REST):
+            if d < today_dow:
+                spec = sessions_spec.get(entry) or {}
+                out.append(PrescribedSession(
+                    day_of_week=d, session_type="rest", label=f"{spec.get('label', entry)} — missed", duration_min=0,
+                    is_rest=True, notes="Scheduled lift not logged. Do not stack it on another day; the week carries on."))
+            else:
+                out.append(_plan_session(plan, entry, d, done=False))
+        elif entry == SCHEDULE_CARDIO_HARD:
+            out.append(PrescribedSession(
+                day_of_week=d, session_type="cardio", label=_hard_cardio_label(plan),
+                duration_min=int(hard.get("duration_min", 20)), is_rest=False,
+                notes=(hard.get("note") or "") or None))
+        elif entry == SCHEDULE_CARDIO_EASY:
+            lo, hi = (easy.get("duration_range_min") or [easy.get("duration_min", 30)] * 2)[:2]
+            rpe = easy.get("rpe") or [3, 4]
+            out.append(PrescribedSession(
+                day_of_week=d, session_type="cardio", label=f"Easy cardio {lo}–{hi} min · RPE {rpe[0]}–{rpe[-1]}",
+                duration_min=int(easy.get("duration_min", 30)), is_rest=False,
+                notes=f"{', '.join(easy.get('modalities', ['walk']))}. " + (easy.get("note") or "")))
+        else:
+            out.append(PrescribedSession(
+                day_of_week=d, session_type="rest", label="Rest or walk", duration_min=0, is_rest=True,
+                notes="Walk if you like; 8–10k steps counts as easy cardio."))
     return out
 
 
@@ -692,7 +860,7 @@ def _plan_session(plan: dict, session_type: str, dow: int, done: bool) -> Prescr
            for e in spec.get("exercises", [])]
     label = spec.get("label", session_type) + (" ✓" if done else "")
     return PrescribedSession(day_of_week=dow, session_type=session_type, label=label,
-                             duration_min=int(plan.get("session_length_min", 40)), exercises=exs,
+                             duration_min=int(spec.get("duration_min") or plan.get("session_length_min", 40)), exercises=exs,
                              notes=("Done" if done else ("Proposed — log what you do and it adapts" if spec.get("status") == "proposed" else None)))
 
 

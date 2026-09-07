@@ -39,6 +39,7 @@ TEMPLATE = Path(__file__).with_name("dashboard_template.html")
 # Fixed, shared path (NOT tempdir) so the bot/build process and the HadleyAPI
 # service — separate processes with different %TEMP% — read/write the same file.
 LOCAL_HTML = Path(__file__).resolve().parents[2] / "data" / "reset-cut-dashboard.html"
+LOCAL_PAGES_DIR = LOCAL_HTML.parent / "session-pages"   # built session pages (LAN mirror)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
@@ -434,11 +435,17 @@ async def _training_payload(programme: dict | None, library: dict) -> dict | Non
             "session_type": nxt["session_type"], "label": nxt.get("label"), "status": nxt.get("status"),
             "order_variant": nxt.get("order_variant"), "rest_gap_ok": nxt.get("rest_gap_ok"),
             "days_since_last_strength": nxt.get("days_since_last_strength"),
+            "duration_min": nxt.get("duration_min"), "page": nxt.get("page"),
             "exercises": [{"name": e["name"], "sets": e["sets"], "target_reps": e["target_reps"],
                            "weight_kg": e["weight_kg"], "action": e["action"], "reason": e["reason"],
                            "last_kg": (e.get("last") or {}).get("top_weight")} for e in nxt.get("exercises", [])],
         },
-        "next_hard": {k: next_hard.get(k) for k in ("modality", "stage", "reason", "peak_seconds", "hard_level", "peak_level", "note")},
+        "next_hard": {k: next_hard.get(k) for k in ("modality", "stage", "reason", "peak_seconds", "hard_level", "peak_level", "note", "modality_note")},
+        "schedule": tp.schedule_for(plan),
+        "pages": [{"session_type": st, "label": (plan.get("sessions", {}).get(st) or {}).get("label", st),
+                   "page": (plan.get("sessions", {}).get(st) or {}).get("page"),
+                   "duration_min": (plan.get("sessions", {}).get(st) or {}).get("duration_min")}
+                  for st in tp.active_session_types(plan) if (plan.get("sessions", {}).get(st) or {}).get("page")],
         "next_hard_blocks": next_hard.get("protocol"),
         "sessions": sessions,
         "load_series": load_series,
@@ -629,8 +636,8 @@ async def _build_data() -> dict:
         "targets": [
             ["Calories", f"~{int(tgt_cal):,} kcal"], ["Protein", protein_target_str],
             ["Water", "3 L (3.5 L training days)"], ["Steps", f"{steps_aim_k}k/day"],
-            ["Strength", f"{strength_n} × 40 min gym / week" if plan_driven else f"{strength_n} × 30 min / week"],
-            *([["Cardio", "5 easy + 1 hard (stairmaster) / week"]] if plan_driven else []),
+            ["Strength", f"{strength_n} × 40–45 min gym / week (Mon · Tue · Thu · Sat)" if plan_driven else f"{strength_n} × 30 min / week"],
+            *([["Cardio", "1 hard (Wed — stairmaster pyramid or equivalent) + easy Fri 30–40 min; optional 10–20 min after lifts; 8–10k steps counts"]] if plan_driven else []),
             ["Mobility", "10 min daily"],
             ["Sleep", "8h · 22:30–06:30"],
         ],
@@ -640,10 +647,14 @@ async def _build_data() -> dict:
             f"Calories are ~{int(tgt_cal):,} now and auto-ease as you lose weight (the deficit stays honest "
             "as BMR drops). Steps are the accelerator, not the foundation: a sedentary day still loses fat, "
             "an active one loses more — so a low-step day is never a failure.",
-            ("Training is a 3-day gym split (upper / lower / full body) on pin-loaded machines with double progression: "
-             "every set at target with two reps in reserve earns one plate; a failed set holds; two failed sessions deload. "
-             "Cardio is five easy sessions plus one hard stairmaster pyramid a week. Hip rule: sharp or pinching pain means "
-             "stop and switch to the bike. Breakfast and lunch are locked for simplicity; dinner flexes with the family."
+            ("Training is a standing week from 7 Sep: Upper A push (Mon), Lower A (Tue), Upper B pull (Thu) and a light "
+             "full body (Sat) on machines and dumbbells with double progression: every set at target with two reps in "
+             "reserve earns one plate; a failed set holds; two failed sessions deload. The weaker (left) side leads on "
+             "single-arm / single-leg work and the stronger side matches its reps. Cardio is one hard session a week "
+             "(Wed — the stairmaster pyramid is the example, any hard modality is interchangeable) plus easy cardio on "
+             "Friday, optional short easy cardio after lifts, and 8–10k-step days count. No second hard session before "
+             "week 6. Hip rule: sharp or pinching pain means stop and switch to the bike. Breakfast and lunch are locked "
+             "for simplicity; dinner flexes with the family."
              if plan_driven else
              "Training is bodyweight + bands + light (<5 kg) loads, hip- and sciatica-friendly (no running, no loaded "
              "spinal flexion). Breakfast and lunch are locked for simplicity; dinner flexes with the family."),
@@ -651,7 +662,7 @@ async def _build_data() -> dict:
         "rules": [
             phase.get("rule") or f"Hit ~{tgt_pro} g protein.",
             "Log everything (the coach tracks it).",
-            (f"Lift {strength_n}× (any days, a rest day between), 5 easy + 1 hard cardio, 10-min hip mobility every day."
+            (f"Lift {strength_n}× on the fixed days (Mon · Tue · Thu · Sat), 1 hard cardio (Wed), easy cardio Fri, 10-min hip mobility every day."
              if plan_driven else f"Walk daily, lift {strength_n}×, 10-min hip mobility every day."),
             "Bed 22:30, caffeine before noon, last food ≥2h before bed.",
             "Weigh in each Monday on the Withings Body scale — that's your checkpoint.",
@@ -741,10 +752,12 @@ def _resolve_surge() -> str:
     return "surge"
 
 
-def _deploy(html: str, domain: str) -> bool:
+def _deploy(html: str, domain: str, extra_files: dict[str, str] | None = None) -> bool:
     d = Path(tempfile.mkdtemp(prefix="reset-cut-"))
     (d / "index.html").write_text(html, encoding="utf-8")
     (d / "200.html").write_text(html, encoding="utf-8")  # SPA fallback
+    for fn, body in (extra_files or {}).items():         # session pages (upper-a.html …)
+        (d / fn).write_text(body, encoding="utf-8")
     env = dict(os.environ)
     # SURGE_LOGIN/SURGE_TOKEN in .env make this non-interactive.
     # On Windows surge is surge.cmd — invoke via cmd /c so PATH resolution +
@@ -787,9 +800,36 @@ async def build_and_deploy(deploy: bool = True) -> dict:
     LOCAL_HTML.parent.mkdir(parents=True, exist_ok=True)
     LOCAL_HTML.write_text(plain_html, encoding="utf-8")
     result["local"] = str(LOCAL_HTML)
+    # Session pages (Upper A / Lower A / Upper B / Full body) with the API's
+    # next-session targets baked in; deployed next to index.html and mirrored
+    # locally for GET /fitness/session-pages/<name>.
+    pages = await _session_pages(data["generated_at"])
+    LOCAL_PAGES_DIR.mkdir(parents=True, exist_ok=True)
+    for fn, body in pages.items():
+        (LOCAL_PAGES_DIR / fn).write_text(body, encoding="utf-8")
+    result["session_pages"] = sorted(pages)
     if deploy:
-        result["deployed"] = _deploy(enc_html, domain)
+        result["deployed"] = _deploy(enc_html, domain, pages)
     return result
+
+
+async def _session_pages(generated_at: str) -> dict[str, str]:
+    """Render every session page with that session's next-session targets.
+    A target lookup failure degrades to the page's static suggestions — the
+    dashboard build must never fail because of a page."""
+    from domains.fitness import session_pages as sp
+    targets: dict[str, dict] = {}
+    for name, session_type in sp.PAGE_SESSIONS.items():
+        try:
+            bundle = await fit.next_session_bundle(session_type)
+            targets[name] = sp.page_targets(bundle, generated_at)
+        except Exception as e:
+            logger.warning(f"Dashboard: session-page targets failed for {name}: {e}")
+    try:
+        return sp.build_pages(targets)
+    except Exception as e:
+        logger.error(f"Dashboard: session pages not built: {e}")
+        return {}
 
 
 if __name__ == "__main__":

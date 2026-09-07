@@ -361,7 +361,7 @@ async def get_mobility_today():
 
 
 @router.get("/next-session")
-async def get_next_session(type: Optional[str] = Query(None, description="upper | lower | full_body — omit for the rotation's next")):
+async def get_next_session(type: Optional[str] = Query(None, description="upper_a | lower_a | upper_b | full_body — omit for the rotation next")):
     """Next strength session with per-exercise targets derived from logged history.
 
     Double progression: every set at/above target with >= 2 reps in reserve ->
@@ -476,8 +476,12 @@ async def log_cardio(req: LogCardioRequest):
     programme = await fit.get_active_programme()
     plan, _ = await fit.get_plan_or_default()
     protocol = req.protocol
-    if protocol is None and req.intensity == "hard" and req.modality == (plan.get("cardio", {}).get("hard", {}).get("modality", "stairmaster")):
-        template = plan["cardio"]["hard"].get("protocol") or []
+    hard_cfg = plan.get("cardio", {}).get("hard", {})
+    # The stairmaster is only the plan's worked example: the block shortcuts (work/peak level,
+    # peak seconds) instantiate the pyramid for ANY hard session — bike/rower/treadmill included.
+    hard_modalities = set(hard_cfg.get("modalities") or []) | {hard_cfg.get("modality", "stairmaster")}
+    if protocol is None and req.intensity == "hard" and (hard_cfg.get("modality_is_example") or req.modality in hard_modalities):
+        template = hard_cfg.get("protocol") or []
         if template and any(v is not None for v in (req.peak_level, req.work_level, req.peak_seconds, req.hard_seconds)):
             protocol = fit.tp.build_protocol(template, hard_level=req.work_level, peak_level=req.peak_level or req.work_level,
                                              peak_seconds=req.peak_seconds, hard_seconds=req.hard_seconds)
@@ -767,6 +771,28 @@ async def dashboard_page():
         except Exception as e:
             return HTMLResponse(f"<h1>Dashboard not built yet</h1><p>{e}</p>", status_code=503)
     return HTMLResponse(_DASH_HTML.read_text(encoding="utf-8"))
+
+
+_PAGES_DIR = _DASH_HTML.parent / "session-pages"   # matches dashboard_site.LOCAL_PAGES_DIR
+
+
+@router.get("/session-pages/{name}", response_class=HTMLResponse)
+async def session_page(name: str):
+    """Serve a built session page (upper-a | lower-a | upper-b | full-body) over the LAN.
+    Same file the surge deploy ships; targets are those baked in at the last build."""
+    from domains.fitness import session_pages as sp
+    name = name.removesuffix(".html")
+    if name not in sp.PAGE_SESSIONS:
+        return HTMLResponse(f"<h1>Unknown session page</h1><p>Known: {', '.join(sorted(sp.PAGE_SESSIONS))}</p>", status_code=404)
+    built = _PAGES_DIR / f"{name}.html"
+    if built.exists():
+        return HTMLResponse(built.read_text(encoding="utf-8"))
+    # Not built yet — render live with fresh targets (no deploy).
+    try:
+        bundle = await fit.next_session_bundle(sp.PAGE_SESSIONS[name])
+        return HTMLResponse(sp.render_page(name, sp.page_targets(bundle, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))))
+    except Exception as e:
+        return HTMLResponse(f"<h1>Session page not built yet</h1><p>{e}</p>", status_code=503)
 
 
 @router.get("/dashboard/refresh/status")

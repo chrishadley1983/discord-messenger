@@ -85,8 +85,8 @@ Trajectory: −0.65 kg/wk ✅ (target −0.77)
 Calories: 6/7 days ✅ (avg 1,920 / 1,950)
 Protein: 5/7 days (avg 162 / 170g)
 Steps: 5/7 days (avg 12,800 / 12,000) ✅
-Strength: 3/3 sessions ✅✅✅ (next: lower)
-Cardio: 5/5 easy · 1/1 hard (avg 128 bpm)
+Strength: 4/4 sessions ✅✅✅✅ (next: upper_a)
+Cardio: 1/1 hard · 1/1 easy (avg 128 bpm)
 Load up: lat pulldown 33→35.5 kg | Stalled: —
 Mobility: 6/7 days
 

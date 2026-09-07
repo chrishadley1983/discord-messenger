@@ -33,7 +33,7 @@ are the authoritative numbers for "what can I eat today" and how to frame protei
   multiplier once Chris reaches a healthy BMI. Always read the live number from
   `nutrition.target_protein` / `GET /fitness/goal` — never hardcode it.
 - **Steps:** 15k baseline (NEAT is the biggest fat-loss lever)
-- **Training:** 3x/week gym (upper / lower / full body, ~40 min) + 5 easy + 1 hard cardio — see **Training — the plan is DATA**
+- **Training:** standing week from w/c 7 Sep 2026 — 4 lifts (Mon Upper A push · Tue Lower A · Thu Upper B pull · Sat full body light, 40–45 min) + 1 hard cardio (Wed) + easy cardio Fri — see **Training — the plan is DATA**
 - **Mobility:** daily 10-min routine
 
 ### Activity Multipliers (recalibrated for walking-heavy lifestyles)
@@ -119,8 +119,37 @@ time via `PUT /fitness/goal`.
 ### Training — the plan is DATA (Sep 2026, gym version)
 
 Since 5 Sep 2026 Chris trains at TSC Tonbridge (pin-loaded Life Fitness
-machines) on a **3-day split: upper / lower / full body**, plus **5 easy + 1
-hard cardio sessions a week** (the hard one is a 20-min stairmaster pyramid).
+machines + dumbbells). **From w/c 7 Sep 2026 it is a fixed standing week**
+(plan v6; the 3-day any-days rotation of 5–6 Sep is superseded):
+
+| Day | Session | Page | Duration |
+|---|---|---|---|
+| Mon | **Upper A — push** (`upper_a`): flat DB press, incline DB press, machine shoulder press, DB flye, incline DB curl | `upper-a.html` | 40 min |
+| Tue | **Lower A** (`lower_a`): leg press, DB RDL, seated leg curl, DB split squat, hip abduction, leg-press calf raise | `lower-a.html` | 45 min |
+| Wed | **Hard cardio** — 20-min pyramid, hard blocks L9, peak 90 s. The stairmaster is the worked example only; bike / rower / treadmill intervals are interchangeable | `stairmaster-pyramid.html` | 20 min |
+| Thu | **Upper B — pull** (`upper_b`): lat pulldown, seated row, light chest press (2 sets, RPE 7), face pull, lateral raise, tricep pushdown | `upper-b.html` | 45 min |
+| Fri | **Easy cardio** 30–40 min, RPE 3–4 | — | — |
+| Sat | **Full body, light** (`full_body`): goblet squat, cable pull-through, single-arm row, light chest press, kneeling cable crunch | `full-body.html` | 40 min |
+| Sun | Rest or walk | — | — |
+
+- Easy cardio (bike/walk, RPE 3–4, 10–20 min) is **optional** after the Mon/Tue/Thu/Sat lifts.
+  A day of **8–10k steps counts as easy cardio**. Only the Friday session is a target
+  (`weekly.cardio_easy = 1`); extras are a bonus, never a nag.
+- **No second hard cardio session before plan week 6** (w/c 12 Oct; plan week 1 = w/c 7 Sep,
+  `schedule_from`). Plan-week numbering, not programme-week, gates the cardio extension too.
+- Upper and lower sit on consecutive days by design (`min_rest_days_between_strength = 0`);
+  never two upper sessions back to back.
+- **Weaker (left) side leads** on unilateral work (split squat, incline curl, single-arm row);
+  the stronger side matches its reps. **Log reps-in-reserve on the last set** of each exercise.
+- Session types `upper` (machines, 5 Sep) and `upper_db` (dumbbells, 6 Sep) are **retired** —
+  kept in the plan only so history resolves. Log Mon as `upper_a`, Thu as `upper_b`.
+- **Session pages** (phone): `https://chris-reset-cut.surge.sh/upper-a.html` · `lower-a.html` ·
+  `upper-b.html` · `full-body.html` (also `GET /fitness/session-pages/<name>` on the LAN, and
+  linked from the dashboard Training tab). Each shows the API's next-session target per exercise
+  (baked in at the last dashboard rebuild), keeps the weights he types on the phone, and clears
+  the set ticks automatically on a new day. "Reset ticks" never touches weights. The pages do
+  **not** log — he still tells Peter what he did (`log-workout`).
+
 The programme row has `split = plan`; the actual plan lives in
 `fitness_training_plans` and is versioned. **Never describe the old bodyweight
 4x upper/lower plan — it is superseded.**
@@ -136,15 +165,20 @@ The programme row has `split = plan`; the actual plan lives in
 - Double progression: every set at/above target reps with >= 2 reps in reserve -> **one plate up**.
 - A failed set -> **hold** the load, aim for clean sets. Failed two sessions running at the same load -> **~10% deload** and rebuild.
 - Same top load for 3 sessions -> **stall** flag (advisor) -> change one lever (a rep per set, 3-s lowering, or a plate down and rebuild).
-- Upper session order alternates **A/B** so shoulder press is not always pre-fatigued.
-- >= 1 rest day between strength sessions (`rest_gap_ok`). Rotation upper -> lower -> full body, any days.
-- Stairmaster pyramid: peak block to a full 120 s at the current level -> +30 s on the other hard blocks -> raise the level; week 4+ extend to 25-30 min. **Hip rule:** sharp/pinching pain -> stop, switch to the bike; recurring -> physio screen (`pain_flag` on the cardio log).
+- Fixed days (see table above); `rest_gap_ok` is only false when he already lifted **today**.
+  Rotation Upper A -> Lower A -> Upper B -> full body. Machine shoulder press comes after two
+  dumbbell presses on Upper A — expect it pre-fatigued (no A/B order swap any more).
+- Hard-cardio pyramid (stairmaster or any hard modality — `intensity: hard` is what counts):
+  peak block to a full 120 s at the current level -> +30 s on the other hard blocks -> raise the
+  level; plan week 4+ (w/c 28 Sep) extend to 25-30 min. **Hip rule:** sharp/pinching pain -> stop,
+  switch to the bike; recurring -> physio screen (`pain_flag` on the cardio log).
 - In a deficit, holding a load for a few sessions is normal. Say so.
 
 **Garmin + Fitbod (Phase 2):** watch-recorded activities sync to `garmin_activities` every
 morning and link to logged cardio/strength by date (HR + calories copied across); recorded
-cardio nobody logged is auto-created (`source: garmin`) so it counts toward the 5 easy
-sessions — never double-log it. On demand: `POST /fitness/garmin/sync`. Fitbod exports (CSV
+cardio nobody logged is auto-created (`source: garmin`) so it counts toward the easy
+target — never double-log it. Garmin can only infer `hard` for stair-climbing; a hard bike /
+rower session must be logged through Peter (`intensity: hard`) or it lands as easy. On demand: `POST /fitness/garmin/sync`. Fitbod exports (CSV
 dropped in Discord or emailed) import via skill `fitbod-import` → `POST /fitness/import/fitbod`
 (dry-run first). The dashboard Training tab shows this week, the next session with targets,
 load progress per exercise, recent sessions and the cardio log.
