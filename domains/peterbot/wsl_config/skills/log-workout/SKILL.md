@@ -26,20 +26,25 @@ channel: null
 
 ## Purpose
 
-Chris trains a 3-day split (upper / lower / full body) on pin-loaded Life
-Fitness machines at TSC Tonbridge, inside the Reset Cut deficit. He types what
-he did — loads, sets × reps, how it felt — and you (1) log it exactly,
-(2) let the plan adapt to anything off-plan, (3) coach the next session from
-the response. The API does the progression maths; you parse and present.
+Chris trains a fixed standing week (from w/c 7 Sep 2026) at TSC Tonbridge on
+machines + dumbbells, inside the Reset Cut deficit: **Mon Upper A (push) ·
+Tue Lower A · Thu Upper B (pull) · Sat full body (light)**, plus hard cardio
+Wed and easy cardio Fri. He types what he did — loads, sets × reps, how it
+felt — and you (1) log it exactly, (2) let the plan adapt to anything
+off-plan, (3) coach the next session from the response. The API does the
+progression maths; you parse and present.
 
-Read `FITNESS.md` → "Gym training log + adaptive plan" for the rules.
+Read `FITNESS.md` → "Training — the plan is DATA" for the rules and the full
+exercise table.
 
 ## Workflow
 
-1. **Detect the session type**: `upper` / `lower` / `full_body` / `upper_db`. "Upper body",
-   "push/pull day" on the machines → `upper`. Dumbbell upper (flat/incline DB press, flye,
-   incline curl) → `upper_db`. "Legs" → `lower`. Anything else he names (e.g. "arms") → use
-   that word as `session_type` (snake_case); the plan will add it.
+1. **Detect the session type**: `upper_a` / `lower_a` / `upper_b` / `full_body`.
+   "Upper A", "push day", Monday, flat/incline DB press + shoulder press + flye + curls → `upper_a`.
+   "Upper B", "pull day", Thursday, pulldown + row + face pull + lateral raise + pushdown → `upper_b`.
+   "Legs", "Lower A", Tuesday → `lower_a`. "Full body", Saturday → `full_body`.
+   (`upper` and `upper_db` are the retired 5–6 Sep sessions — never log new sessions to them.)
+   Anything else he names (e.g. "arms") → use that word as `session_type` (snake_case); the plan will add it.
    **Different days are always different sessions (Chris, 6 Sep 2026).** Never fold a
    day's exercises into an existing session type just because the body part matches — if
    the exercise set differs from the plan's session of that name (other equipment, other
@@ -53,11 +58,17 @@ Read `FITNESS.md` → "Gym training log + adaptive plan" for the rules.
    - `Chest press 25 kg, 3×10, failed rep 7 of set 3` → sets 1-2 reps 10, set 3 reps 6 **failed:true**, target_reps 10
    - `Shoulder press 25 kg, 3×10, failed on final rep` → set 3 reps 9 failed:true
    - "a few in reserve" → rir 3 · "a couple left" → rir 2 · "one left" → rir 1 · "to failure" → rir 0 · not stated → omit (null)
-   - Always set `target_reps` to the prescribed reps (10 unless he says otherwise).
-   - Slugs: `lat-pulldown`, `chest-press`, `seated-row`, `shoulder-press`, `leg-press`,
-     `leg-extension`, `seated-leg-curl`, `hip-abduction`, `seated-calf-raise`, `pec-fly`,
-     `rear-delt-fly`, `cable-face-pull`, `cable-curl`, `triceps-pushdown`, `lateral-raise`,
-     `assisted-pull-up`, `cable-glute-kickback`, `cable-pallof-press`. Full list:
+   - Always set `target_reps` to the prescribed reps (10 unless he says otherwise; incline DB press is 8,
+     flye/leg curl/pushdown 12, face pull/abduction/calf raise 15 — read `GET /fitness/plan`).
+   - RIR is logged on the **last set** of each exercise by design; put it on that set, leave the others null.
+   - Unilateral work (split squat, incline curl, single-arm row): weaker **left** side leads, right matches.
+     Log the reps the left side did; note a left-side failure in `notes`. Incline curl has a 4th left-only set.
+   - Slugs — Upper A: `db-flat-bench-press`, `db-incline-press`, `shoulder-press`, `db-flye`, `db-incline-curl`.
+     Lower A: `leg-press`, `db-romanian-deadlift`, `seated-leg-curl`, `db-split-squat`, `hip-abduction`,
+     `leg-press-calf-raise`. Upper B: `lat-pulldown`, `seated-row`, `chest-press`, `cable-face-pull`,
+     `lateral-raise`, `triceps-pushdown`. Full body: `goblet-squat`, `cable-pull-through`, `single-arm-db-row`,
+     `chest-press`, `kneeling-cable-crunch`. Others: `leg-extension`, `seated-calf-raise`, `pec-fly`,
+     `rear-delt-fly`, `cable-curl`, `assisted-pull-up`, `cable-glute-kickback`, `cable-pallof-press`. Full list:
      `GET /fitness/exercises`. An unknown movement → invent a kebab-case slug and
      pass `exercise_name` + `category` (push/pull/legs/core) so it's auto-created.
 
@@ -104,7 +115,7 @@ Lat pulldown 33 kg 3×10 (3 RIR) · Chest press 25 kg 10/10/6✗ · Seated row 3
 • Chest press — hold 25 kg, aim a clean 3×10
 • Lat pulldown — up one plate
 
-**This week:** strength 1/3 (next: lower) · cardio 1/5 easy, 1/1 hard
+**This week:** strength 1/4 (next: lower_a) · cardio 0/1 hard, 0/1 easy
 🎉 PRs / plan: (only if `progressions_this_week` or `plan_changes` is non-empty)
 
 [1 line of coaching — from `reason` fields, the rest-gap flag, or the deficit context. No softeners.]
@@ -118,5 +129,5 @@ Lat pulldown 33 kg 3×10 (3 RIR) · Chest press 25 kg 10/10/6✗ · Seated row 3
   is null on an `increase`, say "one plate up" and ask him to tell you the new number next time.
 - Off-plan is fine: the plan adapts. Never tell him he "should have" done the planned session.
 - Hip: if he mentions sharp/pinching pain, echo the plan rule (stop, bike) and put it in `notes`.
-- A/B order alternates automatically (`order_variant`); mention it so shoulder press isn't always last.
+- Exercise order is fixed per page (no A/B swap on the standing week; `order_variant` is null). Mon→Tue back-to-back lifts are by design — never flag them.
 - Weekly accountability goal `fitness_strength_week` auto-updates after the POST.

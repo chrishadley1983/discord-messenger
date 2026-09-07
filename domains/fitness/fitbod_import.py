@@ -183,9 +183,20 @@ async def import_sessions(sessions: list[dict], *, dry_run: bool = False, skip_i
     for e in existing:
         by_day[str(e["session_date"])].append(e)
     programme = await fit.get_active_programme()
+    # Fitbod only tells us the body region (upper / lower / full_body). Map that onto
+    # the plan's ACTIVE session types (Tue leg day -> lower_a, upper -> upper_a …) so an
+    # import never lands in a retired session or grafts a new one onto the rotation.
+    plan = None
+    if programme and programme.get("split") == "plan":
+        try:
+            plan, _ = await fit.get_plan_or_default()
+        except Exception as e:
+            logger.warning(f"fitbod: plan lookup failed, keeping inferred session types: {e}")
 
     imported, skipped, out = 0, [], []
     for s in sessions:
+        if plan is not None:
+            s["session_type"] = fit.tp.resolve_session_type(plan, s["session_type"], date.fromisoformat(s["session_date"]))
         if s["external_id"] in by_ext:
             skipped.append({"date": s["session_date"], "reason": "already imported"})
             continue

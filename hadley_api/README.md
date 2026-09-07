@@ -302,6 +302,7 @@ Weekly meal plan management with Google Sheets import, Gousto email integration,
 **Meal History:**
 - `POST /meal-plan/history` - Log a meal (body: `{date, meal_name, recipe_source?, protein_type?, rating?, would_make_again?, notes?}`)
 - `GET /meal-plan/history?days=14` - Get recent meal history
+- `GET /nutrition/search?q=<words>&days=90&limit=20` - Search the nutrition log by description (all words must match, case-insensitive); the "have I logged this product before" lookup (`peter_routes/nutrition_search.py`)
 - `PATCH /meal-plan/history/{meal_id}/rating` - Rate a meal (body: `{rating, would_make_again?, notes?}`)
 
 **Recipes (Family Fuel):**
@@ -545,12 +546,12 @@ All routes in `hadley_api/fitness_routes.py`. See `docs/playbooks/FITNESS.md` fo
   - When the programme `split` is `plan`, the response also carries `plan_changes` (what the plan adapted), `next_time` (the next-session prescription for this session type) and `week` (training summary) so the skill can coach in one reply
 
 **Gym training log + adaptive plan (Sep 2026)** — the programme is data in `fitness_training_plans`, not code:
-- `GET /fitness/next-session?type=upper` — next strength session; per-exercise `{action: increase|hold|deload|start, weight_kg, reason, last}` derived from logged history (double progression: all sets at target with >= 2 RIR -> one plate up; failed set -> hold; failed twice running -> ~10% deload). Omit `type` for the rotation's next. Includes `order_variant` (A/B), `rest_gap_ok`, `days_since_last_strength`
+- `GET /fitness/next-session?type=upper_a` — next strength session (`upper_a | lower_a | upper_b | full_body`; `upper`/`upper_db` are retired); per-exercise `{action: increase|hold|deload|start, weight_kg, reason, last, note?, unilateral?, light?}` derived from logged history (double progression: all sets at target with >= 2 RIR -> one plate up; failed set -> hold; failed twice running -> ~10% deload). Omit `type` for the rotation's next. Includes `duration_min` + `page` (per session), `order_variant` (legacy A/B), `rest_gap_ok`, `days_since_last_strength`
 - `GET /fitness/workouts?days=28` — logged sessions with sets embedded
-- `POST /fitness/cardio` — log a cardio session (auth). Body: `{modality, intensity: easy|hard, duration_min, protocol?: [{phase, seconds, level}], work_level?, peak_level?, peak_seconds?, hard_seconds?, avg_hr?, max_hr?, calories?, rpe?, limiter?, pain_flag?, notes?, session_date?}`. For a hard stairmaster session the shortcuts instantiate the plan pyramid. Returns `week` + `next_hard` (`stage: start|extend_peak|extend_hard|raise_level|pain_swap`, `protocol`, `reason`)
+- `POST /fitness/cardio` — log a cardio session (auth). Body: `{modality, intensity: easy|hard, duration_min, protocol?: [{phase, seconds, level}], work_level?, peak_level?, peak_seconds?, hard_seconds?, avg_hr?, max_hr?, calories?, rpe?, limiter?, pain_flag?, notes?, session_date?}`. For ANY hard session the shortcuts instantiate the plan pyramid (the stairmaster is only the worked example — `cardio.hard.modality_is_example`; bike/rower/treadmill are interchangeable). Returns `week` + `next_hard` (`stage: start|extend_peak|extend_hard|raise_level|pain_swap`, `modality` = last hard session's, `modality_is_example`, `modality_note`, `protocol`, `reason`)
 - `GET /fitness/cardio?days=28` — cardio history
 - `GET /fitness/training-summary` — this ISO week: `strength {done, target, next}`, `cardio {easy_done, easy_target, hard_done, hard_target, minutes}`, `progressions_this_week`, `stalled`
-- `GET /fitness/plan` — active plan (`seeded=false` = built-in default served). `GET /fitness/plan/history` — versions
+- `GET /fitness/plan` — active plan (`seeded=false` = built-in default served). `GET /fitness/plan/history` — versions. Plan v6 (7 Sep 2026) is a **standing week**: `schedule` = 7 entries Mon..Sun (`session_type | cardio_hard | cardio_easy | rest`), `schedule_from` = Monday of plan week 1 (gates `cardio.hard.extend_from_week` / `second_session_from_week`), per-session `duration_min` + `page`, `weekly.min_rest_days_between_strength = 0`, `cardio.easy.steps_count_as_easy`, sessions with `status: retired` kept for history only
 - `PUT /fitness/plan` — new version (auth). Body: `{plan}` (replace) | `{patch}` (targeted: `session_type` + `remove`/`add`/`set`, `weekly`, `rotation`, `constraints_add`, `cardio`) | `{use_default: true}`; always with `rationale`, `created_by`
 - **Phase 2 — Garmin activities + Fitbod import:**
   - `POST /fitness/garmin/sync?days=7` (auth) — pulls recent Garmin activities into `garmin_activities`, links logged cardio (same date + compatible modality, copies HR/calories) and strength sessions (same-day `strength_training`), and auto-creates `source=garmin` cardio rows for recorded activities nobody logged (>= 15 min; stair climbing = hard, else easy). Runs automatically after the morning Garmin daily sync. Returns `{sync: {fetched, upserted}, link: {linked_cardio, linked_strength, created_cardio, activities}}`
@@ -558,7 +559,8 @@ All routes in `hadley_api/fitness_routes.py`. See `docs/playbooks/FITNESS.md` fo
   - `POST /fitness/import/fitbod` (auth) — body `{csv | file_path, dry_run, include_warmups, skip_if_day_logged}`; groups a Fitbod export per day, maps names → slugs (unknown auto-created), infers `upper|lower|full_body`, logs via the normal path (plan adapts), dedupes on `external_id` (content hash) and same-day Peter logs. Returns `{parsed, imported, skipped: [{date, reason}], sessions, dry_run}`
   - `POST /fitness/cardio` now returns `garmin_linked` and fills HR/calories from an already-synced same-day activity
   - `/fitness/weekly-review` carries a `training` block (strength vs plan target + next, cardio easy/hard + avg HR + Garmin matches, progressions, stalls); the `weekly-health` fetcher exposes the same as `training`
-- `/fitness/today`, `/fitness/dashboard` and the advisor read the plan-aware week view when `split == plan` (logged sessions on their real days, remaining rotation projected onto free days with >= 1 rest day between)
+- `GET /fitness/session-pages/{upper-a|lower-a|upper-b|full-body}` — the phone-facing workout page for that session (single-file HTML from `domains/fitness/session_pages/pages/`, shared runtime `runtime.js`); serves the copy built by the last dashboard build (targets from `next-session` baked in), or renders live if not built yet. The same files deploy to `https://chris-reset-cut.surge.sh/<name>.html` with every dashboard build. Ticks are per-day (auto-clear tomorrow) and weights persist per exercise in the phone's localStorage; Reset clears ticks only
+- `/fitness/today`, `/fitness/dashboard` and the advisor read the plan-aware week view when `split == plan` (logged sessions on their real days; with a `schedule` the remaining lifts sit on their fixed days from today — an earlier unlogged day shows as "missed", it is not pushed later; without one the rotation is projected onto free days with >= `min_rest_days_between_strength` between)
 - `POST /fitness/mobility` — log a mobility slot (auth required)
   - Body: `{slot: "morning"|"evening"|"adhoc", duration_min, routine}`
 - `POST /fitness/programme/start` — one-shot programme init (auth required)
@@ -591,6 +593,47 @@ Tables:
 - `garmin_activities` — per-activity Garmin sync (type, duration, HR, calories); `fitness_workout_sessions.source/external_id/garmin_activity_id` + `fitness_cardio_sessions.source` record provenance (peter / fitbod / garmin)
 - `fitness_mobility_sessions` — mobility slots (morning/evening unique per day)
 - `fitness_weekly_checkins` — persisted Sunday snapshots
+
+### 11+ Practice (Kids)
+
+Routes in `hadley_api/peter_routes/practice_marks.py` (printed 11+ Mate papers) and
+`hadley_api/peter_routes/practice_books.py` (physical books). Both read/write the
+`practice` schema with the service role. Spec: `docs/features/11plus-book-work/spec.md`.
+
+Printed papers (feed the allocator via the `practice-results` Edge Function):
+- `GET /practice/papers/recent?days=7` — recently allocated papers, so "the shapes paper" can be matched to a `paper_id`
+- `POST /practice/marks` — `{student, paper_id, score, total=20, wrong?: [q numbers], paper_date?, time_taken?}`
+
+Physical book work (NOT allocator-linked — separate `practice.books` / `practice.book_work` tables):
+- `GET /practice/books?active=true&family=HADLEY` — family catalogue: `short_name`, `title`, `subject`, `age_band`, `unit_label`, `total_units`, `aliases`
+- `POST /practice/books` — add/update a book by `short_name` (`title`, `subject` in maths|english|verbal_reasoning|non_verbal_reasoning|mixed, `publisher?`, `age_band?`, `unit_label?`, `total_units?`, `aliases?`, `active?`)
+- `POST /practice/book-work` — `{student, book, unit_ref, score?, total?, notes?, wrong_questions?, work_date?, time_taken_minutes?, supervised_by?, raw_message}`
+  - `book` resolves short_name → alias → title substring; 404 returns `known_books`, 409 returns `candidates`
+  - upserts on (student, book, unit_ref, work_date); response has `updated_existing`, `entry`, `progress`
+- `GET /practice/book-work/recent?student=Max&days=7` — entries newest first
+- `GET /practice/book-work/progress?student=Emmie&book=vr` — per book: `units_done`, `total_units`, `avg_pct`, `best/worst`, `last_date`
+
+## Accountability & Habit Tracker
+
+Goals/mood/journal under `/accountability/*` (all auth required). Key reads:
+- `GET /accountability/goals` — active goals + computed status (auto-sourced goals read from their source table)
+- `GET /accountability/summary` — all goals + mood + journal for the dashboard (batched queries)
+- `GET /accountability/report?period=week|month` — aggregated report data
+
+Private single-habit tracker (SENSITIVE — the habit is never named in any output):
+- `GET /accountability/habit` — live streak/score stats: `{day_number, current_streak, longest_streak, total_yes, total_no, total_days, last_result, percentage, week_results, week_number, logged_today, start_date}`
+- `POST /accountability/habit` — log a result. Body: `{result: "Y"|"N", date?: "YYYY-MM-DD"}` (defaults today; upserts one row per day)
+- Table `habit_log` (log_date PK, RLS on / service-role only). Consumed by the `habit-checkin` (9pm) and `habit-weekly` (Sun 8pm) skills via data fetchers; the 9pm job auto-skips on day 0 or if already logged.
+
+## Environment Variables
+
+Uses the same `.env` as the main Discord bot:
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REFRESH_TOKEN`
+- `NOTION_API_KEY`
+- `NOTION_TODOS_DATABASE_ID`
+- `NOTION_IDEAS_DATABASE_ID`
 
 ### Model Provider
 

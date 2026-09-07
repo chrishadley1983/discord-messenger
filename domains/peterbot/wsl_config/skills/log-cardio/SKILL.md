@@ -23,18 +23,26 @@ channel: null
 
 ## Purpose
 
-The Reset Cut plan is **5 easy + 1 hard cardio sessions per week**. The hard
-one is a 20-min stairmaster pyramid (levels 1-20). Log every session, and for
-the hard one hand back the next prescription (the API works out the
-progression: peak block to a full 2 min → +30 s on the other hard blocks →
-raise the level; week 4+ extend to 25-30 min).
+The Reset Cut standing week (from w/c 7 Sep 2026) has **1 hard cardio session
+(Wed) + easy cardio Fri (30–40 min, RPE 3–4)**; short easy cardio (10–20 min)
+after the Mon/Tue/Thu/Sat lifts is optional and a day of 8–10k steps counts as
+easy. The hard one is a 20-min pyramid (hard blocks L9, peak 90 s). **The
+stairmaster is only the worked example — bike, rower, treadmill intervals on
+the same block structure are interchangeable; `intensity: hard` is what makes
+it the hard session, not the machine.** No second hard session before plan
+week 6 (w/c 12 Oct). Log every session, and for the hard one hand back the next
+prescription (the API works out the progression: peak block to a full 2 min →
++30 s on the other hard blocks → raise the level; plan week 4+ extend to
+25-30 min).
 
 ## Workflow
 
 1. **Modality**: `stairmaster` / `bike` / `treadmill` / `rower` / `elliptical` / `walk` / `other`.
-2. **Intensity**: `hard` for the interval pyramid or anything he calls hard/intervals; otherwise `easy`.
+2. **Intensity**: `hard` for the interval pyramid on ANY machine or anything he calls hard/intervals; otherwise `easy`.
    A brisk walk logged via Garmin steps still counts as easy cardio if he tells you about it.
-3. **Hard stairmaster shortcuts** (the API builds the block protocol from the plan template):
+   Never tell him a hard bike/rower session "doesn't count" because it wasn't the stairmaster.
+3. **Hard-session shortcuts** — work on every hard modality (the API builds the block protocol from the plan template;
+   "level" means that machine's resistance level):
    - `work_level` — the level of the ordinary hard blocks ("all other hard blocks at L9" → 9)
    - `peak_level` — the peak block level (default = work_level)
    - `peak_seconds` — how long the peak actually lasted ("peak reduced to 90 s" → 90)
@@ -58,7 +66,7 @@ raise the level; week 4+ extend to 25-30 min).
    and `session.avg_hr` / `calories` filled from the activity. Mention the HR if present. If the
    watch activity hasn't synced yet, `POST /fitness/garmin/sync` (auth) pulls the last 7 days and
    links it. Watch-recorded cardio nobody logged gets auto-created (`source: garmin`) by the morning
-   sync, so a recorded walk already counts toward the 5 easy sessions — don't double-log it.
+   sync, so a recorded walk already counts toward the easy target — do not double-log it. Garmin can only infer `hard` for stair-climbing: a hard bike/rower session must be logged here with `intensity: hard` or it lands as easy.
 8. **Read the response**: `week.cardio` (easy/hard done vs target), `next_hard`
    (`modality`, `stage`, `reason`, `protocol[]`, `peak_seconds`, `hard_level`, optional `note`).
 
@@ -70,7 +78,7 @@ raise the level; week 4+ extend to 25-30 min).
 **Next hard session:** all hard blocks L9 · push the peak from 90 s → 120 s
 (warm-up 3 min L5.5 → 1:00 L9 → easy 2:00 → 1:30 L9 → easy → **peak 2:00 L9** → easy → 1:30 L9 → easy → 1:00 L9 → cool-down 2 min)
 
-**This week:** cardio 1/5 easy · 1/1 hard · strength 1/3
+**This week:** cardio 1/1 hard · 0/1 easy · strength 2/4
 [1 line — e.g. "Legs were the limiter, not lungs — that's normal after an upper session; keep the easy days genuinely easy."]
 ```
 
@@ -82,5 +90,5 @@ For easy sessions keep it to two lines: confirmation + week count.
 - Only render the block list for HARD sessions; for easy ones just the count.
 - Present `next_hard.reason` as the coaching line — don't invent a different progression.
 - Hip pain → say the plan rule plainly (stop, switch to bike, physio screen if it recurs).
-- Cardio goal `fitness_cardio_week` (6/week) auto-updates after the POST.
+- Cardio goal `fitness_cardio_week` (2/week: 1 hard + 1 easy) auto-updates after the POST.
 - If the same message also contains a strength session, run `log-workout` too — one reply covering both.

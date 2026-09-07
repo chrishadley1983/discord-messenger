@@ -820,7 +820,8 @@ def _rule_missed_sessions(s: Snapshot) -> Advice | None:
 
 
 def _rule_cardio_behind(s: Snapshot) -> Advice | None:
-    """5 easy + 1 hard per week. Nudge from Thursday if the count is off pace."""
+    """Easy/hard cardio targets come from the plan (Sep 2026: 1 hard + 1 mandated easy, extras optional).
+    Nudge from Thursday if the count is off pace."""
     if s.cardio_easy_target <= 0 or s.day_of_week < 3:
         return None
     days_left = 6 - s.day_of_week
@@ -833,14 +834,14 @@ def _rule_cardio_behind(s: Snapshot) -> Advice | None:
             severity="caution", category="cardio",
             headline=f"Cardio off pace — {s.cardio_easy_week}/{s.cardio_easy_target} easy, {s.cardio_hard_week}/{s.cardio_hard_target} hard",
             detail=f"{days_left} day(s) left. Easy sessions are the cheapest calories in the deficit and a brisk walk counts — this is not a gym-only target.",
-            action="Get the hard stairmaster session in on a non-strength day, and a brisk 30-min walk on every other day that is left.",
+            action="Get the hard session in (stairmaster pyramid or any hard modality) on a non-strength day, and a brisk 30-min walk on every other day that is left.",
         )
     if hard_needed > 0 and days_left <= 2:
         return Advice(
             severity="info", category="cardio",
             headline="Hard cardio session still outstanding this week",
             detail=f"{s.cardio_easy_week}/{s.cardio_easy_target} easy done, but the interval session has not happened yet.",
-            action="Do the stairmaster pyramid tomorrow, legs permitting, or swap to the bike if the hip is talking.",
+            action="Do the hard pyramid tomorrow (stairmaster or any hard modality), legs permitting, or swap to the bike if the hip is talking.",
         )
     if easy_needed > days_left:
         return Advice(
@@ -859,7 +860,7 @@ def _rule_cardio_pain_swap(s: Snapshot) -> Advice | None:
         severity="warning", category="cardio",
         headline="Hip pain flagged on the last hard session",
         detail="The plan rule: sharp or pinching pain means stop, not push. Muscle burn is fine; joint pain is not.",
-        action="Do this week's hard session on the bike. If it recurs on the bike too, book the physio screen before the next stairmaster.",
+        action="Do this week's hard session on the bike. If it recurs on the bike too, book the physio screen before the next hard session.",
     )
 
 
