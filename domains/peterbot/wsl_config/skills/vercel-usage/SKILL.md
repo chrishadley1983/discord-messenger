@@ -43,9 +43,23 @@ Daily check of Vercel usage for **chrishadley1983s-projects** (Hobby/free tier).
 
 ## Data Collection
 
-### Step 1: Query vercel_usage_history in Supabase (PRIMARY SOURCE)
+### Step 1: Read vercel_usage_history via the Hadley API (PRIMARY SOURCE)
 
-The HB cron `/api/cron/vercel-usage` (06:00 UTC daily) pulls the Vercel API and stores every metric here. Use the supabase MCP (project `modjoikyuhqzouxvieua`):
+The local 06:30 scraper task (`HadleyBricks-Vercel-Usage-Scraper`) writes every metric to
+`vercel_usage_history`. Read it through the Hadley API — no MCP involved, so it works even when
+this session's MCP servers failed to start (6–7 Sep 2026: two blank reports because the supabase
+MCP timed out at session start):
+
+```bash
+curl -s "http://172.19.64.1:8100/vercel/usage-history?days=14"
+```
+
+Response: `latest_date`, `scraped_at`, `stale` (true if the newest row is older than today —
+say so, it means the 06:30 scraper didn't run), `snapshot[]` (`key`, `value`, `unit`, `limit`,
+`pct_of_limit`) and `trend{}` per critical metric (`points[]`, `delta`, `per_day`). That is all the
+report needs. Only if the endpoint itself is unreachable fall back to the supabase MCP (project
+`modjoikyuhqzouxvieua`) with the queries below — and if both fail, say the source is unavailable
+rather than inventing numbers.
 
 ```sql
 -- Today's snapshot
@@ -125,7 +139,7 @@ Trend: [improving/stable/worsening] vs last 7 days
 
 ## Rules
 
-- The `vercel_usage_history` Supabase table is the PRIMARY data source — always query it first
+- `GET /vercel/usage-history` (Hadley API) is the PRIMARY data source — always call it first; the supabase MCP is the fallback
 - Vercel native alert emails are supplementary context
 - Metrics are rolling 30-day: always pair the level with the slope
 - If the table has no row for today or yesterday, report the HB vercel-usage cron as broken

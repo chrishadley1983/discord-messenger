@@ -8,6 +8,10 @@
 # Prefer the user-space native Claude Code install (2.1.170+, dynamic
 # workflows) over the stale root-owned npm one at /usr/bin/claude.
 export PATH="$HOME/.local/bin:$PATH"
+# MCP servers here are npx-launched (@latest) and cold-start slowly after a WSL
+# restart; the default 30 s startup timeout left every MCP dead for a whole
+# session (2026-09-06/07: two blank Vercel Usage reports). 2 min is plenty.
+export MCP_TIMEOUT="${MCP_TIMEOUT:-120000}"
 # Static, non-rotating Claude Code OAuth token (see scripts/claude-oauth-env.sh):
 # shared by all WSL sessions so the rotating-refresh-token race can't log them
 # out. No-op until provisioned via scripts/set-claude-oauth-token.sh.

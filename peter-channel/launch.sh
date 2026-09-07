@@ -17,7 +17,7 @@ source "/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/scripts/clau
 # ~1 in 3 starts under WSL load. 90s gives ~4x headroom so the timeout — the
 # root cause of the fallback flapping — effectively stops firing. The watchdog
 # (bot.py) still heals a genuine hang; this just stops the false ones.
-export MCP_TIMEOUT=90000
+export MCP_TIMEOUT="${MCP_TIMEOUT:-120000}"
 set -euo pipefail
 
 CHANNEL_DIR="/mnt/c/Users/Chris Hadley/claude-projects/discord-messenger/peter-channel"

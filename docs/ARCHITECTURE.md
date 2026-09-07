@@ -839,3 +839,23 @@ Run `python scripts/diagnose_memory_health.py` to check:
 - Pending items needing reprocessing
 
 *Last updated: 2026-03-04 — MCP server, chat history ingestion, seeding fixes added*
+
+## 8. Channel Watchdogs (bot.py, APScheduler)
+
+All run inside the Windows bot process and act on the WSL tmux sessions. Each covers a
+failure the others cannot see:
+
+| Watchdog | Every | Detects | Action |
+|----------|-------|---------|--------|
+| `channel_watchdog` (`_launch_channel_sessions`) | 1 min | tmux session missing, or `/health` port down past the cold-start grace | launch / kill+relaunch |
+| `channel_auth_watchdog` (`channel_auth.heal_channel_auth`) | 1 min | expired/corrupt Claude OAuth files, sessions showing `/login` / 401 | refresh Windows token, sync to WSL, restart locked-out sessions; skips the tick when WSL itself is unreachable |
+| `channel_idle_clear_watchdog` | 5 min | conversation context bloat (2 h idle / 30 turns) | `/clear`-style recycle between turns |
+| `channel_mcp_watchdog` (`channel_mcp_watchdog.check_and_restart`) | 2 min | session transcript shows "MCP server X connection timed out" — MCP tools dead for the session while `/health` stays green (6-7 Sep 2026: two blank Vercel reports) | one `force_restart_channel` per session id, only between turns, alert to #alerts |
+
+The MCP watchdog scans `~/.claude/projects/-home-chris-hadley-peterbot/*.jsonl` inside WSL
+(`domains/peterbot/channel_mcp_scan.py`), maps a transcript to its channel via the injected
+`<channel source="…">` tag / `mcp__<name>__reply` calls, and only trusts a transcript that started
+after the tmux session was created (older files belong to the previous session). It never acts
+mid-turn (health counters, or 30 min of transcript silence), restarts a session at most once, and
+stops after 3 restarts per channel in 6 h (alert only). Every channel `launch.sh` exports
+`MCP_TIMEOUT=120000` so a relaunch gets a longer MCP startup window.
